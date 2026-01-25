@@ -323,7 +323,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     st.success(f"✅ Desorption data: {len(p_des)} points")
             else:
                 st.error(f"❌ BET extraction failed: {extraction_msg}")
-                return None
+                # Don't return None, continue with XRD if available
         
         if xrd_file:
             xrd_file.seek(0)
@@ -338,7 +338,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                 st.success(f"✅ XRD data extracted: {len(two_theta)} points")
             else:
                 st.error(f"❌ XRD extraction failed: {extraction_msg}")
-                return None
+                # Don't return None, continue with BET if available
         
         # ====================================================================
         # STEP 2: BET ANALYSIS
@@ -371,12 +371,13 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                 
                 analysis_results['bet_results'] = bet_analyzer.complete_analysis()
                 
-                # Validate results
-                if analysis_results['bet_results']['valid']:
+                # Display results (even if BET failed)
+                bet_res = analysis_results['bet_results']
+                
+                if bet_res.get('bet_valid', False):
                     st.success("✅ BET analysis completed successfully")
                     
                     # Display key results
-                    bet_res = analysis_results['bet_results']
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
@@ -387,14 +388,45 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                         st.metric("C", f"{bet_res['c_constant']:.0f}")
                     with col4:
                         st.metric("R²", f"{bet_res['bet_regression']['r_squared']:.4f}")
-                
                 else:
-                    st.error(f"❌ BET analysis failed: {analysis_results['bet_results']['error']}")
-                    return None
+                    # BET failed but other analyses may still work
+                    st.warning(f"⚠️ BET surface area calculation failed: {bet_res.get('bet_error', 'Unknown error')}")
+                    
+                    # Still show available results
+                    if bet_res.get('total_pore_volume', 0) > 0:
+                        st.info(f"✅ Total pore volume: {bet_res['total_pore_volume']:.3f} cm³/g")
+                    if bet_res.get('mean_pore_diameter', 0) > 0:
+                        st.info(f"✅ Mean pore diameter: {bet_res['mean_pore_diameter']:.2f} nm")
+                    if bet_res.get('micropore_volume', 0) > 0:
+                        st.info(f"✅ Micropore volume: {bet_res['micropore_volume']:.3f} cm³/g")
+                    
+                    # Show detailed error message
+                    with st.expander("🔍 BET Analysis Details", expanded=False):
+                        st.write(f"**Issue:** {bet_res.get('bet_error', 'No valid BET range found')}")
+                        st.write("""
+                        **Possible reasons:**
+                        1. Non-porous or low-surface-area material
+                        2. Microporous material (BET not applicable below 0.05 P/P₀)
+                        3. Measurement issues (insufficient data points in BET range)
+                        4. Adsorbate-adsorbent interactions causing non-linearity
+                        
+                        **Recommendations:**
+                        - Check adsorption isotherm shape
+                        - Consider alternative methods (t-plot, Dubinin-Radushkevich)
+                        - Verify experimental conditions
+                        """)
                     
             except Exception as e:
                 st.error(f"❌ BET analysis error: {str(e)}")
-                return None
+                analysis_results['bet_results'] = {
+                    'overall_valid': False,
+                    'bet_valid': False,
+                    'error': str(e),
+                    'surface_area': 0.0,
+                    'surface_area_error': 0.0,
+                    'total_pore_volume': 0.0,
+                    'mean_pore_diameter': 0.0
+                }
         
         # ====================================================================
         # STEP 3: XRD ANALYSIS
@@ -445,25 +477,36 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                         st.metric("Ordered", "Yes" if xrd_res['ordered_mesopores'] else "No")
                 
                 else:
-                    st.error(f"❌ XRD analysis failed: {analysis_results['xrd_results']['error']}")
-                    return None
+                    st.warning(f"⚠️ XRD analysis completed with warnings: {analysis_results['xrd_results'].get('error', 'Unknown error')}")
                     
             except Exception as e:
                 st.error(f"❌ XRD analysis error: {str(e)}")
-                return None
+                analysis_results['xrd_results'] = {
+                    'valid': False,
+                    'error': str(e),
+                    'wavelength': wavelength,
+                    'peaks': [],
+                    'crystallinity_index': 0.0,
+                    'crystallite_size': {'scherrer': 0.0, 'williamson_hall': 0.0, 'distribution': 'Unknown'},
+                    'microstrain': 0.0,
+                    'ordered_mesopores': False
+                }
         
         # ====================================================================
-        # STEP 4: MORPHOLOGY FUSION
+        # STEP 4: MORPHOLOGY FUSION (if we have any valid results)
         # ====================================================================
-        if 'bet_results' in analysis_results and 'xrd_results' in analysis_results:
+        bet_valid = analysis_results.get('bet_results', {}).get('overall_valid', False)
+        xrd_valid = analysis_results.get('xrd_results', {}).get('valid', False)
+        
+        if bet_valid or xrd_valid:
             status_text.text("🧬 Fusing BET-XRD morphology data...")
             progress_bar.progress(80)
             
             try:
                 fusion_engine = MorphologyFusionEngine()
                 analysis_results['fusion_results'] = fusion_engine.fuse(
-                    bet_results=analysis_results['bet_results'],
-                    xrd_results=analysis_results['xrd_results']
+                    bet_results=analysis_results.get('bet_results', {}),
+                    xrd_results=analysis_results.get('xrd_results', {})
                 )
                 
                 if analysis_results['fusion_results']['valid']:
@@ -487,14 +530,23 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
         status_text.text("🎨 Preparing scientific outputs...")
         progress_bar.progress(95)
         
-        analysis_results['analysis_valid'] = True
+        # Determine if we have any valid results
+        has_bet_data = 'bet_results' in analysis_results
+        has_xrd_data = 'xrd_results' in analysis_results
+        has_fusion_data = 'fusion_results' in analysis_results
+        
+        analysis_results['analysis_valid'] = (has_bet_data or has_xrd_data)
         analysis_results['parameters'] = params
         analysis_results['timestamp'] = pd.Timestamp.now().isoformat()
         
         progress_bar.progress(100)
-        status_text.text("✅ Analysis complete!")
         
-        st.balloons()
+        if analysis_results['analysis_valid']:
+            status_text.text("✅ Analysis complete!")
+            st.balloons()
+        else:
+            status_text.text("⚠️ Partial analysis complete (some analyses failed)")
+            st.warning("Some analyses failed, but available results are shown below")
         
         return analysis_results
         
@@ -504,7 +556,6 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
         with st.expander("Technical details"):
             st.code(traceback.format_exc())
         return None
-
 # ============================================================================
 # MAIN APPLICATION
 # ============================================================================
@@ -1215,6 +1266,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
