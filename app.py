@@ -1329,7 +1329,7 @@ def generate_scientific_report(results):
             report.append(f"Peaks Detected: {len(xrd['peaks'])}")
         report.append("")
     
-    # Morphology/Fusion Results - CHECK IF EXISTS
+    # Morphology/Fusion Results
     if results.get('fusion_results'):
         fusion = results['fusion_results']
         if fusion.get('valid', False):
@@ -1358,44 +1358,13 @@ def generate_scientific_report(results):
     report.append("3. Klug & Alexander, X-ray Diffraction Procedures, 1974")
     
     return "\n".join(report)
-        report.append(f"Crystallinity Index: {xrd['crystallinity_index']:.2f}")
-        report.append(f"Crystallite Size (Scherrer): {xrd['crystallite_size']['scherrer']:.1f} nm")
-        report.append(f"Microstrain: {xrd['microstrain']:.4f}")
-        report.append(f"Ordered Mesopores: {'Yes' if xrd['ordered_mesopores'] else 'No'}")
-        report.append(f"Peaks Detected: {len(xrd['peaks'])}")
-        report.append("")
-    
-    # Morphology
-    if results.get('fusion_results'):
-        fusion = results['fusion_results']
-        report.append("INTEGRATED MORPHOLOGY ANALYSIS")
-        report.append("-" * 40)
-        report.append(f"Classification: {fusion['composite_classification']}")
-        report.append(f"Dominant Feature: {fusion['dominant_feature']}")
-        report.append(f"Material Family: {fusion['material_family']}")
-        report.append("")
-    
-    # Methods
-    report.append("METHODS")
-    report.append("-" * 40)
-    report.append("BET Analysis: IUPAC Rouquerol criteria")
-    report.append("XRD Analysis: Scherrer, Williamson-Hall methods")
-    report.append("Porosity: t-plot, BJH methods")
-    report.append("")
-    
-    report.append("REFERENCES")
-    report.append("-" * 40)
-    report.append("1. Rouquerol et al., Pure Appl. Chem., 1994, 66, 1739")
-    report.append("2. Thommes et al., Pure Appl. Chem., 2015, 87, 1051")
-    report.append("3. Klug & Alexander, X-ray Diffraction Procedures, 1974")
-    
-    return "\n".join(report)
 
 # ============================================================================
 # RUN APPLICATION
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
