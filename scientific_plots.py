@@ -169,7 +169,7 @@ class PublicationPlotter:
         
         # Plot desorption branch if available
         if ('p_des' in bet_raw and 'q_des' in bet_raw and 
-            bet_raw['p_des'] is not None):
+            bet_raw['p_des'] is not None and bet_raw['q_des'] is not None):
             p_des = bet_raw['p_des']
             q_des = bet_raw['q_des']
             ax1.plot(p_des, q_des, 's--', color=secondary_color, 
@@ -334,10 +334,14 @@ class PublicationPlotter:
         # ====================================================================
         # SUBPLOT E: Hysteresis analysis
         # ====================================================================
+        # ====================================================================
+        # SUBPLOT E: Hysteresis analysis
+        # ====================================================================
         ax5 = fig.add_subplot(gs[1, 2])
         
         if ('hysteresis_analysis' in bet_results and 
-            bet_raw['p_des'] is not None):
+            bet_raw['p_des'] is not None and 
+            bet_raw['q_des'] is not None):
             
             # Plot hysteresis loop
             ax5.plot(bet_raw['p_ads'], bet_raw['q_ads'], 'o-', 
@@ -347,9 +351,29 @@ class PublicationPlotter:
                     color=secondary_color, markersize=3, linewidth=1.5, 
                     label='Desorption')
             
-            # Fill hysteresis loop
-            ax5.fill_betweenx(bet_raw['q_ads'], bet_raw['p_ads'], bet_raw['p_des'],
-                            alpha=0.2, color='gray')
+            # Fill hysteresis loop - need to handle arrays of different lengths
+            # Find common pressure range for filling
+            try:
+                # Interpolate desorption data to adsorption pressure points
+                # or vice versa to create arrays of the same length
+                p_min = max(bet_raw['p_ads'].min(), bet_raw['p_des'].min())
+                p_max = min(bet_raw['p_ads'].max(), bet_raw['p_des'].max())
+                
+                if p_min < p_max:
+                    # Create common pressure points
+                    p_common = np.linspace(p_min, p_max, 100)
+                    
+                    # Interpolate adsorption and desorption data to common points
+                    q_ads_interp = np.interp(p_common, bet_raw['p_ads'], bet_raw['q_ads'])
+                    q_des_interp = np.interp(p_common, bet_raw['p_des'], bet_raw['q_des'])
+                    
+                    # Fill between the interpolated curves
+                    ax5.fill_between(p_common, q_ads_interp, q_des_interp,
+                                   alpha=0.2, color='gray')
+            except Exception as e:
+                # If interpolation fails, just plot without fill
+                print(f"Warning: Could not fill hysteresis loop: {e}")
+                pass
             
             # Add hysteresis info
             hyst = bet_results['hysteresis_analysis']
@@ -978,4 +1002,5 @@ class PublicationPlotter:
         plt.suptitle('BET-XRD Morphology Analysis Summary', 
                     fontsize=self.font_size + 4, y=0.98)
         
+
         return fig
