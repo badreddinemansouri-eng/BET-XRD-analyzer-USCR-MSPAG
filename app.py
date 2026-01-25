@@ -697,7 +697,7 @@ def display_xrd_analysis(results, plotter):
                     '2θ (°)': peak['position'],
                     'd-spacing (Å)': peak['d_spacing'],
                     'Intensity': peak['intensity'],
-                    'FWHM (°)': peak['fwhm'],
+                    'FWHM (°)': peak['fwhm_deg'],  # <-- CHANGED FROM 'fwhm' TO 'fwhm_deg'
                     'hkl': peak.get('hkl', ''),
                     'Phase': peak.get('phase', '')
                 }
@@ -731,7 +731,6 @@ def display_xrd_analysis(results, plotter):
                     st.write(f"  - Fraction: {phase['weight_fraction']:.1%}")
                     st.write(f"  - Crystal System: {phase['crystal_system']}")
                     st.write(f"  - Space Group: {phase['space_group']}")
-
 def display_morphology(results):
     """Display morphology fusion results"""
     st.subheader("Integrated Morphology Analysis")
@@ -1020,4 +1019,5 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
