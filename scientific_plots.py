@@ -147,16 +147,24 @@ class PublicationPlotter:
         --------
         matplotlib Figure object
         """
+        # Check if BET was successful
+        bet_valid = bet_results.get('bet_valid', True)
+        
         # Create figure with subplots
-        fig = plt.figure(figsize=(12, 10))
-        gs = gridspec.GridSpec(3, 3, figure=fig, hspace=0.35, wspace=0.3)
+        if bet_valid:
+            fig = plt.figure(figsize=(12, 10))
+            gs = gridspec.GridSpec(3, 3, figure=fig, hspace=0.35, wspace=0.3)
+        else:
+            # Smaller figure if BET failed
+            fig = plt.figure(figsize=(12, 8))
+            gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.35, wspace=0.3)
         
         # Colors
         primary_color = self.colors['primary'][0]
         secondary_color = self.colors['primary'][1]
         
         # ====================================================================
-        # SUBPLOT A: Adsorption isotherm
+        # SUBPLOT A: Adsorption isotherm (always show this)
         # ====================================================================
         ax1 = fig.add_subplot(gs[0, 0])
         
@@ -169,7 +177,7 @@ class PublicationPlotter:
         
         # Plot desorption branch if available
         if ('p_des' in bet_raw and 'q_des' in bet_raw and 
-            bet_raw['p_des'] is not None and bet_raw['q_des'] is not None):
+            bet_raw['p_des'] is not None and len(bet_raw['p_des']) > 0):
             p_des = bet_raw['p_des']
             q_des = bet_raw['q_des']
             ax1.plot(p_des, q_des, 's--', color=secondary_color, 
@@ -178,71 +186,80 @@ class PublicationPlotter:
         ax1.set_xlabel('Relative Pressure (P/P₀)')
         ax1.set_ylabel('Quantity Adsorbed (mmol/g)')
         ax1.set_title('(A) Adsorption-Desorption Isotherm', pad=10)
-        ax1.legend(loc='best', frameon=True)
+        if 'p_des' in bet_raw and bet_raw['p_des'] is not None:
+            ax1.legend(loc='best', frameon=True)
         ax1.grid(True, alpha=0.3)
         
-        # Add IUPAC classification if available
-        if 'hysteresis_analysis' in bet_results:
-            hyst_type = bet_results['hysteresis_analysis'].get('type', '')
-            if hyst_type:
-                ax1.text(0.05, 0.95, f'Hysteresis: {hyst_type}',
-                        transform=ax1.transAxes, fontsize=self.font_size-2,
-                        verticalalignment='top',
-                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        # Add note if BET failed
+        if not bet_valid:
+            ax1.text(0.5, 0.95, '⚠️ No valid BET range found',
+                    transform=ax1.transAxes, fontsize=self.font_size-1,
+                    verticalalignment='top', horizontalalignment='center',
+                    bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8))
         
         # ====================================================================
-        # SUBPLOT B: BET plot
+        # SUBPLOT B: BET plot (only if BET was successful)
         # ====================================================================
-        ax2 = fig.add_subplot(gs[0, 1])
-        
-        # Extract BET range data
-        if 'bet_regression' in bet_results:
-            bet_reg = bet_results['bet_regression']
+        if bet_valid:
+            ax2 = fig.add_subplot(gs[0, 1])
             
-            # Calculate BET transform for all points
-            p_all = bet_raw['p_ads']
-            q_all = bet_raw['q_ads']
-            y_bet = p_all / (q_all * (1 - p_all))
-            
-            # Plot all points
-            ax2.plot(p_all, y_bet, 'o', color='gray', 
-                    markersize=3, alpha=0.5, label='All data')
-            
-            # Plot linear range
-            p_min = bet_reg['p_min']
-            p_max = bet_reg['p_max']
-            mask = (p_all >= p_min) & (p_all <= p_max)
-            
-            if np.any(mask):
-                p_lin = p_all[mask]
-                y_lin = y_bet[mask]
-                ax2.plot(p_lin, y_lin, 'o', color=primary_color, 
-                        markersize=5, label='Linear range')
+            # Extract BET range data
+            if 'bet_regression' in bet_results:
+                bet_reg = bet_results['bet_regression']
                 
-                # Plot regression line
-                slope = bet_reg['slope']
-                intercept = bet_reg['intercept']
-                x_line = np.array([p_min, p_max])
-                y_line = slope * x_line + intercept
-                ax2.plot(x_line, y_line, '--', color='red', 
-                        linewidth=2, label='Linear fit')
+                # Calculate BET transform for all points
+                p_all = bet_raw['p_ads']
+                q_all = bet_raw['q_ads']
+                y_bet = p_all / (q_all * (1 - p_all))
+                
+                # Plot all points
+                ax2.plot(p_all, y_bet, 'o', color='gray', 
+                        markersize=3, alpha=0.5, label='All data')
+                
+                # Plot linear range
+                p_min = bet_reg['p_min']
+                p_max = bet_reg['p_max']
+                mask = (p_all >= p_min) & (p_all <= p_max)
+                
+                if np.any(mask):
+                    p_lin = p_all[mask]
+                    y_lin = y_bet[mask]
+                    ax2.plot(p_lin, y_lin, 'o', color=primary_color, 
+                            markersize=5, label='Linear range')
+                    
+                    # Plot regression line
+                    slope = bet_reg['slope']
+                    intercept = bet_reg['intercept']
+                    x_line = np.array([p_min, p_max])
+                    y_line = slope * x_line + intercept
+                    ax2.plot(x_line, y_line, '--', color='red', 
+                            linewidth=2, label='Linear fit')
+                
+                # Add equation
+                equation = f"y = {slope:.4f}x + {intercept:.4f}"
+                r2_text = f"R² = {bet_reg['r_squared']:.6f}"
+                ax2.text(0.05, 0.95, equation, transform=ax2.transAxes,
+                        fontsize=self.font_size-1, verticalalignment='top')
+                ax2.text(0.05, 0.88, r2_text, transform=ax2.transAxes,
+                        fontsize=self.font_size-1, verticalalignment='top')
             
-            # Add equation
-            equation = f"y = {slope:.4f}x + {intercept:.4f}"
-            r2_text = f"R² = {bet_reg['r_squared']:.6f}"
-            ax2.text(0.05, 0.95, equation, transform=ax2.transAxes,
-                    fontsize=self.font_size-1, verticalalignment='top')
-            ax2.text(0.05, 0.88, r2_text, transform=ax2.transAxes,
-                    fontsize=self.font_size-1, verticalalignment='top')
-        
-        ax2.set_xlabel('Relative Pressure (P/P₀)')
-        ax2.set_ylabel('p/[n(1-p)] (g/mmol)')
-        ax2.set_title('(B) BET Transform Plot', pad=10)
-        ax2.legend(loc='best', frameon=True)
-        ax2.grid(True, alpha=0.3)
+            ax2.set_xlabel('Relative Pressure (P/P₀)')
+            ax2.set_ylabel('p/[n(1-p)] (g/mmol)')
+            ax2.set_title('(B) BET Transform Plot', pad=10)
+            ax2.legend(loc='best', frameon=True)
+            ax2.grid(True, alpha=0.3)
+        else:
+            # Show message instead of BET plot
+            ax2 = fig.add_subplot(gs[0, 1])
+            ax2.text(0.5, 0.5, 'BET Analysis Failed\n\nNo valid linear range found\nin 0.05-0.35 P/P₀ region',
+                    transform=ax2.transAxes, ha='center', va='center',
+                    fontsize=self.font_size)
+            ax2.set_title('(B) BET Transform Plot', pad=10)
+            ax2.set_xticks([])
+            ax2.set_yticks([])
         
         # ====================================================================
-        # SUBPLOT C: t-plot
+        # SUBPLOT C: t-plot (always try to show)
         # ====================================================================
         ax3 = fig.add_subplot(gs[0, 2])
         
@@ -284,9 +301,10 @@ class PublicationPlotter:
         ax3.grid(True, alpha=0.3)
         
         # ====================================================================
-        # SUBPLOT D: Pore size distribution
+        # SUBPLOT D: Pore size distribution (if available)
         # ====================================================================
-        ax4 = fig.add_subplot(gs[1, :2])
+        row_idx = 1 if bet_valid else 0
+        ax4 = fig.add_subplot(gs[row_idx, :2])
         
         if ('psd_analysis' in bet_results and 
             bet_results['psd_analysis']['available']):
@@ -332,16 +350,13 @@ class PublicationPlotter:
         ax4.grid(True, alpha=0.3, which='both')
         
         # ====================================================================
-        # SUBPLOT E: Hysteresis analysis
+        # SUBPLOT E: Hysteresis analysis (if available)
         # ====================================================================
-        # ====================================================================
-        # SUBPLOT E: Hysteresis analysis
-        # ====================================================================
-        ax5 = fig.add_subplot(gs[1, 2])
+        ax5 = fig.add_subplot(gs[row_idx, 2])
         
         if ('hysteresis_analysis' in bet_results and 
-            bet_raw['p_des'] is not None and 
-            bet_raw['q_des'] is not None):
+            bet_raw.get('p_des') is not None and 
+            len(bet_raw['p_des']) > 0):
             
             # Plot hysteresis loop
             ax5.plot(bet_raw['p_ads'], bet_raw['q_ads'], 'o-', 
@@ -351,28 +366,12 @@ class PublicationPlotter:
                     color=secondary_color, markersize=3, linewidth=1.5, 
                     label='Desorption')
             
-            # Fill hysteresis loop - need to handle arrays of different lengths
-            # Find common pressure range for filling
+            # Fill hysteresis loop if we have matching points
             try:
-                # Interpolate desorption data to adsorption pressure points
-                # or vice versa to create arrays of the same length
-                p_min = max(bet_raw['p_ads'].min(), bet_raw['p_des'].min())
-                p_max = min(bet_raw['p_ads'].max(), bet_raw['p_des'].max())
-                
-                if p_min < p_max:
-                    # Create common pressure points
-                    p_common = np.linspace(p_min, p_max, 100)
-                    
-                    # Interpolate adsorption and desorption data to common points
-                    q_ads_interp = np.interp(p_common, bet_raw['p_ads'], bet_raw['q_ads'])
-                    q_des_interp = np.interp(p_common, bet_raw['p_des'], bet_raw['q_des'])
-                    
-                    # Fill between the interpolated curves
-                    ax5.fill_between(p_common, q_ads_interp, q_des_interp,
+                if len(bet_raw['p_ads']) == len(bet_raw['p_des']):
+                    ax5.fill_between(bet_raw['p_ads'], bet_raw['q_ads'], bet_raw['q_des'],
                                    alpha=0.2, color='gray')
-            except Exception as e:
-                # If interpolation fails, just plot without fill
-                print(f"Warning: Could not fill hysteresis loop: {e}")
+            except:
                 pass
             
             # Add hysteresis info
@@ -388,75 +387,81 @@ class PublicationPlotter:
         ax5.set_xlabel('Relative Pressure (P/P₀)')
         ax5.set_ylabel('Quantity Adsorbed (mmol/g)')
         ax5.set_title('(E) Hysteresis Loop Analysis', pad=10)
-        ax5.legend(loc='best', frameon=True)
+        if 'p_des' in bet_raw and bet_raw['p_des'] is not None:
+            ax5.legend(loc='best', frameon=True)
         ax5.grid(True, alpha=0.3)
         
         # ====================================================================
-        # SUBPLOT F: Summary table
+        # SUBPLOT F: Summary table (only if BET was successful)
         # ====================================================================
-        ax6 = fig.add_subplot(gs[2, :])
-        ax6.axis('tight')
-        ax6.axis('off')
-        
-        # Create summary table
-        summary_data = []
-        
-        # Surface area
-        S_bet = bet_results.get('surface_area', 0)
-        S_err = bet_results.get('surface_area_error', 0)
-        summary_data.append(['Surface Area (Sᴮᴱᵀ)', f'{S_bet:.1f} ± {S_err:.1f} m²/g'])
-        
-        # Pore volume
-        V_total = bet_results.get('total_pore_volume', 0)
-        summary_data.append(['Total Pore Volume', f'{V_total:.3f} cm³/g'])
-        
-        # Micropore volume
-        V_micro = bet_results.get('micropore_volume', 0)
-        summary_data.append(['Micropore Volume (t-plot)', f'{V_micro:.3f} cm³/g'])
-        
-        # Mean pore diameter
-        d_mean = bet_results.get('mean_pore_diameter', 0)
-        summary_data.append(['Mean Pore Diameter', f'{d_mean:.2f} nm'])
-        
-        # C constant
-        C = bet_results.get('c_constant', 0)
-        summary_data.append(['BET C Constant', f'{C:.0f}'])
-        
-        # Hysteresis
-        hyst_type = bet_results.get('hysteresis_analysis', {}).get('type', 'N/A')
-        summary_data.append(['Hysteresis Type', hyst_type])
-        
-        # Create table
-        table = ax6.table(cellText=summary_data,
-                         colLabels=['Parameter', 'Value'],
-                         colWidths=[0.4, 0.3],
-                         cellLoc='left',
-                         loc='center')
-        
-        # Style table
-        table.auto_set_font_size(False)
-        table.set_fontsize(self.font_size - 1)
-        table.scale(1, 1.5)
-        
-        # Style header
-        for (row, col), cell in table.get_celld().items():
-            if row == 0:  # Header row
-                cell.set_text_props(weight='bold')
-                cell.set_facecolor(self.colors['primary'][0])
-                cell.set_text_props(color='white')
-            else:
-                if row % 2 == 0:
-                    cell.set_facecolor('#F5F5F5')
+        if bet_valid:
+            ax6 = fig.add_subplot(gs[2, :])
+            ax6.axis('tight')
+            ax6.axis('off')
+            
+            # Create summary table
+            summary_data = []
+            
+            # Surface area
+            S_bet = bet_results.get('surface_area', 0)
+            S_err = bet_results.get('surface_area_error', 0)
+            summary_data.append(['Surface Area (Sᴮᴱᵀ)', f'{S_bet:.1f} ± {S_err:.1f} m²/g'])
+            
+            # Pore volume
+            V_total = bet_results.get('total_pore_volume', 0)
+            summary_data.append(['Total Pore Volume', f'{V_total:.3f} cm³/g'])
+            
+            # Micropore volume
+            V_micro = bet_results.get('micropore_volume', 0)
+            summary_data.append(['Micropore Volume (t-plot)', f'{V_micro:.3f} cm³/g'])
+            
+            # Mean pore diameter
+            d_mean = bet_results.get('mean_pore_diameter', 0)
+            summary_data.append(['Mean Pore Diameter', f'{d_mean:.2f} nm'])
+            
+            # C constant
+            C = bet_results.get('c_constant', 0)
+            summary_data.append(['BET C Constant', f'{C:.0f}'])
+            
+            # Hysteresis
+            hyst_type = bet_results.get('hysteresis_analysis', {}).get('type', 'N/A')
+            summary_data.append(['Hysteresis Type', hyst_type])
+            
+            # Create table
+            table = ax6.table(cellText=summary_data,
+                             colLabels=['Parameter', 'Value'],
+                             colWidths=[0.4, 0.3],
+                             cellLoc='left',
+                             loc='center')
+            
+            # Style table
+            table.auto_set_font_size(False)
+            table.set_fontsize(self.font_size - 1)
+            table.scale(1, 1.5)
+            
+            # Style header
+            for (row, col), cell in table.get_celld().items():
+                if row == 0:  # Header row
+                    cell.set_text_props(weight='bold')
+                    cell.set_facecolor(self.colors['primary'][0])
+                    cell.set_text_props(color='white')
                 else:
-                    cell.set_facecolor('#FFFFFF')
-        
-        ax6.set_title('(F) BET Analysis Summary', pad=20)
+                    if row % 2 == 0:
+                        cell.set_facecolor('#F5F5F5')
+                    else:
+                        cell.set_facecolor('#FFFFFF')
+            
+            ax6.set_title('(F) BET Analysis Summary', pad=20)
         
         # ====================================================================
         # FINAL TOUCHES
         # ====================================================================
-        plt.suptitle('BET Surface Area and Porosity Analysis', 
-                    fontsize=self.font_size + 4, y=0.98)
+        if bet_valid:
+            plt.suptitle('BET Surface Area and Porosity Analysis', 
+                        fontsize=self.font_size + 4, y=0.98)
+        else:
+            plt.suptitle('Porosity Analysis (BET Failed - Non-linear in 0.05-0.35 P/P₀)', 
+                        fontsize=self.font_size + 4, y=0.98)
         
         return fig
     
@@ -1028,4 +1033,5 @@ class PublicationPlotter:
         
 
         return fig
+
 
