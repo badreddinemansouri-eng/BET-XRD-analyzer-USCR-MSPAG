@@ -486,7 +486,7 @@ class PublicationPlotter:
         intensity = np.array(xrd_raw['intensity'])
         
         # ====================================================================
-        # SUBPLOT A: XRD pattern with peaks
+        # SUBPLOT A: XRD pattern with intensive peaks only
         # ====================================================================
         ax1 = fig.add_subplot(gs[0, :])
         
@@ -494,41 +494,42 @@ class PublicationPlotter:
         ax1.plot(two_theta, intensity, '-', color=primary_color, 
                 linewidth=1.5, label='XRD Pattern')
         
-        # Mark peaks
-        peaks = xrd_results.get('peaks', [])
+        # Get top peaks (most intensive) for display
+        if 'top_peaks' in xrd_results:
+            peaks = xrd_results['top_peaks']  # Already sorted by intensity
+        else:
+            peaks = xrd_results.get('peaks', [])
+            # Sort by intensity and take top 15
+            peaks.sort(key=lambda x: x['intensity'], reverse=True)
+            peaks = peaks[:15]
+        
         if peaks:
             peak_positions = [p['position'] for p in peaks]
             peak_intensities = [p['intensity'] for p in peaks]
             
+            # Mark only intensive peaks (top 10-15)
             ax1.scatter(peak_positions, peak_intensities, 
-                       color='red', s=30, zorder=5, label='Detected peaks')
+                       color='red', s=30, zorder=5, label='Major peaks')
             
-            # Add peak labels with Miller indices if available
-            for i, peak in enumerate(peaks[:10]):  # Label first 10 peaks
-                if i < 10:  # Don't overcrowd
-                    # Try to get Miller indices
-                    hkl_text = ''
-                    if 'hkl' in peak and peak['hkl']:
-                        hkl = peak['hkl']
-                        if isinstance(hkl, dict):
-                            hkl_text = f"({hkl.get('h', '?')}{hkl.get('k', '?')}{hkl.get('l', '?')})"
-                        elif isinstance(hkl, str):
-                            hkl_text = f"({hkl})"
-                    
-                    label = f"{peak['position']:.2f}°"
-                    if hkl_text:
-                        label += f"\n{hkl_text}"
-                    
-                    # Position label above peak with arrow
-                    ax1.annotate(label,
-                               xy=(peak['position'], peak['intensity']),
-                               xytext=(peak['position'], peak['intensity'] * 1.05),
-                               ha='center', va='bottom',
-                               fontsize=self.font_size-2,
-                               arrowprops=dict(arrowstyle='->', 
-                                             color='black', 
-                                             lw=0.5,
-                                             alpha=0.7))
+            # Add peak labels for most intensive peaks only (first 8)
+            for i, peak in enumerate(peaks[:8]):  # Label first 8 intensive peaks
+                # Get Miller indices if available
+                hkl_text = ''
+                if 'hkl' in peak and peak['hkl']:
+                    hkl_text = f"\n{peak['hkl']}"
+                
+                label = f"{peak['position']:.2f}°{hkl_text}"
+                
+                # Position label above peak with arrow
+                ax1.annotate(label,
+                           xy=(peak['position'], peak['intensity']),
+                           xytext=(peak['position'], peak['intensity'] * 1.1),
+                           ha='center', va='bottom',
+                           fontsize=self.font_size-2,
+                           arrowprops=dict(arrowstyle='->', 
+                                         color='black', 
+                                         lw=0.5,
+                                         alpha=0.7))
         
         # Add crystallinity info
         crystallinity = xrd_results.get('crystallinity_index', 0)
@@ -544,9 +545,17 @@ class PublicationPlotter:
                 verticalalignment='top', horizontalalignment='right',
                 bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
         
+        # Add number of peaks info
+        n_peaks_total = xrd_results.get('n_peaks_total', len(peaks))
+        n_peaks_shown = len(peaks) if peaks else 0
+        ax1.text(0.02, 0.92, f'Peaks: {n_peaks_shown}/{n_peaks_total} shown',
+                transform=ax1.transAxes, fontsize=self.font_size-1,
+                verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8))
+        
         ax1.set_xlabel('2θ (degrees)')
         ax1.set_ylabel('Intensity (a.u.)')
-        ax1.set_title('(A) XRD Pattern with Peak Identification', pad=10)
+        ax1.set_title('(A) XRD Pattern - Major Peaks Only', pad=10)
         ax1.legend(loc='upper right', frameon=True)
         ax1.grid(True, alpha=0.3)
         ax1.set_xlim(two_theta.min(), two_theta.max())
@@ -599,7 +608,7 @@ class PublicationPlotter:
         ax3 = fig.add_subplot(gs[1, 1])
         
         if peaks:
-            # Extract crystallite sizes
+            # Extract crystallite sizes from major peaks
             sizes = [p.get('crystallite_size', 0) for p in peaks 
                     if p.get('crystallite_size', 0) > 0]
             
@@ -627,7 +636,7 @@ class PublicationPlotter:
                     
                     ax3.set_xlabel('Crystallite Size (nm)')
                     ax3.set_ylabel('Frequency')
-                    ax3.set_title('(C) Crystallite Size Distribution', pad=10)
+                    ax3.set_title('(C) Crystallite Size Distribution (Major Peaks)', pad=10)
                     ax3.legend(loc='upper left', frameon=True)
                     ax3.grid(True, alpha=0.3, axis='y')
                 else:
@@ -653,34 +662,45 @@ class PublicationPlotter:
             ax3.set_yticks([])
         
         # ====================================================================
-        # SUBPLOT D: Peak analysis table
+        # SUBPLOT D: Peak analysis table - Show top 6 most intensive peaks
         # ====================================================================
         ax4 = fig.add_subplot(gs[2, 0])
         ax4.axis('tight')
         ax4.axis('off')
         
-        # Create peak table (first 6 peaks)
+        # Create peak table (top 6 most intensive peaks)
         if peaks:
             table_data = []
-            headers = ['Peak #', '2θ (°)', 'd (Å)', 'FWHM (°)', 'Size (nm)']
+            headers = ['Peak #', '2θ (°)', 'd (Å)', 'FWHM (°)', 'Size (nm)', 'hkl']
             
-            for i, peak in enumerate(peaks[:6]):  # Show first 6 peaks
+            for i, peak in enumerate(peaks[:6]):  # Show top 6 intensive peaks
+                # Get hkl if available
+                hkl_value = peak.get('hkl', '')
+                if not hkl_value:
+                    hkl_value = peak.get('hkl_detail', {}).get('hkl', '')
+                
                 row = [
                     i+1,
                     f"{peak['position']:.2f}",
                     f"{peak.get('d_spacing', 0):.3f}",
                     f"{peak['fwhm_deg']:.3f}",
-                    f"{peak.get('crystallite_size', 0):.1f}"
+                    f"{peak.get('crystallite_size', 0):.1f}",
+                    hkl_value
                 ]
                 table_data.append(row)
             
-            # Add more rows if there are more peaks
+            # Add note if there are more peaks
+            n_peaks_shown = min(6, len(peaks))
             if len(peaks) > 6:
-                table_data.append(['...', '...', '...', '...', '...'])
+                table_data.append(['...', '...', '...', '...', '...', '...'])
+                table_data.append(['', f'Total: {len(peaks)} peaks', '', '', '', ''])
+            
+            # Adjust column widths
+            col_widths = [0.1, 0.15, 0.15, 0.15, 0.15, 0.15]
             
             table = ax4.table(cellText=table_data,
                             colLabels=headers,
-                            colWidths=[0.15, 0.2, 0.2, 0.2, 0.25],
+                            colWidths=col_widths,
                             cellLoc='center',
                             loc='center')
             
@@ -701,7 +721,7 @@ class PublicationPlotter:
                     else:
                         cell.set_facecolor('#FFFFFF')
             
-            ax4.set_title(f'(D) Peak Analysis (First {min(6, len(peaks))} peaks)', pad=10)
+            ax4.set_title(f'(D) Top {n_peaks_shown} Most Intensive Peaks', pad=10)
         
         else:
             ax4.text(0.5, 0.5, 'No peaks detected',
@@ -738,8 +758,12 @@ class PublicationPlotter:
             summary_data.append(['Microstrain', f'{microstrain:.4f}'])
         
         # Number of peaks
-        n_peaks = len(peaks)
-        summary_data.append(['Peaks Detected', f'{n_peaks}'])
+        n_peaks = xrd_results.get('n_peaks_total', len(peaks))
+        summary_data.append(['Total Peaks Detected', f'{n_peaks}'])
+        
+        # Number of major peaks shown
+        n_major_peaks = len(peaks)
+        summary_data.append(['Major Peaks Shown', f'{n_major_peaks}'])
         
         # Ordered mesopores
         ordered = xrd_results.get('ordered_mesopores', False)
@@ -778,7 +802,7 @@ class PublicationPlotter:
         # ====================================================================
         # FINAL TOUCHES
         # ====================================================================
-        plt.suptitle('X-ray Diffraction Analysis', 
+        plt.suptitle('X-ray Diffraction Analysis - Major Peaks Only', 
                     fontsize=self.font_size + 4, y=0.98)
         
         return fig
@@ -1004,3 +1028,4 @@ class PublicationPlotter:
         
 
         return fig
+
