@@ -390,57 +390,98 @@ class IUPACBETAnalyzer:
         --------
         Dictionary with all BET parameters and errors
         """
-        self._validate_data()
-        
-        # Find optimal BET range
-        i, j = self._rouquerol_criteria()
-        p_bet = self.p_ads[i:j]
-        q_bet = self.q_ads[i:j]
-        
-        # BET transformation
-        with np.errstate(divide='ignore', invalid='ignore'):
-            y_bet = p_bet / (q_bet * (1 - p_bet))
-        
-        # Remove any remaining invalid values
-        valid = np.isfinite(y_bet)
-        p_bet = p_bet[valid]
-        y_bet = y_bet[valid]
-        
-        # Linear regression with error analysis
-        slope, intercept, r_value, _, std_err = stats.linregress(p_bet, y_bet)
-        
-        # Calculate BET parameters
-        q_mono = 1.0 / (slope + intercept)  # mmol/g
-        c_constant = slope / intercept + 1.0
-        
-        # Error propagation for surface area
-        # Using first-order error propagation
-        dq_ds = -1 / (slope + intercept)**2  # ∂q/∂s
-        dq_di = -1 / (slope + intercept)**2  # ∂q/∂i
-        
-        # Assuming independent errors (conservative estimate)
-        q_mono_error = np.sqrt((dq_ds * std_err)**2 + (dq_di * std_err)**2)
-        
-        # Surface area calculation
-        surface_area = q_mono * AVOGADRO * self.cross_section * 1e-4  # m²/g
-        surface_area_error = q_mono_error * AVOGADRO * self.cross_section * 1e-4
-        
-        return {
-            'surface_area': float(surface_area),
-            'surface_area_error': float(surface_area_error),
-            'monolayer_capacity': float(q_mono),
-            'c_constant': float(c_constant),
-            'bet_regression': {
-                'slope': float(slope),
-                'intercept': float(intercept),
-                'r_squared': float(r_value**2),
-                'std_error': float(std_err),
-                'p_min': float(p_bet[0]),
-                'p_max': float(p_bet[-1]),
-                'n_points': len(p_bet)
-            },
-            'valid': True
-        }
+        try:
+            self._validate_data()
+            
+            # Find optimal BET range
+            try:
+                i, j = self._rouquerol_criteria()
+            except ValueError as e:
+                # No valid BET range found - still return results with error message
+                return {
+                    'surface_area': 0.0,
+                    'surface_area_error': 0.0,
+                    'monolayer_capacity': 0.0,
+                    'c_constant': 0.0,
+                    'bet_regression': {
+                        'slope': 0.0,
+                        'intercept': 0.0,
+                        'r_squared': 0.0,
+                        'std_error': 0.0,
+                        'p_min': 0.0,
+                        'p_max': 0.0,
+                        'n_points': 0
+                    },
+                    'valid': False,
+                    'error': str(e)
+                }
+            
+            p_bet = self.p_ads[i:j]
+            q_bet = self.q_ads[i:j]
+            
+            # BET transformation
+            with np.errstate(divide='ignore', invalid='ignore'):
+                y_bet = p_bet / (q_bet * (1 - p_bet))
+            
+            # Remove any remaining invalid values
+            valid = np.isfinite(y_bet)
+            p_bet = p_bet[valid]
+            y_bet = y_bet[valid]
+            
+            # Linear regression with error analysis
+            slope, intercept, r_value, _, std_err = stats.linregress(p_bet, y_bet)
+            
+            # Calculate BET parameters
+            q_mono = 1.0 / (slope + intercept)  # mmol/g
+            c_constant = slope / intercept + 1.0
+            
+            # Error propagation for surface area
+            # Using first-order error propagation
+            dq_ds = -1 / (slope + intercept)**2  # ∂q/∂s
+            dq_di = -1 / (slope + intercept)**2  # ∂q/∂i
+            
+            # Assuming independent errors (conservative estimate)
+            q_mono_error = np.sqrt((dq_ds * std_err)**2 + (dq_di * std_err)**2)
+            
+            # Surface area calculation
+            surface_area = q_mono * AVOGADRO * self.cross_section * 1e-4  # m²/g
+            surface_area_error = q_mono_error * AVOGADRO * self.cross_section * 1e-4
+            
+            return {
+                'surface_area': float(surface_area),
+                'surface_area_error': float(surface_area_error),
+                'monolayer_capacity': float(q_mono),
+                'c_constant': float(c_constant),
+                'bet_regression': {
+                    'slope': float(slope),
+                    'intercept': float(intercept),
+                    'r_squared': float(r_value**2),
+                    'std_error': float(std_err),
+                    'p_min': float(p_bet[0]),
+                    'p_max': float(p_bet[-1]),
+                    'n_points': len(p_bet)
+                },
+                'valid': True
+            }
+        except Exception as e:
+            # Catch any other errors
+            return {
+                'surface_area': 0.0,
+                'surface_area_error': 0.0,
+                'monolayer_capacity': 0.0,
+                'c_constant': 0.0,
+                'bet_regression': {
+                    'slope': 0.0,
+                    'intercept': 0.0,
+                    'r_squared': 0.0,
+                    'std_error': 0.0,
+                    'p_min': 0.0,
+                    'p_max': 0.0,
+                    'n_points': 0
+                },
+                'valid': False,
+                'error': str(e)
+            }
     
     def t_plot_analysis(self) -> Dict[str, Any]:
         """
@@ -701,36 +742,47 @@ class IUPACBETAnalyzer:
         Comprehensive analysis dictionary
         """
         try:
-            # Run all analyses
+            # Run BET analysis (may fail but we still continue)
             bet_results = self.bet_surface_area()
+            
+            # Always run these analyses even if BET fails
             t_plot_results = self.t_plot_analysis()
             hysteresis_results = self.hysteresis_analysis()
             bjh_results = self.bjh_pore_size_distribution()
             
-            # Total pore volume
+            # Total pore volume (always works if we have data)
             total_pore_volume = self.total_pore_volume()
             
             # Mean pore diameter approximation (4V/S for cylindrical pores)
             mean_pore_diameter = 0.0
-            if bet_results['surface_area'] > 0 and total_pore_volume > 0:
+            if bet_results.get('valid', False) and bet_results['surface_area'] > 0 and total_pore_volume > 0:
                 mean_pore_diameter = 4 * total_pore_volume / bet_results['surface_area'] * 1000  # nm
+            elif total_pore_volume > 0:
+                # Estimate from pore volume only if BET failed
+                mean_pore_diameter = 2 * (total_pore_volume * 1e9 / np.pi) ** (1/3)  # nm
+            
+            # Check if we have any valid results
+            overall_valid = (bet_results.get('valid', False) or 
+                            t_plot_results.get('valid', False) or 
+                            hysteresis_results.get('valid', False) or 
+                            bjh_results.get('available', False))
             
             # Compile results
             results = {
-                'valid': True,
-                'surface_area': bet_results['surface_area'],
-                'surface_area_error': bet_results['surface_area_error'],
-                'monolayer_capacity': bet_results['monolayer_capacity'],
-                'c_constant': bet_results['c_constant'],
+                'overall_valid': overall_valid,
+                'surface_area': bet_results.get('surface_area', 0.0),
+                'surface_area_error': bet_results.get('surface_area_error', 0.0),
+                'monolayer_capacity': bet_results.get('monolayer_capacity', 0.0),
+                'c_constant': bet_results.get('c_constant', 0.0),
                 'total_pore_volume': float(total_pore_volume),
                 'mean_pore_diameter': float(mean_pore_diameter),
-                'micropore_volume': t_plot_results['micropore_volume'],
-                'external_surface': t_plot_results['external_surface'],
-                'bet_regression': bet_results['bet_regression'],
+                'micropore_volume': t_plot_results.get('micropore_volume', 0.0),
+                'external_surface': t_plot_results.get('external_surface', 0.0),
+                'bet_regression': bet_results.get('bet_regression', {}),
                 't_plot_analysis': t_plot_results,
                 'hysteresis_analysis': hysteresis_results,
                 'psd_analysis': bjh_results,
-                'cross_section': float(self.cross_section * 1e18),  # Convert to nm² for display
+                'cross_section': float(self.cross_section * 1e18),
                 'temperature': float(self.temperature),
                 'data_points': {
                     'adsorption': len(self.p_ads),
@@ -738,16 +790,27 @@ class IUPACBETAnalyzer:
                 }
             }
             
+            # Add error info if BET failed
+            if not bet_results.get('valid', False):
+                results['bet_error'] = bet_results.get('error', 'BET analysis failed')
+                results['valid_without_bet'] = True
+                results['bet_valid'] = False
+            else:
+                results['bet_valid'] = True
+                results['valid_without_bet'] = True
+            
             return results
             
         except Exception as e:
             return {
-                'valid': False,
+                'overall_valid': False,
                 'error': str(e),
                 'surface_area': 0.0,
                 'surface_area_error': 0.0,
                 'total_pore_volume': 0.0,
-                'mean_pore_diameter': 0.0
+                'mean_pore_diameter': 0.0,
+                'bet_valid': False,
+                'valid_without_bet': False
             }
 
 # ============================================================================
@@ -789,3 +852,4 @@ def calculate_dubinin_astakhov(p_ads, q_ads, temperature=77.3):
         'r_squared': float(r_value**2),
         'method': 'Dubinin-Astakhov (n=2)'
     }
+
