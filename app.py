@@ -17,8 +17,9 @@ import pandas as pd
 import sys
 import warnings
 
-warnings.filterwarnings('ignore')
 
+warnings.filterwarnings('ignore')
+import json  # <-- ADD THIS LINE
 # Import scientific engines
 from bet_analyzer import IUPACBETAnalyzer, extract_asap2420_data
 from xrd_analyzer import AdvancedXRDAnalyzer, extract_xrd_data
@@ -1019,3 +1020,4 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
