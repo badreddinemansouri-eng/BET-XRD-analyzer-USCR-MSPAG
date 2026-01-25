@@ -25,6 +25,8 @@ from bet_analyzer import IUPACBETAnalyzer, extract_asap2420_data
 from xrd_analyzer import AdvancedXRDAnalyzer, extract_xrd_data
 from morphology_fusion import MorphologyFusionEngine
 from scientific_plots import PublicationPlotter
+# At the top of app.py with other imports
+from morphology_visualizer import IntegratedMorphologyAnalyzer
 
 # ============================================================================
 # SCIENTIFIC CONFIGURATION
@@ -781,7 +783,6 @@ def display_morphology(results):
         
         # Initialize morphology analyzer
         from morphology_visualizer import IntegratedMorphologyAnalyzer
-        analyzer = IntegratedMorphologyAnalyzer()
         
         # Perform morphology analysis
         morphology = analyzer.analyze_morphology(bet, xrd)
@@ -894,8 +895,8 @@ def display_morphology(results):
                 )
             
             with col2:
-                # Generate morphology report
-                report_text = self._generate_morphology_report(morphology, bet, xrd)
+                # Generate morphology report - FIX: Removed self. prefix
+                report_text = generate_morphology_report(morphology, bet, xrd)
                 st.download_button(
                     label="📄 Download Morphology Report (TXT)",
                     data=report_text,
@@ -909,7 +910,8 @@ def display_morphology(results):
     else:
         st.warning("Complete analysis required for morphology visualization")
 
-def _generate_morphology_report(self, morphology, bet, xrd):
+# ADD THIS NEW FUNCTION outside display_morphology
+def generate_morphology_report(morphology, bet, xrd):
     """Generate morphology report text"""
     report = []
     
@@ -1213,6 +1215,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
