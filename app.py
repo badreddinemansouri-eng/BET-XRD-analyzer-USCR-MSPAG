@@ -688,27 +688,43 @@ def display_xrd_analysis(results, plotter):
         fig = plotter.create_xrd_figure(xrd_raw, xrd_res)
         st.pyplot(fig)
         
-        # Peak table
-        if xrd_res['peaks']:
+        # Peak table - show all peaks if user wants
+        if xrd_res.get('peaks'):
             st.subheader("Peak Analysis")
+            
+            # Let user choose how many peaks to show
+            n_peaks_total = xrd_res.get('n_peaks_total', len(xrd_res['peaks']))
+            n_to_show = st.slider(
+                "Number of peaks to display",
+                min_value=1,
+                max_value=min(20, n_peaks_total),
+                value=min(10, n_peaks_total),
+                help="Show the most intensive peaks"
+            )
+            
+            # Sort peaks by intensity for display
+            all_peaks = sorted(xrd_res['peaks'], key=lambda x: x['intensity'], reverse=True)
             
             peaks_df = pd.DataFrame([
                 {
+                    'Rank': i+1,
                     '2θ (°)': peak['position'],
                     'd-spacing (Å)': peak['d_spacing'],
                     'Intensity': peak['intensity'],
-                    'FWHM (°)': peak['fwhm_deg'],  # <-- CHANGED FROM 'fwhm' TO 'fwhm_deg'
-                    'hkl': peak.get('hkl', ''),
-                    'Phase': peak.get('phase', '')
+                    'FWHM (°)': peak['fwhm_deg'],
+                    'hkl': peak.get('hkl', peak.get('hkl_detail', {}).get('hkl', '')),
+                    'Size (nm)': peak.get('crystallite_size', 0)
                 }
-                for peak in xrd_res['peaks']
+                for i, peak in enumerate(all_peaks[:n_to_show])
             ])
             
             st.dataframe(peaks_df.style.format({
+                'Rank': '{:.0f}',
                 '2θ (°)': '{:.3f}',
                 'd-spacing (Å)': '{:.3f}',
                 'Intensity': '{:.0f}',
-                'FWHM (°)': '{:.3f}'
+                'FWHM (°)': '{:.3f}',
+                'Size (nm)': '{:.1f}'
             }))
         
         # Crystallite size analysis
@@ -722,15 +738,38 @@ def display_xrd_analysis(results, plotter):
                 st.write(f"**Microstrain:** {xrd_res['microstrain']:.4f}")
                 st.write(f"**Dislocation Density:** {xrd_res['dislocation_density']:.2e} m⁻²")
         
-        # Phase analysis
-        if xrd_res.get('phase_analysis'):
-            with st.expander("⚛️ Phase Analysis", expanded=False):
-                for phase in xrd_res['phase_analysis']:
-                    st.write(f"**{phase['name']}** ({phase['formula']})")
-                    st.write(f"  - Match: {phase['match_score']:.1%}")
-                    st.write(f"  - Fraction: {phase['weight_fraction']:.1%}")
-                    st.write(f"  - Crystal System: {phase['crystal_system']}")
-                    st.write(f"  - Space Group: {phase['space_group']}")
+        # Download full peak data
+        if xrd_res.get('peaks'):
+            st.subheader("Download Peak Data")
+            
+            # Create CSV with all peaks
+            all_peaks_data = []
+            for i, peak in enumerate(xrd_res['peaks']):
+                all_peaks_data.append({
+                    'peak_number': i+1,
+                    'two_theta_deg': peak['position'],
+                    'd_spacing_angstrom': peak.get('d_spacing', 0),
+                    'intensity': peak['intensity'],
+                    'fwhm_deg': peak['fwhm_deg'],
+                    'fwhm_rad': peak['fwhm_rad'],
+                    'peak_area': peak.get('area', 0),
+                    'asymmetry': peak.get('asymmetry', 1.0),
+                    'crystallite_size_nm': peak.get('crystallite_size', 0),
+                    'hkl': peak.get('hkl', ''),
+                    'hkl_h': peak.get('hkl_detail', {}).get('h', ''),
+                    'hkl_k': peak.get('hkl_detail', {}).get('k', ''),
+                    'hkl_l': peak.get('hkl_detail', {}).get('l', '')
+                })
+            
+            peaks_df_full = pd.DataFrame(all_peaks_data)
+            csv = peaks_df_full.to_csv(index=False)
+            
+            st.download_button(
+                label="📥 Download Full Peak Data (CSV)",
+                data=csv,
+                file_name="xrd_peak_analysis.csv",
+                mime="text/csv"
+            )
 def display_morphology(results):
     """Display morphology fusion results"""
     st.subheader("Integrated Morphology Analysis")
@@ -1019,5 +1058,6 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
