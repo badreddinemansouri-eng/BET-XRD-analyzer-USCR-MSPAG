@@ -228,12 +228,18 @@ def detect_peaks(two_theta, intensity, min_distance=10, threshold=0.1):
         peak_start = max(0, idx - int(min_distance/2))
         peak_end = min(len(intensity), idx + int(min_distance/2))
         
-        peak_area = np.trapz(intensity[peak_start:peak_end], 
-                           two_theta[peak_start:peak_end])
+        # Use manual trapezoidal integration for peak area
+        x_segment = two_theta[peak_start:peak_end]
+        y_segment = intensity[peak_start:peak_end]
+        if len(x_segment) >= 2:
+            peak_area = np.sum(0.5 * (y_segment[1:] + y_segment[:-1]) * 
+                             (x_segment[1:] - x_segment[:-1]))
+        else:
+            peak_area = 0
         
         # Peak asymmetry
-        left_half = intensity[idx] - intensity[peak_start:idx].min()
-        right_half = intensity[idx] - intensity[idx:peak_end].min()
+        left_half = intensity_peak - intensity[peak_start:idx].min() if peak_start < idx else intensity_peak
+        right_half = intensity_peak - intensity[idx:peak_end].min() if idx < peak_end - 1 else intensity_peak
         asymmetry = left_half / right_half if right_half > 0 else 1.0
         
         peaks.append({
@@ -472,9 +478,22 @@ def calculate_crystallinity_index(two_theta, intensity, peak_indices):
     # Use a broad gaussian filter to estimate amorphous background
     amorphous_background = gaussian_filter1d(intensity, sigma=50)
     
-    # Calculate areas
-    total_area = np.trapz(intensity, two_theta)
-    amorphous_area = np.trapz(amorphous_background, two_theta)
+    # Calculate areas with fallback for trapezoidal integration
+    def safe_trapz(y, x):
+        """Trapezoidal integration that works with older numpy versions"""
+        try:
+            # Try using numpy's trapz if available
+            if hasattr(np, 'trapz'):
+                return np.trapz(y, x)
+            else:
+                # Manual trapezoidal integration
+                return np.sum(0.5 * (y[1:] + y[:-1]) * (x[1:] - x[:-1]))
+        except:
+            # Simple approximation if everything fails
+            return np.mean(y) * (x[-1] - x[0])
+    
+    total_area = safe_trapz(intensity, two_theta)
+    amorphous_area = safe_trapz(amorphous_background, two_theta)
     
     # Crystalline area = total area - amorphous area
     crystalline_area = max(0, total_area - amorphous_area)
@@ -485,7 +504,6 @@ def calculate_crystallinity_index(two_theta, intensity, peak_indices):
         crystallinity = 0.0
     
     return crystallinity
-
 # ============================================================================
 # LATTICE PARAMETER REFINEMENT
 # ============================================================================
@@ -876,3 +894,4 @@ class AdvancedXRDAnalyzer:
                 'microstrain': 0.0,
                 'ordered_mesopores': False
             }
+
