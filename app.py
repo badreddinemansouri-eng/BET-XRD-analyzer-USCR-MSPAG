@@ -771,53 +771,208 @@ def display_xrd_analysis(results, plotter):
                 mime="text/csv"
             )
 def display_morphology(results):
-    """Display morphology fusion results"""
+    """Display morphology visualization and interpretation"""
     st.subheader("Integrated Morphology Analysis")
     
-    if results.get('fusion_results'):
+    if results.get('bet_results') and results.get('fusion_results'):
         fusion = results['fusion_results']
+        bet = results['bet_results']
+        xrd = results.get('xrd_results')
         
-        # Classification
-        st.info(f"**Composite Classification:** {fusion['composite_classification']}")
-        st.info(f"**Material Family:** {fusion['material_family']}")
+        # Initialize morphology analyzer
+        from morphology_visualizer import IntegratedMorphologyAnalyzer
+        analyzer = IntegratedMorphologyAnalyzer()
         
-        # Key parameters
-        col1, col2, col3 = st.columns(3)
+        # Perform morphology analysis
+        morphology = analyzer.analyze_morphology(bet, xrd)
         
-        with col1:
-            st.metric("Surface/Volume", f"{fusion['surface_to_volume_ratio']:.0f} m²/cm³")
-        with col2:
-            st.metric("Structural Integrity", f"{fusion['structural_integrity']:.2f}")
-        with col3:
-            st.metric("Confidence", f"{fusion['confidence_score']:.2f}")
-        
-        # Detailed analysis
-        with st.expander("🧪 Scientific Interpretation", expanded=True):
-            st.write(f"**Dominant Morphological Feature:**")
-            st.write(fusion['dominant_feature'])
+        if morphology['valid']:
+            # Display visualization
+            st.subheader("Morphology Visualization")
+            st.pyplot(morphology['visualization'])
             
-            st.write("\n**Structure-Property Relationships:**")
-            for relationship in fusion.get('structure_property_relationships', []):
-                st.write(f"• {relationship}")
+            # Display interpretation in expanders
+            col1, col2 = st.columns(2)
             
-            st.write("\n**Suggested Applications:**")
-            for application in fusion.get('suggested_applications', []):
-                st.write(f"• {application}")
-        
-        # Journal recommendations
-        with st.expander("📚 Journal Recommendations", expanded=False):
-            st.write("Based on the material properties and novelty, consider submitting to:")
-            for journal in fusion.get('journal_recommendations', []):
-                st.write(f"• **{journal}**")
+            with col1:
+                with st.expander("📊 Material Classification", expanded=True):
+                    classification = morphology['classification']
+                    st.write(f"**Primary Type:** {classification['primary']}")
+                    st.write("**Typical Examples:**")
+                    for example in classification.get('examples', []):
+                        st.write(f"- {example}")
+                    
+                    if 'characteristics' in classification:
+                        st.write("**Key Characteristics:**")
+                        for char in classification['characteristics']:
+                            st.write(f"- {char}")
             
-            if fusion.get('impact_factor_range'):
-                st.write(f"\n**Expected Impact Factor Range:** {fusion['impact_factor_range']}")
-        
-        # Further characterization
-        with st.expander("🔬 Recommended Further Characterization", expanded=False):
-            st.write("To complete the materials characterization, consider:")
-            for technique in fusion.get('recommended_techniques', []):
-                st.write(f"• {technique}")
+            with col2:
+                with st.expander("🔍 Structure Properties", expanded=True):
+                    properties = morphology['structure_properties']
+                    
+                    # Create metrics
+                    col_a, col_b, col_c = st.columns(3)
+                    
+                    with col_a:
+                        st.metric("Porosity", f"{properties.get('porosity_percentage', 0):.1f}%")
+                    with col_b:
+                        st.metric("S/V Ratio", f"{properties.get('surface_to_volume_ratio', 0):.0f} m²/cm³")
+                    with col_c:
+                        st.metric("Accessibility", f"{properties.get('accessibility_factor', 0):.1f}/1.0")
+                    
+                    if 'crystallinity_index' in properties:
+                        st.metric("Crystallinity", f"{properties['crystallinity_index']:.2f}")
+                    if 'estimated_wall_thickness' in properties:
+                        st.metric("Wall Thickness", f"{properties['estimated_wall_thickness']:.1f} nm")
+            
+            # Detailed interpretation
+            st.subheader("Scientific Interpretation")
+            
+            interpretation = morphology['interpretation']
+            
+            # Create interpretation cards
+            cols = st.columns(3)
+            
+            with cols[0]:
+                st.info(f"**Porosity:** {interpretation.get('porosity_level', 'N/A')}")
+                st.caption(interpretation.get('porosity_description', ''))
+            
+            with cols[1]:
+                st.info(f"**Surface Area:** {interpretation.get('surface_area_level', 'N/A')}")
+                st.caption(interpretation.get('surface_area_description', ''))
+            
+            with cols[2]:
+                st.info(f"**Pore Size:** {interpretation.get('pore_size_type', 'N/A')}")
+                st.caption(interpretation.get('pore_size_description', ''))
+            
+            # Additional information
+            with st.expander("🧪 Detailed Morphological Analysis", expanded=False):
+                if 'hierarchy' in interpretation:
+                    st.write(f"**Structural Hierarchy:** {interpretation['hierarchy']}")
+                    st.write(interpretation.get('hierarchy_description', ''))
+                
+                if 'crystallinity' in interpretation:
+                    st.write(f"**Crystallinity:** {interpretation['crystallinity']}")
+                    st.write(interpretation.get('crystal_description', ''))
+                
+                # Add structure-property relationships from fusion results
+                if 'structure_property_relationships' in fusion:
+                    st.write("**Structure-Property Relationships:**")
+                    for relationship in fusion['structure_property_relationships']:
+                        st.write(f"• {relationship}")
+            
+            # Applications and recommendations
+            with st.expander("🚀 Applications & Recommendations", expanded=False):
+                if 'suggested_applications' in fusion:
+                    st.write("**Suggested Applications:**")
+                    for app in fusion['suggested_applications']:
+                        st.write(f"• {app}")
+                
+                if 'recommended_techniques' in fusion:
+                    st.write("\n**Recommended Further Characterization:**")
+                    for tech in fusion['recommended_techniques']:
+                        st.write(f"• {tech}")
+            
+            # Download visualization
+            st.subheader("Download Visualization")
+            
+            # Save figure to buffer
+            import io
+            buf = io.BytesIO()
+            morphology['visualization'].savefig(buf, format='png', dpi=300, bbox_inches='tight')
+            buf.seek(0)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.download_button(
+                    label="📥 Download Morphology Figure (PNG)",
+                    data=buf,
+                    file_name="morphology_visualization.png",
+                    mime="image/png"
+                )
+            
+            with col2:
+                # Generate morphology report
+                report_text = self._generate_morphology_report(morphology, bet, xrd)
+                st.download_button(
+                    label="📄 Download Morphology Report (TXT)",
+                    data=report_text,
+                    file_name="morphology_report.txt",
+                    mime="text/plain"
+                )
+        else:
+            st.error("Morphology analysis failed")
+            if 'error' in morphology:
+                st.error(f"Error: {morphology['error']}")
+    else:
+        st.warning("Complete analysis required for morphology visualization")
+
+def _generate_morphology_report(self, morphology, bet, xrd):
+    """Generate morphology report text"""
+    report = []
+    
+    report.append("=" * 70)
+    report.append("MATERIAL MORPHOLOGY ANALYSIS REPORT")
+    report.append("=" * 70)
+    
+    # Material classification
+    classification = morphology['classification']
+    report.append(f"\nMATERIAL CLASSIFICATION")
+    report.append("-" * 40)
+    report.append(f"Primary Type: {classification['primary']}")
+    
+    if 'examples' in classification:
+        report.append(f"Typical Examples: {', '.join(classification['examples'])}")
+    
+    if 'characteristics' in classification:
+        report.append("Characteristics:")
+        for char in classification['characteristics']:
+            report.append(f"  • {char}")
+    
+    # Structure properties
+    properties = morphology['structure_properties']
+    report.append(f"\nSTRUCTURE PROPERTIES")
+    report.append("-" * 40)
+    
+    for key, value in properties.items():
+        if key == 'porosity_percentage':
+            report.append(f"Porosity: {value:.1f}%")
+        elif key == 'surface_to_volume_ratio':
+            report.append(f"Surface-to-Volume Ratio: {value:.0f} m²/cm³")
+        elif key == 'accessibility_factor':
+            report.append(f"Accessibility Factor: {value:.2f}/1.0")
+        elif key == 'estimated_wall_thickness':
+            report.append(f"Estimated Wall Thickness: {value:.1f} nm")
+        elif key == 'crystallinity_index':
+            report.append(f"Crystallinity Index: {value:.2f}")
+        elif key == 'crystallite_size_nm':
+            report.append(f"Crystallite Size: {value:.1f} nm")
+    
+    # Experimental parameters
+    report.append(f"\nEXPERIMENTAL PARAMETERS")
+    report.append("-" * 40)
+    report.append(f"BET Surface Area: {bet.get('surface_area', 0):.1f} m²/g")
+    report.append(f"Total Pore Volume: {bet.get('total_pore_volume', 0):.3f} cm³/g")
+    report.append(f"Mean Pore Diameter: {bet.get('mean_pore_diameter', 0):.1f} nm")
+    
+    if xrd:
+        report.append(f"Crystallinity Index: {xrd.get('crystallinity_index', 0):.2f}")
+        report.append(f"Crystallite Size: {xrd.get('crystallite_size', {}).get('scherrer', 0):.1f} nm")
+    
+    # Interpretation
+    interpretation = morphology['interpretation']
+    report.append(f"\nMORPHOLOGICAL INTERPRETATION")
+    report.append("-" * 40)
+    
+    for key, value in interpretation.items():
+        if key.endswith('_description'):
+            continue
+        if key in ['porosity_level', 'surface_area_level', 'pore_size_type', 'crystallinity']:
+            report.append(f"{key.replace('_', ' ').title()}: {value}")
+    
+    return "\n".join(report)
 
 def display_methods(results, params):
     """Display detailed methods section"""
@@ -1058,6 +1213,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
