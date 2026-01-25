@@ -810,11 +810,51 @@ class AdvancedXRDAnalyzer:
             # Detect and analyze peaks
             peaks = self.analyze_peaks(two_theta_proc, intensity_proc)
             
+            # Sort peaks by intensity (descending) to get most intensive peaks
+            peaks.sort(key=lambda x: x['intensity'], reverse=True)
+            
+            # Store all peaks and top peaks separately
+            all_peaks = peaks  # All detected peaks
+            top_peaks = peaks[:10]  # Top 10 most intensive peaks for display
+            
             # Calculate crystallinity index
             peak_indices = [p['index'] for p in peaks]
             crystallinity_index = calculate_crystallinity_index(
                 two_theta_proc, intensity_proc, peak_indices
             )
+            
+            # Try to assign hkl indices to top peaks if crystal system is known
+            if crystal_system != 'Unknown' and lattice_params:
+                # Parse lattice parameters
+                a, b, c = 1.0, 1.0, 1.0
+                # Simple parsing: a=4.0, b=4.0, c=4.0
+                for param in lattice_params.split(','):
+                    if '=' in param:
+                        key, value = param.strip().split('=')
+                        key = key.strip()
+                        value = float(value.strip())
+                        if key == 'a':
+                            a = value
+                        elif key == 'b':
+                            b = value
+                        elif key == 'c':
+                            c = value
+                
+                # Assign hkl to top peaks
+                for peak in top_peaks:
+                    try:
+                        hkl_list = calculate_miller_indices(
+                            d_spacing=peak['d_spacing'],
+                            a=a, b=b, c=c,
+                            crystal_system=crystal_system
+                        )
+                        if hkl_list:
+                            # Take the best match (first one)
+                            best_hkl = hkl_list[0]
+                            peak['hkl'] = f"({abs(best_hkl['h'])}{abs(best_hkl['k'])}{abs(best_hkl['l'])})"
+                            peak['hkl_detail'] = best_hkl
+                    except Exception as e:
+                        peak['hkl'] = ''
             
             # Calculate crystallite statistics
             size_stats = self.calculate_crystallite_statistics(peaks)
@@ -859,7 +899,9 @@ class AdvancedXRDAnalyzer:
                 'wavelength': float(self.wavelength),
                 'two_theta': two_theta_proc.tolist(),
                 'intensity': intensity_proc.tolist(),
-                'peaks': peaks,
+                'peaks': all_peaks,  # All peaks
+                'top_peaks': top_peaks,  # Top intensive peaks for display
+                'n_peaks_total': len(all_peaks),
                 'crystallinity_index': float(crystallinity_index),
                 'crystallite_size': {
                     'scherrer': float(size_stats['mean_size']),
@@ -889,9 +931,12 @@ class AdvancedXRDAnalyzer:
                 'error': str(e),
                 'wavelength': float(self.wavelength),
                 'peaks': [],
+                'top_peaks': [],
+                'n_peaks_total': 0,
                 'crystallinity_index': 0.0,
                 'crystallite_size': {'scherrer': 0.0, 'williamson_hall': 0.0, 'distribution': 'Unknown'},
                 'microstrain': 0.0,
                 'ordered_mesopores': False
             }
-
+    
+    
