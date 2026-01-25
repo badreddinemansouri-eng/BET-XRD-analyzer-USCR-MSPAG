@@ -1160,24 +1160,35 @@ def display_export(results, params):
     col1, col2 = st.columns(2)
     
     with col1:
-        # Export data
+        # Export data - be careful with None values
         export_data = {
             'metadata': {
                 'analysis_name': 'BET_XRD_Analysis',
-                'timestamp': results['timestamp'],
+                'timestamp': results.get('timestamp', 'N/A'),
                 'software_version': '3.0',
                 'references': [
                     'Rouquerol et al., Pure Appl. Chem., 1994, 66, 1739',
                     'Thommes et al., Pure Appl. Chem., 2015, 87, 1051'
                 ]
             },
-            'parameters': results['parameters'],
+            'parameters': results.get('parameters', {}),
             'bet_results': results.get('bet_results'),
             'xrd_results': results.get('xrd_results'),
             'fusion_results': results.get('fusion_results')
         }
         
-        json_str = json.dumps(export_data, indent=2, default=str)
+        # Use a custom JSON encoder to handle numpy arrays and other non-serializable objects
+        class NumpyEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                if isinstance(obj, np.integer):
+                    return int(obj)
+                if isinstance(obj, np.floating):
+                    return float(obj)
+                return super(NumpyEncoder, self).default(obj)
+        
+        json_str = json.dumps(export_data, indent=2, cls=NumpyEncoder)
         
         st.download_button(
             label="📄 Download Complete Analysis (JSON)",
@@ -1208,33 +1219,69 @@ def display_export(results, params):
         font_size=params['export']['font_size']
     )
     
+    # BET Figure (if BET data exists)
     if results.get('bet_results') and results.get('bet_raw'):
-        fig = plotter.create_bet_figure(results['bet_raw'], results['bet_results'])
-        
-        # Save to buffer
-        import io
-        buf = io.BytesIO()
-        
-        format_map = {
-            'PNG (600 DPI)': ('png', 600),
-            'PDF (Vector)': ('pdf', None),
-            'SVG (Vector)': ('svg', None),
-            'TIFF (1200 DPI)': ('tiff', 1200)
-        }
-        
-        export_format = params['export']['figure_format']
-        fmt, dpi = format_map.get(export_format, ('png', 600))
-        
-        fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches='tight')
-        buf.seek(0)
-        
-        st.download_button(
-            label=f"🖼️ Download BET Figure ({export_format})",
-            data=buf,
-            file_name=f"bet_analysis.{fmt}",
-            mime=f"image/{fmt}" if fmt != 'pdf' else 'application/pdf',
-            use_container_width=True
-        )
+        try:
+            fig = plotter.create_bet_figure(results['bet_raw'], results['bet_results'])
+            
+            # Save to buffer
+            import io
+            buf = io.BytesIO()
+            
+            format_map = {
+                'PNG (600 DPI)': ('png', 600),
+                'PDF (Vector)': ('pdf', None),
+                'SVG (Vector)': ('svg', None),
+                'TIFF (1200 DPI)': ('tiff', 1200)
+            }
+            
+            export_format = params['export']['figure_format']
+            fmt, dpi = format_map.get(export_format, ('png', 600))
+            
+            fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches='tight')
+            buf.seek(0)
+            
+            st.download_button(
+                label=f"🖼️ Download BET Figure ({export_format})",
+                data=buf,
+                file_name=f"bet_analysis.{fmt}",
+                mime=f"image/{fmt}" if fmt != 'pdf' else 'application/pdf',
+                use_container_width=True
+            )
+        except Exception as e:
+            st.error(f"Could not generate BET figure: {str(e)}")
+    
+    # XRD Figure (if XRD data exists)
+    if results.get('xrd_results') and results.get('xrd_raw'):
+        try:
+            fig = plotter.create_xrd_figure(results['xrd_raw'], results['xrd_results'])
+            
+            # Save to buffer
+            import io
+            buf = io.BytesIO()
+            
+            format_map = {
+                'PNG (600 DPI)': ('png', 600),
+                'PDF (Vector)': ('pdf', None),
+                'SVG (Vector)': ('svg', None),
+                'TIFF (1200 DPI)': ('tiff', 1200)
+            }
+            
+            export_format = params['export']['figure_format']
+            fmt, dpi = format_map.get(export_format, ('png', 600))
+            
+            fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches='tight')
+            buf.seek(0)
+            
+            st.download_button(
+                label=f"🖼️ Download XRD Figure ({export_format})",
+                data=buf,
+                file_name=f"xrd_analysis.{fmt}",
+                mime=f"image/{fmt}" if fmt != 'pdf' else 'application/pdf',
+                use_container_width=True
+            )
+        except Exception as e:
+            st.error(f"Could not generate XRD figure: {str(e)}")
 
 def generate_scientific_report(results):
     """Generate comprehensive scientific report"""
@@ -1243,7 +1290,7 @@ def generate_scientific_report(results):
     report.append("=" * 70)
     report.append("SCIENTIFIC ANALYSIS REPORT - BET-XRD MORPHOLOGY ANALYSIS")
     report.append("=" * 70)
-    report.append(f"Generated: {results['timestamp']}")
+    report.append(f"Generated: {results.get('timestamp', 'N/A')}")
     report.append(f"Software Version: 3.0 (IUPAC Compliant)")
     report.append("")
     
@@ -1252,13 +1299,17 @@ def generate_scientific_report(results):
         bet = results['bet_results']
         report.append("BET SURFACE AREA ANALYSIS")
         report.append("-" * 40)
-        report.append(f"Surface Area (Sᴮᴱᵀ): {bet['surface_area']:.1f} ± {bet['surface_area_error']:.1f} m²/g")
-        report.append(f"Total Pore Volume: {bet['total_pore_volume']:.4f} cm³/g")
-        report.append(f"Micropore Volume (t-plot): {bet['micropore_volume']:.4f} cm³/g")
-        report.append(f"Mean Pore Diameter: {bet['mean_pore_diameter']:.2f} nm")
-        report.append(f"BET C Constant: {bet['c_constant']:.0f}")
-        report.append(f"BET R²: {bet['bet_regression']['r_squared']:.4f}")
-        report.append(f"Hysteresis Type: {bet['hysteresis_analysis']['type']}")
+        report.append(f"Surface Area (Sᴮᴱᵀ): {bet.get('surface_area', 0):.1f} ± {bet.get('surface_area_error', 0):.1f} m²/g")
+        report.append(f"Total Pore Volume: {bet.get('total_pore_volume', 0):.4f} cm³/g")
+        report.append(f"Micropore Volume (t-plot): {bet.get('micropore_volume', 0):.4f} cm³/g")
+        report.append(f"Mean Pore Diameter: {bet.get('mean_pore_diameter', 0):.2f} nm")
+        report.append(f"BET C Constant: {bet.get('c_constant', 0):.0f}")
+        
+        if bet.get('bet_regression'):
+            report.append(f"BET R²: {bet['bet_regression'].get('r_squared', 0):.4f}")
+        
+        if bet.get('hysteresis_analysis'):
+            report.append(f"Hysteresis Type: {bet['hysteresis_analysis'].get('type', 'N/A')}")
         report.append("")
     
     # XRD Results
@@ -1266,6 +1317,47 @@ def generate_scientific_report(results):
         xrd = results['xrd_results']
         report.append("XRD ANALYSIS")
         report.append("-" * 40)
+        report.append(f"Crystallinity Index: {xrd.get('crystallinity_index', 0):.2f}")
+        
+        if xrd.get('crystallite_size'):
+            report.append(f"Crystallite Size (Scherrer): {xrd['crystallite_size'].get('scherrer', 0):.1f} nm")
+        
+        report.append(f"Microstrain: {xrd.get('microstrain', 0):.4f}")
+        report.append(f"Ordered Mesopores: {'Yes' if xrd.get('ordered_mesopores') else 'No'}")
+        
+        if xrd.get('peaks'):
+            report.append(f"Peaks Detected: {len(xrd['peaks'])}")
+        report.append("")
+    
+    # Morphology/Fusion Results - CHECK IF EXISTS
+    if results.get('fusion_results'):
+        fusion = results['fusion_results']
+        if fusion.get('valid', False):
+            report.append("INTEGRATED MORPHOLOGY ANALYSIS")
+            report.append("-" * 40)
+            if 'composite_classification' in fusion:
+                report.append(f"Classification: {fusion['composite_classification']}")
+            if 'material_family' in fusion:
+                report.append(f"Family: {fusion['material_family']}")
+            if 'dominant_feature' in fusion:
+                report.append(f"Dominant Feature: {fusion['dominant_feature']}")
+            report.append("")
+    
+    # Methods
+    report.append("METHODS")
+    report.append("-" * 40)
+    report.append("BET Analysis: IUPAC Rouquerol criteria")
+    report.append("XRD Analysis: Scherrer, Williamson-Hall methods")
+    report.append("Porosity: t-plot, BJH methods")
+    report.append("")
+    
+    report.append("REFERENCES")
+    report.append("-" * 40)
+    report.append("1. Rouquerol et al., Pure Appl. Chem., 1994, 66, 1739")
+    report.append("2. Thommes et al., Pure Appl. Chem., 2015, 87, 1051")
+    report.append("3. Klug & Alexander, X-ray Diffraction Procedures, 1974")
+    
+    return "\n".join(report)
         report.append(f"Crystallinity Index: {xrd['crystallinity_index']:.2f}")
         report.append(f"Crystallite Size (Scherrer): {xrd['crystallite_size']['scherrer']:.1f} nm")
         report.append(f"Microstrain: {xrd['microstrain']:.4f}")
@@ -1304,6 +1396,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
