@@ -27,7 +27,33 @@ from morphology_fusion import MorphologyFusionEngine
 from scientific_plots import PublicationPlotter
 # At the top of app.py with other imports
 from morphology_visualizer import IntegratedMorphologyAnalyzer
+import functools
 
+def memory_safe_plot(func):
+    """Decorator to ensure figures are closed after display"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            # Call the function
+            result = func(*args, **kwargs)
+            
+            # Clean up matplotlib
+            import matplotlib.pyplot as plt
+            plt.close('all')
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            return result
+        except Exception as e:
+            # Clean up even on error
+            import matplotlib.pyplot as plt
+            plt.close('all')
+            raise e
+    return wrapper
+
+# Use it like this:
 # ============================================================================
 # SCIENTIFIC CONFIGURATION
 # ============================================================================
@@ -682,6 +708,7 @@ def display_scientific_results(results, params):
 # ============================================================================
 # DISPLAY FUNCTIONS (To be implemented in detail)
 # ============================================================================
+@memory_safe_plot
 def display_overview(results, plotter):
     """Display overview dashboard"""
     st.subheader("Comprehensive Analysis Dashboard")
@@ -702,7 +729,7 @@ def display_overview(results, plotter):
         st.metric("**Crystallinity Index**",
                  f"{xrd['crystallinity_index']:.2f}",
                  help="Crystalline to amorphous ratio")
-
+@memory_safe_plot
 def display_bet_analysis(results, plotter):
     """Display detailed BET analysis"""
     st.subheader("IUPAC-Compliant BET Analysis")
@@ -743,7 +770,7 @@ def display_bet_analysis(results, plotter):
             st.write(f"**Description:** {hyst['description']}")
             st.write(f"**Loop Area:** {hyst['loop_area']:.2f}")
             st.write(f"**Closure Pressure:** {hyst['closure_pressure']:.3f} P/P₀")
-
+@memory_safe_plot
 def display_xrd_analysis(results, plotter):
     """Display detailed XRD analysis"""
     st.subheader("Advanced XRD Analysis")
@@ -838,6 +865,7 @@ def display_xrd_analysis(results, plotter):
                 file_name="xrd_peak_analysis.csv",
                 mime="text/csv"
             )
+@memory_safe_plot            
 def display_morphology(results):
     """Display morphology visualization and interpretation"""
     st.subheader("Integrated Morphology Analysis")
@@ -1151,7 +1179,7 @@ def display_methods(results, params):
             st.write(f"- Wavelength: {xrd['wavelength']:.5f} nm")
             st.write(f"- Scherrer constant: {xrd['scherrer_constant']}")
             st.write(f"- Background subtraction: {xrd['background_subtraction']}")
-
+@memory_safe_plot
 def display_export(results, params):
     """Export functionality"""
     st.subheader("📤 Export Scientific Data")
@@ -1364,6 +1392,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
