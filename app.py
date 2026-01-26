@@ -164,6 +164,34 @@ def create_sidebar():
                 "Lattice Parameters (Å)",
                 value="",
                 help="e.g., a=4.05 (Cubic), a=4.05 c=6.7 (Hexagonal)"
+            ),
+            'composition': st.text_input(  # NEW
+                "Material Composition",
+                value="SiO2",
+                help="e.g., SiO2, TiO2, Al2O3, ZrO2, CeO2"
+            )
+        }
+        
+        # NEW: Advanced crystallography options
+        with st.expander("Advanced Crystallography", expanded=False):
+            crystal_params['enable_3d'] = st.checkbox(
+                "Generate 3D Crystal Structure",
+                value=True,
+                help="Create 3D visualization of crystal structure"
+            )
+            
+            crystal_params['show_interactive'] = st.checkbox(
+                "Interactive 3D View",
+                value=False,
+                help="Show interactive 3D visualization (requires Plotly)"
+            )
+            
+            crystal_params['supercell_size'] = st.slider(
+                "Supercell Size",
+                min_value=1,
+                max_value=4,
+                value=2,
+                help="Number of unit cells in each direction"
             )
         }
         
@@ -1760,6 +1788,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
