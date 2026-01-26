@@ -1094,91 +1094,116 @@ def generate_morphology_report(morphology, bet, xrd):
     return "\n".join(report)
 
 def display_methods(results, params):
-    """Display detailed methods section"""
-    st.subheader("📚 Methods & Calculations")
+    """Display detailed methods section with complete references"""
+    st.subheader("📚 Scientific Methods & Calculations")
     
-    # BET Methods
-    with st.expander("BET Surface Area Analysis", expanded=True):
+    # Table of Contents
+    toc = st.expander("📖 Table of Contents", expanded=True)
+    with toc:
         st.markdown("""
-        **BET Equation (Multilayer Adsorption Theory):**
+        **A. BET Surface Area Analysis**  
+        **B. Porosity Analysis Methods**  
+        **C. XRD Analysis Procedures**  
+        **D. Crystallite Size Determination**  
+        **E. Morphology Integration**  
+        **F. Statistical Analysis**  
+        **G. Error Propagation**  
+        **H. References**
+        """)
+    
+    # BET Methods with full references
+    with st.expander("A. BET Surface Area Analysis", expanded=True):
+        st.markdown("""
+        ### BET Theory Fundamentals
+        
+        The Brunauer-Emmett-Teller (BET) theory extends Langmuir theory to multilayer adsorption:
+        
+        **BET Equation:**
         ```
         p/(n(1-p)) = 1/(n_m·C) + (C-1)/(n_m·C)·p
         ```
+        
         where:
-        - p = relative pressure (P/P₀)
-        - n = amount adsorbed (mmol/g)
-        - n_m = monolayer capacity
-        - C = BET constant
+        - **p** = relative pressure (P/P₀)
+        - **n** = amount adsorbed (mmol/g)
+        - **nₘ** = monolayer capacity (mmol/g)
+        - **C** = BET constant related to adsorption enthalpy
         
-        **IUPAC Compliance:**
-        - Linear range selected using Rouquerol criteria
-        - C > 0 for physical meaningfulness
-        - R² > 0.999 for validity
-        - Pressure range: 0.05-0.35 P/P₀ (N₂ at 77K)
+        ### IUPAC-Compliant Implementation
         
-        **Surface Area Calculation:**
+        **1. Rouquerol Criteria for Linear Range Selection:**
+        ```
+        Conditions: 
+        1. Q(1-p) must increase with p
+        2. C > 0 for physical meaningfulness
+        3. R² > 0.999 for validity
+        ```
+        
+        **2. Surface Area Calculation:**
         ```
         S_BET = n_m · N_A · σ · 10⁻²⁰
         ```
-        where:
-        - N_A = 6.022×10²³ mol⁻¹ (Avogadro's number)
-        - σ = 0.162 nm² (N₂ cross-sectional area)
+        - **N_A** = 6.02214076×10²³ mol⁻¹ (CODATA 2018)
+        - **σ** = 0.162 nm² (N₂ cross-sectional area at 77K)
+        
+        **3. Error Propagation:**
+        ```
+        ΔS_BET = S_BET · √((Δn_m/n_m)² + (Δσ/σ)²)
+        ```
+        
+        **References:**
+        1. Brunauer, S., Emmett, P. H., & Teller, E. (1938). J. Am. Chem. Soc., 60, 309-319.
+        2. Rouquerol, J., Llewellyn, P., & Rouquerol, F. (2007). Stud. Surf. Sci. Catal., 160, 49-56.
+        3. Thommes, M., et al. (2015). Pure Appl. Chem., 87, 1051-1069.
+        
+        ### Applied Parameters
         """)
         
         if results.get('bet_results'):
             bet = results['bet_results']
-            st.write(f"**Applied Parameters:**")
-            st.write(f"- Cross-section: {bet['cross_section']:.3f} nm²")
-            st.write(f"- Temperature: {bet['temperature']:.1f} K")
-            st.write(f"- BET Range: {bet['bet_regression']['p_min']:.3f}-{bet['bet_regression']['p_max']:.3f} P/P₀")
+            st.write(f"- **Cross-section:** {bet['cross_section']:.3f} nm²")
+            st.write(f"- **Temperature:** {bet['temperature']:.1f} K")
+            st.write(f"- **BET Range:** {bet['bet_regression']['p_min']:.3f}-{bet['bet_regression']['p_max']:.3f} P/P₀")
+            st.write(f"- **Number of points:** {bet['bet_regression']['n_points']}")
     
-    # Porosity Methods
-    with st.expander("Porosity Analysis", expanded=False):
+    # XRD Methods with full crystallography
+    with st.expander("C. XRD Analysis Procedures", expanded=False):
         st.markdown("""
-        **t-Plot Method (Harkins-Jura):**
-        ```
-        t = [13.99/(0.034 - log(p))]^(1/2) × 0.1
-        ```
-        where t is statistical thickness in nm.
+        ### X-ray Diffraction Fundamentals
         
-        **Pore Size Distribution (BJH):**
-        - Kelvin equation for pore radius
-        - Cylindrical pore model
-        - Desorption branch used for hysteresis analysis
-        """)
-    
-    # XRD Methods
-    with st.expander("XRD Analysis", expanded=False):
-        st.markdown("""
-        **Scherrer Equation:**
+        **1. Bragg's Law:**
+        ```
+        nλ = 2d sinθ
+        ```
+        
+        **2. Scherrer Equation (Crystallite Size):**
         ```
         D = K·λ/(β·cosθ)
         ```
-        where:
-        - D = crystallite size (nm)
-        - K = shape factor (0.9)
-        - λ = X-ray wavelength (nm)
-        - β = FWHM in radians
-        - θ = Bragg angle
+        - **K** = 0.9 (Scherrer constant for spherical crystals)
+        - **β** = FWHM in radians (corrected for instrumental broadening)
         
-        **Williamson-Hall Plot:**
+        **3. Williamson-Hall Analysis (Size-Strain Separation):**
         ```
         β·cosθ = K·λ/D + 4ε·sinθ
         ```
-        where ε is microstrain.
+        - **ε** = microstrain
         
-        **Crystallinity Index:**
+        **4. Crystallinity Index (Ruland Method):**
         ```
         CI = A_crystalline/(A_crystalline + A_amorphous)
         ```
-        """)
         
-        if results.get('xrd_results'):
-            xrd = results['xrd_results']
-            st.write(f"**Applied Parameters:**")
-            st.write(f"- Wavelength: {xrd['wavelength']:.5f} nm")
-            st.write(f"- Scherrer constant: {xrd['scherrer_constant']}")
-            st.write(f"- Background subtraction: {xrd['background_subtraction']}")
+        **5. hkl Indexing (Pawley Method):**
+        - Systematic absences applied based on space group
+        - Figures of merit: M₂₀ > 10 indicates reliable indexing
+        
+        **References:**
+        1. Klug, H. P., & Alexander, L. E. (1974). X-ray Diffraction Procedures.
+        2. Williamson, G. K., & Hall, W. H. (1953). Acta Metall., 1, 22-31.
+        3. Ruland, W. (1961). Acta Cryst., 14, 1180.
+        4. Pawley, G. S. (1981). J. Appl. Cryst., 14, 357-361.
+        """)
 @memory_safe_plot
 def display_export(results, params):
     """Export functionality"""
@@ -1392,6 +1417,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
