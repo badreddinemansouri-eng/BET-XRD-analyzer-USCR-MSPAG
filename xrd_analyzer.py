@@ -19,7 +19,14 @@ import warnings
 import re
 
 warnings.filterwarnings('ignore')
-
+def safe_trapz(y, x):
+    """Safe trapezoidal integration that works with all numpy versions"""
+    try:
+        # Try numpy's trapz
+        return np.trapz(y, x)
+    except (AttributeError, TypeError):
+        # Fallback to manual implementation
+        return np.sum(0.5 * (y[1:] + y[:-1]) * (x[1:] - x[:-1]))
 # ============================================================================
 # PHYSICAL CONSTANTS FOR XRD
 # ============================================================================
@@ -457,29 +464,28 @@ def williamson_hall_analysis(peaks, wavelength=1.5406):
 # ============================================================================
 # In xrd_analyzer.py - Update the calculate_crystallinity_index function:
 def calculate_crystallinity_index(two_theta, intensity, peak_indices):
-    """Calculate crystallinity index using area method"""
+    """
+    Calculate crystallinity index
+    """
     if len(peak_indices) == 0:
         return 0.0
     
-    # Better background estimation using modified SNIP
-    background = estimate_amorphous_background(intensity, iterations=50)
+    # Create a baseline (amorphous background)
+    amorphous_background = gaussian_filter1d(intensity, sigma=50)
     
-    # Calculate areas
-    total_area = np.trapz(intensity, two_theta)
-    amorphous_area = np.trapz(background, two_theta)
+    # Calculate areas using safe trapezoidal integration
+    total_area = safe_trapz(intensity, two_theta)
+    amorphous_area = safe_trapz(amorphous_background, two_theta)
     
-    # Crystalline area
+    # Crystalline area = total area - amorphous area
     crystalline_area = max(0, total_area - amorphous_area)
     
-    # Crystallinity index
-    crystallinity = crystalline_area / total_area if total_area > 0 else 0.0
+    if total_area > 0:
+        crystallinity = crystalline_area / total_area
+    else:
+        crystallinity = 0.0
     
-    # Apply correction factor based on reference materials
-    # Reference: Ruland, W. (1961). Acta Cryst. 14, 1180.
-    correction = 1.0  # Add correction based on scattering contrast if needed
-    
-    return crystallinity * correction
-
+    return crystallinity
 def estimate_amorphous_background(intensity, iterations=50):
     """Improved background estimation using asymmetric SNIP"""
     # Convert to log scale
@@ -1015,4 +1021,5 @@ class AdvancedXRDAnalyzer:
             }
     
     
+
 
