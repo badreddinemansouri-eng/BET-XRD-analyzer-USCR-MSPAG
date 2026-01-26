@@ -51,6 +51,12 @@ from scientific_plots import PublicationPlotter
 from morphology_visualizer import MorphologyVisualizer
 
 import functools
+fig = cs3d.create_interactive_plot(structure)
+if fig is None:
+    st.warning("Interactive WebGL not supported. Showing static 3D visualization.")
+    st.pyplot(cs3d.create_3d_plot(structure))
+else:
+    st.plotly_chart(fig, use_container_width=True)
 
 def memory_safe_plot(func):
     """Decorator to ensure figures are closed after display"""
@@ -2400,6 +2406,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
