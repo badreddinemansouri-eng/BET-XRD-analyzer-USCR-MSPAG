@@ -451,61 +451,114 @@ def williamson_hall_analysis(peaks, wavelength=1.5406):
         'x_data': [float(x) for x in x_vals],
         'y_data': [float(y) for y in y_vals]
     }
-
+        # DEBUG: Add this to see what's happening
+        print(f"DEBUG: Type of peaks: {type(peaks)}")
+        print(f"DEBUG: Content of peaks: {peaks}")
+        if peaks:
+            print(f"DEBUG: First item type: {type(peaks[0])}")
+            print(f"DEBUG: First item content: {peaks[0]}")
+        
+        # Calculate crystallinity index
+        peak_indices = []
+        if peaks:
+            peak_indices = [p.get('index', 0) for p in peaks]
+        
+        print(f"DEBUG: peak_indices = {peak_indices}")
+        print(f"DEBUG: Type of peak_indices = {type(peak_indices)}")
+        
+        crystallinity_index = calculate_crystallinity_index(
+            two_theta_proc, intensity_proc, peak_indices
+        )
 # ============================================================================
 # CRYSTALLINITY INDEX
 # ============================================================================
 # In xrd_analyzer.py - Update the calculate_crystallinity_index function:
 def calculate_crystallinity_index(two_theta, intensity, peak_indices):
     """
-    Calculate crystallinity index - FIXED VERSION
+    Calculate crystallinity index - COMPLETELY REWRITTEN ROBUST VERSION
+    
+    CI = A_crystalline / (A_crystalline + A_amorphous)
+    
+    Reference: Ruland, W. (1961). Acta Cryst., 14, 1180-1185.
     """
-    # Handle various input types for peak_indices
-    if peak_indices is None:
-        return 0.0
-    
-    # Convert to list if it's a single number
-    if isinstance(peak_indices, (int, float, np.integer, np.floating)):
-        peak_indices = [int(peak_indices)]
-    
-    # Check if it's iterable
     try:
-        iter(peak_indices)
-    except TypeError:
-        return 0.0
-    
-    # Convert to list and ensure integers
-    try:
-        peak_indices = [int(idx) for idx in peak_indices]
-    except (ValueError, TypeError):
-        return 0.0
-    
-    if len(peak_indices) == 0:
-        return 0.0
-    
-    # Manual trapezoidal integration
-    def manual_trapz(y, x):
-        if len(y) != len(x) or len(y) < 2:
-            return 0.0
-        return float(np.sum(0.5 * (y[1:] + y[:-1]) * (x[1:] - x[:-1])))
-    
-    try:
-        # Create amorphous background
-        from scipy.ndimage import gaussian_filter1d
-        amorphous_background = gaussian_filter1d(intensity, sigma=50)
+        # Ensure inputs are numpy arrays
+        two_theta = np.asarray(two_theta, dtype=np.float64)
+        intensity = np.asarray(intensity, dtype=np.float64)
         
-        # Calculate areas
-        total_area = manual_trapz(intensity, two_theta)
-        amorphous_area = manual_trapz(amorphous_background, two_theta)
+        # DEBUG
+        print(f"DEBUG in calculate_crystallinity_index:")
+        print(f"  - two_theta shape: {two_theta.shape}")
+        print(f"  - intensity shape: {intensity.shape}")
+        print(f"  - peak_indices type: {type(peak_indices)}")
+        print(f"  - peak_indices value: {peak_indices}")
+        
+        # Handle peak_indices - ensure it's a list/array
+        if peak_indices is None:
+            return 0.0
+        
+        # Check if it's a single number
+        if isinstance(peak_indices, (int, float, np.integer, np.floating)):
+            # Convert single number to list
+            peak_indices_list = [int(peak_indices)]
+        elif hasattr(peak_indices, '__iter__'):
+            # It's iterable, convert to list
+            peak_indices_list = list(peak_indices)
+        else:
+            # Not iterable, return 0
+            return 0.0
+        
+        print(f"  - peak_indices_list: {peak_indices_list}")
+        print(f"  - peak_indices_list length: {len(peak_indices_list)}")
+        
+        # If no peaks, return 0
+        if len(peak_indices_list) == 0:
+            return 0.0
+        
+        # Method 1: Area ratio method (simplified)
+        # Create amorphous background using moving average
+        window_size = min(50, len(intensity) // 10)
+        if window_size % 2 == 0:
+            window_size += 1
+        
+        # Apply moving average for background
+        from scipy.ndimage import uniform_filter1d
+        amorphous_background = uniform_filter1d(intensity, size=window_size)
+        
+        # Calculate areas using manual integration (safe)
+        def safe_integrate(y, x):
+            """Manual trapezoidal integration"""
+            if len(y) < 2 or len(x) < 2 or len(y) != len(x):
+                return 0.0
+            return float(np.sum(0.5 * (y[1:] + y[:-1]) * (x[1:] - x[:-1])))
+        
+        total_area = safe_integrate(intensity, two_theta)
+        amorphous_area = safe_integrate(amorphous_background, two_theta)
+        
+        # Ensure areas are positive
+        total_area = max(total_area, 1e-10)
+        amorphous_area = max(amorphous_area, 0)
         
         # Crystalline area
-        crystalline_area = max(0.0, total_area - amorphous_area)
+        crystalline_area = max(0, total_area - amorphous_area)
         
-        if total_area > 0:
-            return float(crystalline_area / total_area)
-        else:
-            return 0.0
-    except Exception:
+        # Calculate crystallinity
+        ci = crystalline_area / total_area
+        
+        # Bound between 0 and 1
+        ci = max(0.0, min(1.0, ci))
+        
+        print(f"  - total_area: {total_area}")
+        print(f"  - amorphous_area: {amorphous_area}")
+        print(f"  - crystalline_area: {crystalline_area}")
+        print(f"  - crystallinity_index: {ci}")
+        
+        return float(ci)
+        
+    except Exception as e:
+        print(f"ERROR in calculate_crystallinity_index: {e}")
+        import traceback
+        print(traceback.format_exc())
         return 0.0
 def estimate_amorphous_background(intensity, iterations=50):
     """Improved background estimation using asymmetric SNIP"""
@@ -1042,6 +1095,7 @@ class AdvancedXRDAnalyzer:
             }
     
     
+
 
 
 
