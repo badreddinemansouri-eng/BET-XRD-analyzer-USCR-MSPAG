@@ -716,6 +716,9 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
         # ====================================================================
         # STEP 3: XRD ANALYSIS
         # ====================================================================
+        # ====================================================================
+        # STEP 3: XRD ANALYSIS - ENHANCED WITH CRYSTALLOGRAPHY ENGINE
+        # ====================================================================
         if 'xrd_raw' in analysis_results:
             status_text.text("📈 Performing advanced XRD analysis...")
             progress_bar.progress(60)
@@ -736,7 +739,8 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     smoothing=params['xrd']['smoothing']
                 )
                 
-                analysis_results['xrd_results'] = xrd_analyzer.complete_analysis(
+                # Perform XRD analysis
+                xrd_results = xrd_analyzer.complete_analysis(
                     two_theta=analysis_results['xrd_raw']['two_theta'],
                     intensity=analysis_results['xrd_raw']['intensity'],
                     crystal_system=params['crystal']['system'],
@@ -744,11 +748,56 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     lattice_params=params['crystal']['lattice_params']
                 )
                 
-                if analysis_results['xrd_results']['valid']:
+                # ENHANCE WITH CRYSTALLOGRAPHY ENGINE FOR BETTER HKL INDEXING
+                if (xrd_results['valid'] and 
+                    params['crystal']['system'] != 'Unknown' and 
+                    params['crystal']['lattice_params']):
+                    
+                    try:
+                        # Initialize crystallography engine
+                        from crystallography_engine import CrystallographyEngine
+                        ce = CrystallographyEngine()
+                        
+                        # Parse lattice parameters
+                        lattice_dict = {}
+                        import re
+                        lattice_str = params['crystal']['lattice_params']
+                        for match in re.finditer(r'([abc])\s*=\s*([\d\.]+)', lattice_str):
+                            lattice_dict[match.group(1)] = float(match.group(2))
+                        
+                        # Index peaks using crystallography engine
+                        peak_positions = [p['position'] for p in xrd_results['peaks']]
+                        indexing_result = ce.index_peaks(
+                            peak_positions=peak_positions,
+                            crystal_system=params['crystal']['system'],
+                            lattice_params=lattice_dict,
+                            wavelength=wavelength,
+                            space_group=params['crystal']['space_group']
+                        )
+                        
+                        # Update peaks with better hkl indexing
+                        indexed_peaks = indexing_result.get('indexed_peaks', [])
+                        for i, peak in enumerate(xrd_results['peaks']):
+                            if i < len(indexed_peaks):
+                                hkl_info = indexed_peaks[i]
+                                peak['hkl'] = f"({hkl_info['h']}{hkl_info['k']}{hkl_info['l']})"
+                                peak['hkl_detail'] = hkl_info
+                                peak['indexing_error'] = hkl_info['error_percent']
+                        
+                        # Add indexing results to XRD results
+                        xrd_results['indexing'] = indexing_result
+                        xrd_results['indexing_method'] = 'Pawley-like refinement'
+                        
+                    except Exception as e:
+                        st.warning(f"Crystallography engine: {str(e)}")
+                
+                analysis_results['xrd_results'] = xrd_results
+                
+                if xrd_results['valid']:
                     st.success("✅ XRD analysis completed successfully")
                     
                     # Display key results
-                    xrd_res = analysis_results['xrd_results']
+                    xrd_res = xrd_results
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
@@ -759,10 +808,15 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     with col3:
                         st.metric("Peaks", f"{len(xrd_res['peaks'])}")
                     with col4:
-                        st.metric("Ordered", "Yes" if xrd_res['ordered_mesopores'] else "No")
+                        # Show indexing quality if available
+                        if 'indexing' in xrd_res:
+                            fom = xrd_res['indexing']['figures_of_merit']
+                            st.metric("M₂₀", f"{fom.get('M20', 0):.1f}")
+                        else:
+                            st.metric("Ordered", "Yes" if xrd_res['ordered_mesopores'] else "No")
                 
                 else:
-                    st.warning(f"⚠️ XRD analysis completed with warnings: {analysis_results['xrd_results'].get('error', 'Unknown error')}")
+                    st.warning(f"⚠️ XRD analysis completed with warnings: {xrd_results.get('error', 'Unknown error')}")
                     
             except Exception as e:
                 st.error(f"❌ XRD analysis error: {str(e)}")
@@ -808,7 +862,46 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
             except Exception as e:
                 st.error(f"❌ Morphology fusion error: {str(e)}")
                 # Continue anyway as fusion is optional
+                # ====================================================================
+        # STEP 4: SCIENTIFIC INTEGRATION (NEW)
+        # ====================================================================
+        bet_valid = analysis_results.get('bet_results', {}).get('overall_valid', False)
+        xrd_valid = analysis_results.get('xrd_results', {}).get('valid', False)
         
+        if bet_valid or xrd_valid:
+            status_text.text("🔗 Performing scientific integration...")
+            progress_bar.progress(85)
+            
+            try:
+                # Initialize scientific integrator
+                integrator = ScientificIntegrator()
+                
+                # Perform scientific integration
+                integration_results = integrator.integrate_results(
+                    bet_results=analysis_results.get('bet_results', {}),
+                    xrd_results=analysis_results.get('xrd_results', {})
+                )
+                
+                if integration_results['valid']:
+                    analysis_results['integration'] = integration_results
+                    st.success("✅ Scientific integration completed")
+                    
+                    # Display integration summary
+                    with st.expander("🔗 Integration Summary", expanded=False):
+                        if 'material_classification' in integration_results:
+                            classification = integration_results['material_classification']
+                            st.write(f"**Classification:** {classification.get('primary', 'Unknown')}")
+                        
+                        if 'validation_metrics' in integration_results:
+                            validation = integration_results['validation_metrics']
+                            if 'internal_consistency' in validation:
+                                st.write(f"**Internal Consistency:** {validation['internal_consistency']:.2f}")
+                
+                else:
+                    st.warning("⚠️ Scientific integration completed with warnings")
+                    
+            except Exception as e:
+                st.error(f"❌ Scientific integration error: {str(e)}")
         # ====================================================================
         # STEP 5: FINALIZATION - ADD VALIDATION METRICS
         # ====================================================================
@@ -929,52 +1022,86 @@ def display_scientific_results(results, params):
     
     st.header("📊 Scientific Results")
     
-    # Create tabs for different views - ADD VALIDATION TAB
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([  # Changed from 6 to 7 tabs
+    # Create tabs for different views - ADD CRYSTAL STRUCTURE TAB
+    tab_names = [
         "📈 Overview", 
         "🔬 BET Analysis", 
         "📉 XRD Analysis", 
+        "🏛️ Crystal Structure",  # NEW TAB
         "🧬 Morphology", 
-        "🔍 Validation",  # NEW TAB
+        "🔍 Validation",
         "📚 Methods",
         "📤 Export"
-    ])
+    ]
     
-    # Import plotter here to avoid circular imports
+    # Check if we should show crystal structure tab
+    show_crystal_tab = False
+    if (params['crystal']['system'] != 'Unknown' and 
+        params['crystal']['lattice_params'] and
+        params['crystal']['enable_3d']):
+        show_crystal_tab = True
+    
+    # Adjust tabs based on available data
+    if show_crystal_tab:
+        tabs = st.tabs(tab_names)
+    else:
+        # Remove crystal structure tab if not applicable
+        tabs = st.tabs([t for t in tab_names if t != "🏛️ Crystal Structure"])
+        # Create mapping
+        tab_mapping = {
+            "📈 Overview": 0,
+            "🔬 BET Analysis": 1,
+            "📉 XRD Analysis": 2,
+            "🧬 Morphology": 3 if show_crystal_tab else 2,
+            "🔍 Validation": 4 if show_crystal_tab else 3,
+            "📚 Methods": 5 if show_crystal_tab else 4,
+            "📤 Export": 6 if show_crystal_tab else 5
+        }
+    
+    # Import plotter
     from scientific_plots import PublicationPlotter
-    
     plotter = PublicationPlotter(
         color_scheme=params['export']['color_scheme'],
         font_size=params['export']['font_size']
     )
     
-    with tab1:
-        display_overview(results, plotter)
-    
-    with tab2:
-        display_bet_analysis(results, plotter)
-    
-    with tab3:
-        display_xrd_analysis(results, plotter)
-    
-    with tab4:
-        # Only display morphology if we have BET results
-        if results.get('bet_results'):
+    if show_crystal_tab:
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = tabs
+        
+        with tab1:
+            display_overview(results, plotter)
+        with tab2:
+            display_bet_analysis(results, plotter)
+        with tab3:
+            display_xrd_analysis(results, plotter)
+        with tab4:  # NEW CRYSTAL STRUCTURE TAB
+            display_crystal_structure(results, params)
+        with tab5:
             display_morphology(results)
-        else:
-            st.warning("BET analysis data is required to visualize material morphology")
-    
-    # ============================================================================
-    # NEW VALIDATION TAB - ADD THIS SECTION
-    # ============================================================================
-    with tab5:
-        display_validation(results)
-    
-    with tab6:
-        display_methods(results, params)
-    
-    with tab7:  # Changed from tab6 to tab7
-        display_export(results, params)
+        with tab6:
+            display_validation(results)
+        with tab7:
+            display_methods(results, params)
+        with tab8:
+            display_export(results, params)
+    else:
+        # Original tab structure without crystal structure
+        tab1, tab2, tab3, tab4, tab5, tab6 = tabs
+        
+        with tab1:
+            display_overview(results, plotter)
+        with tab2:
+            display_bet_analysis(results, plotter)
+        with tab3:
+            display_xrd_analysis(results, plotter)
+        with tab4:
+            display_morphology(results)
+        with tab5:
+            display_validation(results)
+        with tab6:
+            display_methods(results, params)
+        with tab7:
+            display_export(results, params)
 # ============================================================================
 # DISPLAY FUNCTIONS (To be implemented in detail)
 # ============================================================================
@@ -987,18 +1114,68 @@ def display_overview(results, plotter):
     fig = plotter.create_summary_figure(results)
     st.pyplot(fig)
     
-    # Key metrics
-    if results.get('bet_results'):
-        bet = results['bet_results']
-        st.metric("**Surface Area (Sᴮᴱᵀ)**", 
-                 f"{bet['surface_area']:.1f} ± {bet['surface_area_error']:.1f} m²/g",
-                 help="BET surface area with 95% confidence interval")
+    # Key metrics in columns
+    col1, col2, col3, col4 = st.columns(4)
     
-    if results.get('xrd_results'):
-        xrd = results['xrd_results']
-        st.metric("**Crystallinity Index**",
-                 f"{xrd['crystallinity_index']:.2f}",
-                 help="Crystalline to amorphous ratio")
+    with col1:
+        if results.get('bet_results'):
+            bet = results['bet_results']
+            st.metric("**Surface Area (Sᴮᴱᵀ)**", 
+                     f"{bet['surface_area']:.1f} ± {bet['surface_area_error']:.1f} m²/g",
+                     help="BET surface area with 95% confidence interval")
+    
+    with col2:
+        if results.get('xrd_results'):
+            xrd = results['xrd_results']
+            st.metric("**Crystallinity Index**",
+                     f"{xrd['crystallinity_index']:.2f}",
+                     help="Crystalline to amorphous ratio")
+    
+    with col3:
+        if results.get('bet_results'):
+            bet = results['bet_results']
+            st.metric("**Total Pore Volume**",
+                     f"{bet['total_pore_volume']:.3f} cm³/g",
+                     help="Total pore volume at P/P₀ ≈ 0.99")
+    
+    with col4:
+        # Show integration result if available
+        if results.get('integration'):
+            integration = results['integration']
+            if 'material_classification' in integration:
+                classification = integration['material_classification']['primary']
+                st.metric("**Material Type**", classification)
+        elif results.get('fusion_results'):
+            fusion = results['fusion_results']
+            st.metric("**Material Type**", 
+                     fusion.get('composite_classification', 'Unknown'))
+    
+    # NEW: Show scientific integration validation
+    if results.get('integration'):
+        integration = results['integration']
+        
+        with st.expander("🔬 Scientific Integration Validation", expanded=False):
+            if 'validation_metrics' in integration:
+                validation = integration['validation_metrics']
+                
+                col_val1, col_val2 = st.columns(2)
+                
+                with col_val1:
+                    if 'internal_consistency' in validation:
+                        consistency = validation['internal_consistency']
+                        if consistency > 0.8:
+                            st.success(f"✅ High consistency: {consistency:.2f}")
+                        elif consistency > 0.5:
+                            st.warning(f"⚠️ Moderate consistency: {consistency:.2f}")
+                        else:
+                            st.error(f"❌ Low consistency: {consistency:.2f}")
+                
+                with col_val2:
+                    if 'confidence_intervals' in validation:
+                        ci = validation['confidence_intervals']
+                        st.write("**Confidence Intervals:**")
+                        for key, value in ci.items():
+                            st.write(f"• {key}: {value}")
 @memory_safe_plot
 def display_bet_analysis(results, plotter):
     """Display detailed BET analysis"""
@@ -1053,44 +1230,87 @@ def display_xrd_analysis(results, plotter):
         fig = plotter.create_xrd_figure(xrd_raw, xrd_res)
         st.pyplot(fig)
         
-        # Peak table - show all peaks if user wants
+        # Enhanced peak table with better hkl display
         if xrd_res.get('peaks'):
-            st.subheader("Peak Analysis")
+            st.subheader("Peak Analysis with HKL Indexing")
+            
+            # Show indexing quality if available
+            if 'indexing' in xrd_res:
+                indexing = xrd_res['indexing']
+                fom = indexing.get('figures_of_merit', {})
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if 'M20' in fom:
+                        st.metric("M₂₀ Figure of Merit", f"{fom['M20']:.1f}")
+                with col2:
+                    if 'mean_error' in fom:
+                        st.metric("Mean Indexing Error", f"{fom['mean_error']:.2f}%")
+                with col3:
+                    if 'n_indexed' in fom:
+                        st.metric("Indexed Peaks", f"{fom['n_indexed']}/{len(xrd_res['peaks'])}")
             
             # Let user choose how many peaks to show
-            n_peaks_total = xrd_res.get('n_peaks_total', len(xrd_res['peaks']))
+            n_peaks_total = len(xrd_res['peaks'])
             n_to_show = st.slider(
                 "Number of peaks to display",
                 min_value=1,
-                max_value=min(20, n_peaks_total),
-                value=min(10, n_peaks_total),
-                help="Show the most intensive peaks"
+                max_value=n_peaks_total,
+                value=min(20, n_peaks_total),
+                help="All peaks shown (not just major ones)"
             )
             
             # Sort peaks by intensity for display
             all_peaks = sorted(xrd_res['peaks'], key=lambda x: x['intensity'], reverse=True)
             
-            peaks_df = pd.DataFrame([
-                {
+            # Create enhanced DataFrame with hkl
+            peaks_data = []
+            for i, peak in enumerate(all_peaks[:n_to_show]):
+                row = {
                     'Rank': i+1,
                     '2θ (°)': peak['position'],
                     'd-spacing (Å)': peak['d_spacing'],
                     'Intensity': peak['intensity'],
                     'FWHM (°)': peak['fwhm_deg'],
-                    'hkl': peak.get('hkl', peak.get('hkl_detail', {}).get('hkl', '')),
                     'Size (nm)': peak.get('crystallite_size', 0)
                 }
-                for i, peak in enumerate(all_peaks[:n_to_show])
-            ])
+                
+                # Add enhanced hkl information
+                if 'hkl' in peak and peak['hkl']:
+                    row['hkl'] = peak['hkl']
+                    if 'indexing_error' in peak:
+                        row['Error (%)'] = f"{peak['indexing_error']:.2f}"
+                    else:
+                        row['Error (%)'] = ""
+                elif 'hkl_detail' in peak and peak['hkl_detail']:
+                    hkl_detail = peak['hkl_detail']
+                    if isinstance(hkl_detail, dict) and 'h' in hkl_detail:
+                        row['hkl'] = f"({hkl_detail['h']}{hkl_detail['k']}{hkl_detail['l']})"
+                        row['Error (%)'] = f"{hkl_detail.get('error_percent', 0):.2f}"
+                    else:
+                        row['hkl'] = str(hkl_detail)
+                        row['Error (%)'] = ""
+                else:
+                    row['hkl'] = ""
+                    row['Error (%)'] = ""
+                
+                peaks_data.append(row)
             
+            peaks_df = pd.DataFrame(peaks_data)
+            
+            # Format the DataFrame
             st.dataframe(peaks_df.style.format({
                 'Rank': '{:.0f}',
                 '2θ (°)': '{:.3f}',
                 'd-spacing (Å)': '{:.3f}',
                 'Intensity': '{:.0f}',
                 'FWHM (°)': '{:.3f}',
-                'Size (nm)': '{:.1f}'
+                'Size (nm)': '{:.1f}',
+                'Error (%)': '{:.2f}'
             }))
+        
+        # Continue with rest of function...
+        # ... existing crystallite size analysis, download buttons, etc.
         
         # Crystallite size analysis
         with st.expander("🔬 Crystallite Size Analysis", expanded=False):
@@ -1574,7 +1794,141 @@ def display_validation(results):
             
             with col2:
                 st.metric("BET Points", f"{bet.get('data_points', {}).get('adsorption', 0)}")
-                st.metric("XRD Points", f"{xrd.get('n_points', 0)}")        
+                st.metric("XRD Points", f"{xrd.get('n_points', 0)}")
+def display_crystal_structure(results, params):
+    """Display 3D crystal structure visualization"""
+    st.subheader("🏛️ 3D Crystal Structure")
+    
+    # Get crystal parameters
+    crystal_system = params['crystal']['system']
+    space_group = params['crystal']['space_group']
+    lattice_str = params['crystal']['lattice_params']
+    composition = params['crystal'].get('composition', 'SiO2')
+    
+    if crystal_system == 'Unknown' or not lattice_str:
+        st.info("""
+        **Crystal structure visualization requires:**
+        1. Crystal system (select from sidebar)
+        2. Lattice parameters (e.g., a=4.05, c=6.7)
+        
+        Please provide these parameters in the sidebar under "Crystal Structure".
+        """)
+        return
+    
+    # Parse lattice parameters
+    lattice_params = {}
+    import re
+    for match in re.finditer(r'([abc])\s*=\s*([\d\.]+)', lattice_str):
+        lattice_params[match.group(1)] = float(match.group(2))
+    
+    if not lattice_params:
+        st.warning("Could not parse lattice parameters. Please use format: a=4.05, b=4.05, c=6.7")
+        return
+    
+    try:
+        # Initialize 3D crystal structure generator
+        from crystal_structure_3d import CrystalStructure3D
+        structure_3d = CrystalStructure3D()
+        
+        # Generate crystal structure
+        structure = structure_3d.generate_structure(
+            crystal_system=crystal_system,
+            lattice_params=lattice_params,
+            space_group=space_group,
+            composition=composition
+        )
+        
+        # Add space group to structure
+        structure['space_group'] = space_group
+        
+        # Display static 3D plot
+        st.subheader("Static 3D Visualization")
+        fig_static = structure_3d.create_3d_plot(structure, figsize=(10, 8))
+        st.pyplot(fig_static)
+        
+        # Display crystal information
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Crystal System", crystal_system)
+        with col2:
+            st.metric("Space Group", space_group if space_group else "Not specified")
+        with col3:
+            if 'density' in structure:
+                st.metric("Density", f"{structure['density']:.2f} g/cm³")
+        
+        # Display lattice parameters
+        with st.expander("📏 Lattice Parameters", expanded=False):
+            for param, value in lattice_params.items():
+                st.write(f"**{param}** = {value:.3f} Å")
+            
+            # Calculate unit cell volume
+            if crystal_system == 'Cubic':
+                a = lattice_params.get('a', 0)
+                volume = a**3
+                st.write(f"**Unit Cell Volume** = {volume:.3f} Å³")
+            elif crystal_system == 'Hexagonal':
+                a = lattice_params.get('a', 0)
+                c = lattice_params.get('c', 0)
+                volume = (3**0.5 / 2) * a**2 * c
+                st.write(f"**Unit Cell Volume** = {volume:.3f} Å³")
+        
+        # Interactive 3D plot (optional)
+        if params['crystal'].get('show_interactive', False):
+            st.subheader("Interactive 3D Visualization")
+            try:
+                fig_interactive = structure_3d.create_interactive_plot(structure)
+                st.plotly_chart(fig_interactive, use_container_width=True)
+            except Exception as e:
+                st.warning(f"Interactive plot requires Plotly: {str(e)}")
+        
+        # Download options
+        st.subheader("📥 Download Structure")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Save static figure
+            buf = io.BytesIO()
+            fig_static.savefig(buf, format='png', dpi=300, bbox_inches='tight')
+            buf.seek(0)
+            
+            st.download_button(
+                label="📷 Download 3D Structure (PNG)",
+                data=buf,
+                file_name="crystal_structure_3d.png",
+                mime="image/png",
+                use_container_width=True
+            )
+        
+        with col2:
+            # Save structure data
+            structure_data = {
+                'crystal_system': crystal_system,
+                'space_group': space_group,
+                'lattice_parameters': lattice_params,
+                'composition': composition,
+                'generation_method': 'CrystalStructure3D',
+                'references': [
+                    'International Tables for Crystallography (2006)',
+                    'Momma, K., & Izumi, F. (2011). VESTA 3'
+                ]
+            }
+            
+            json_data = json.dumps(structure_data, indent=2)
+            st.download_button(
+                label="📄 Download Structure Data (JSON)",
+                data=json_data,
+                file_name="crystal_structure_data.json",
+                mime="application/json",
+                use_container_width=True
+            )
+        
+    except Exception as e:
+        st.error(f"Error generating 3D crystal structure: {str(e)}")
+        import traceback
+        with st.expander("Technical details"):
+            st.code(traceback.format_exc())                
 @memory_safe_plot
 def display_export(results, params):
     """Export functionality"""
@@ -1788,6 +2142,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
