@@ -184,7 +184,7 @@ class PublicationPlotter:
                     markersize=3, linewidth=1.5, label='Desorption')
         
         ax1.set_xlabel('Relative Pressure (P/P₀)')
-        ax1.set_ylabel('Quantity Adsorbed (mmol/g)')
+        ax1.set_ylabel('Quantity Adsorbed (cm³/g)')
         ax1.set_title('(A) Adsorption-Desorption Isotherm', pad=10)
         if 'p_des' in bet_raw and bet_raw['p_des'] is not None:
             ax1.legend(loc='best', frameon=True)
@@ -244,7 +244,7 @@ class PublicationPlotter:
                         fontsize=self.font_size-1, verticalalignment='top')
             
             ax2.set_xlabel('Relative Pressure (P/P₀)')
-            ax2.set_ylabel('p/[n(1-p)] (g/mmol)')
+            ax2.set_ylabel('p/[n(1-p)] (g/cm³)')
             ax2.set_title('(B) BET Transform Plot', pad=10)
             ax2.legend(loc='best', frameon=True)
             ax2.grid(True, alpha=0.3)
@@ -296,7 +296,7 @@ class PublicationPlotter:
                             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
         
         ax3.set_xlabel('Statistical Thickness, t (nm)')
-        ax3.set_ylabel('Quantity Adsorbed (mmol/g)')
+        ax3.set_ylabel('Quantity Adsorbed (cm³/g)')
         ax3.set_title('(C) t-Plot Analysis', pad=10)
         ax3.grid(True, alpha=0.3)
         
@@ -1033,5 +1033,6 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
