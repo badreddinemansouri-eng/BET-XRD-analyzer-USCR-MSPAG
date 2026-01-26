@@ -24,7 +24,14 @@ class CrystalStructure3D:
             'Fe': 1.24, 'Ti': 1.47, 'Zr': 1.60, 'Ce': 1.85,
             'Na': 1.02, 'Ca': 1.00, 'Mg': 1.60
         }
-    
+    def create_interactive_plot(self, structure):
+    if go is None:
+        return None
+    try:
+        return self._plotly_figure(structure)
+    except Exception:
+        return None
+
     def generate_structure(self, crystal_system: str, 
                           lattice_params: Dict,
                           space_group: str,
@@ -236,4 +243,5 @@ class CrystalStructure3D:
             height=600
         )
         
+
         return fig
