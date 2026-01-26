@@ -19,14 +19,7 @@ import warnings
 import re
 
 warnings.filterwarnings('ignore')
-def safe_trapz(y, x):
-    """Safe trapezoidal integration that works with all numpy versions"""
-    try:
-        # Try numpy's trapz
-        return np.trapz(y, x)
-    except (AttributeError, TypeError):
-        # Fallback to manual implementation
-        return np.sum(0.5 * (y[1:] + y[:-1]) * (x[1:] - x[:-1]))
+
 # ============================================================================
 # PHYSICAL CONSTANTS FOR XRD
 # ============================================================================
@@ -465,27 +458,55 @@ def williamson_hall_analysis(peaks, wavelength=1.5406):
 # In xrd_analyzer.py - Update the calculate_crystallinity_index function:
 def calculate_crystallinity_index(two_theta, intensity, peak_indices):
     """
-    Calculate crystallinity index
+    Calculate crystallinity index - FIXED VERSION
     """
+    # Handle various input types for peak_indices
+    if peak_indices is None:
+        return 0.0
+    
+    # Convert to list if it's a single number
+    if isinstance(peak_indices, (int, float, np.integer, np.floating)):
+        peak_indices = [int(peak_indices)]
+    
+    # Check if it's iterable
+    try:
+        iter(peak_indices)
+    except TypeError:
+        return 0.0
+    
+    # Convert to list and ensure integers
+    try:
+        peak_indices = [int(idx) for idx in peak_indices]
+    except (ValueError, TypeError):
+        return 0.0
+    
     if len(peak_indices) == 0:
         return 0.0
     
-    # Create a baseline (amorphous background)
-    amorphous_background = gaussian_filter1d(intensity, sigma=50)
+    # Manual trapezoidal integration
+    def manual_trapz(y, x):
+        if len(y) != len(x) or len(y) < 2:
+            return 0.0
+        return float(np.sum(0.5 * (y[1:] + y[:-1]) * (x[1:] - x[:-1])))
     
-    # Calculate areas using safe trapezoidal integration
-    total_area = safe_trapz(intensity, two_theta)
-    amorphous_area = safe_trapz(amorphous_background, two_theta)
-    
-    # Crystalline area = total area - amorphous area
-    crystalline_area = max(0, total_area - amorphous_area)
-    
-    if total_area > 0:
-        crystallinity = crystalline_area / total_area
-    else:
-        crystallinity = 0.0
-    
-    return crystallinity
+    try:
+        # Create amorphous background
+        from scipy.ndimage import gaussian_filter1d
+        amorphous_background = gaussian_filter1d(intensity, sigma=50)
+        
+        # Calculate areas
+        total_area = manual_trapz(intensity, two_theta)
+        amorphous_area = manual_trapz(amorphous_background, two_theta)
+        
+        # Crystalline area
+        crystalline_area = max(0.0, total_area - amorphous_area)
+        
+        if total_area > 0:
+            return float(crystalline_area / total_area)
+        else:
+            return 0.0
+    except Exception:
+        return 0.0
 def estimate_amorphous_background(intensity, iterations=50):
     """Improved background estimation using asymmetric SNIP"""
     # Convert to log scale
@@ -1021,5 +1042,6 @@ class AdvancedXRDAnalyzer:
             }
     
     
+
 
 
