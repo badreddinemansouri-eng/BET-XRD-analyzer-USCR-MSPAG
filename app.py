@@ -312,7 +312,203 @@ def file_upload_section():
                     st.error(f"Preview error: {str(e)}")
     
     return bet_file, xrd_file
+# ============================================================================
+# SCIENTIFIC VALIDATION FUNCTIONS
+# ============================================================================
+def validate_input_data(bet_file, xrd_file, params):
+    """Validate input data for scientific analysis"""
+    validation_results = {
+        'bet_valid': False,
+        'xrd_valid': False,
+        'warnings': [],
+        'recommendations': []
+    }
+    
+    # Validate BET data
+    if bet_file:
+        try:
+            bet_file.seek(0)
+            
+            # Check file format
+            filename = bet_file.name.lower()
+            valid_formats = ['.xls', '.xlsx', '.csv', '.txt', '.dat']
+            if not any(filename.endswith(fmt) for fmt in valid_formats):
+                validation_results['warnings'].append(f"BET file format {filename} may not be optimal")
+            
+            # Try to read and check content
+            if filename.endswith('.xls'):
+                df = pd.read_excel(bet_file, engine='xlrd', nrows=100)
+            elif filename.endswith('.xlsx'):
+                df = pd.read_excel(bet_file, engine='openpyxl', nrows=100)
+            else:
+                try:
+                    df = pd.read_csv(bet_file, nrows=100)
+                except:
+                    # Try with different delimiters
+                    content = bet_file.read().decode('utf-8')
+                    bet_file.seek(0)
+                    for delimiter in ['\t', ';', ',', ' ']:
+                        try:
+                            df = pd.read_csv(io.StringIO(content), 
+                                           delimiter=delimiter, 
+                                           nrows=100)
+                            break
+                        except:
+                            continue
+            
+            # Check minimum data requirements
+            n_rows = len(df)
+            if n_rows < 10:
+                validation_results['warnings'].append(f"BET file has only {n_rows} rows (minimum 10 recommended)")
+            else:
+                validation_results['bet_valid'] = True
+            
+            # Check for pressure column
+            numeric_cols = df.apply(pd.to_numeric, errors='coerce').notna().sum()
+            if numeric_cols.sum() < 2:
+                validation_results['warnings'].append("BET file may not contain numeric pressure/quantity columns")
+            
+            bet_file.seek(0)
+            
+        except Exception as e:
+            validation_results['warnings'].append(f"BET file reading error: {str(e)[:100]}")
+    
+    # Validate XRD data
+    if xrd_file:
+        try:
+            xrd_file.seek(0)
+            
+            # Check file format
+            filename = xrd_file.name.lower()
+            valid_formats = ['.csv', '.txt', '.xy', '.dat', '.xrdml']
+            if not any(filename.endswith(fmt) for fmt in valid_formats):
+                validation_results['warnings'].append(f"XRD file format {filename} may not be optimal")
+            
+            # Try to extract data
+            two_theta, intensity, msg = extract_xrd_data(xrd_file, preview_only=True)
+            
+            if two_theta is not None:
+                n_points = len(two_theta)
+                theta_range = two_theta.max() - two_theta.min()
+                
+                if n_points < 100:
+                    validation_results['warnings'].append(f"XRD file has only {n_points} points (minimum 100 recommended)")
+                
+                if theta_range < 10:
+                    validation_results['warnings'].append(f"XRD angular range is only {theta_range:.1f}° (minimum 10° recommended)")
+                
+                if n_points >= 50 and theta_range >= 5:
+                    validation_results['xrd_valid'] = True
+                else:
+                    validation_results['recommendations'].append("Consider using XRD data with wider angular range (5-80° 2θ)")
+            
+            xrd_file.seek(0)
+            
+        except Exception as e:
+            validation_results['warnings'].append(f"XRD file reading error: {str(e)[:100]}")
+    
+    return validation_results
 
+def perform_analysis_validation(results):
+    """Perform scientific validation of analysis results"""
+    validation = {
+        'bet_checks': [],
+        'xrd_checks': [],
+        'consistency_checks': [],
+        'all_passed': True
+    }
+    
+    # BET Validation
+    if results.get('bet_results'):
+        bet = results['bet_results']
+        
+        # Check BET linearity
+        if bet.get('bet_regression', {}).get('r_squared', 0) > 0.999:
+            validation['bet_checks'].append({'check': 'BET Linearity', 'status': '✅', 'value': f"R² = {bet['bet_regression']['r_squared']:.6f}"})
+        elif bet.get('bet_regression', {}).get('r_squared', 0) > 0.995:
+            validation['bet_checks'].append({'check': 'BET Linearity', 'status': '⚠️', 'value': f"R² = {bet['bet_regression']['r_squared']:.6f} (moderate)"})
+            validation['all_passed'] = False
+        else:
+            validation['bet_checks'].append({'check': 'BET Linearity', 'status': '❌', 'value': f"R² = {bet['bet_regression']['r_squared']:.6f} (poor)"})
+            validation['all_passed'] = False
+        
+        # Check C constant
+        if bet.get('c_constant', 0) > 0:
+            validation['bet_checks'].append({'check': 'BET C Constant', 'status': '✅', 'value': f"C = {bet['c_constant']:.0f}"})
+        else:
+            validation['bet_checks'].append({'check': 'BET C Constant', 'status': '❌', 'value': 'Negative or zero C constant'})
+            validation['all_passed'] = False
+        
+        # Check surface area range
+        S_bet = bet.get('surface_area', 0)
+        if 0 < S_bet < 10000:
+            validation['bet_checks'].append({'check': 'Surface Area Range', 'status': '✅', 'value': f"{S_bet:.1f} m²/g"})
+        elif S_bet >= 10000:
+            validation['bet_checks'].append({'check': 'Surface Area Range', 'status': '⚠️', 'value': f"{S_bet:.1f} m²/g (unusually high)"})
+        else:
+            validation['bet_checks'].append({'check': 'Surface Area Range', 'status': '❌', 'value': 'Invalid surface area'})
+            validation['all_passed'] = False
+    
+    # XRD Validation
+    if results.get('xrd_results'):
+        xrd = results['xrd_results']
+        
+        # Check number of peaks
+        n_peaks = len(xrd.get('peaks', []))
+        if n_peaks >= 3:
+            validation['xrd_checks'].append({'check': 'Number of Peaks', 'status': '✅', 'value': f"{n_peaks} peaks detected"})
+        else:
+            validation['xrd_checks'].append({'check': 'Number of Peaks', 'status': '⚠️', 'value': f"Only {n_peaks} peaks detected"})
+            validation['all_passed'] = False
+        
+        # Check crystallinity index
+        ci = xrd.get('crystallinity_index', 0)
+        if 0 <= ci <= 1:
+            validation['xrd_checks'].append({'check': 'Crystallinity Index', 'status': '✅', 'value': f"{ci:.3f}"})
+        else:
+            validation['xrd_checks'].append({'check': 'Crystallinity Index', 'status': '❌', 'value': f"{ci:.3f} (outside 0-1 range)"})
+            validation['all_passed'] = False
+        
+        # Check crystallite size
+        size = xrd.get('crystallite_size', {}).get('scherrer', 0)
+        if 0 < size < 1000:
+            validation['xrd_checks'].append({'check': 'Crystallite Size', 'status': '✅', 'value': f"{size:.1f} nm"})
+        elif size >= 1000:
+            validation['xrd_checks'].append({'check': 'Crystallite Size', 'status': '⚠️', 'value': f"{size:.1f} nm (unusually large)"})
+            validation['all_passed'] = False
+    
+    # Consistency Checks (if both BET and XRD available)
+    if results.get('bet_results') and results.get('xrd_results'):
+        bet = results['bet_results']
+        xrd = results['xrd_results']
+        
+        S_bet = bet.get('surface_area', 0)
+        D_xrd = xrd.get('crystallite_size', {}).get('scherrer', 0)
+        CI = xrd.get('crystallinity_index', 0)
+        
+        # Theoretical surface area from crystallite size
+        if D_xrd > 0 and CI > 0.3:
+            # For spherical particles: S = 6/(ρ·D)
+            rho = 2.65  # g/cm³ (typical for oxides)
+            S_theoretical = 6000 / (rho * D_xrd) * CI  # m²/g
+            
+            if S_theoretical > 0:
+                ratio = S_bet / S_theoretical
+                if 0.1 < ratio < 10:
+                    validation['consistency_checks'].append({
+                        'check': 'BET-XRD Consistency',
+                        'status': '✅',
+                        'value': f"Ratio S_BET/S_theoretical = {ratio:.2f}"
+                    })
+                else:
+                    validation['consistency_checks'].append({
+                        'check': 'BET-XRD Consistency',
+                        'status': '⚠️',
+                        'value': f"Ratio S_BET/S_theoretical = {ratio:.2f} (outside 0.1-10 range)"
+                    })
+                    validation['all_passed'] = False
+    
+    return validation
 # ============================================================================
 # SCIENTIFIC ANALYSIS EXECUTION
 # ============================================================================
@@ -320,7 +516,42 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
     """Execute complete scientific analysis pipeline"""
     
     analysis_results = {}
+        
+    # ============================================================================
+    # INPUT VALIDATION - ADD THIS SECTION AT THE START
+    # ============================================================================
+    st.subheader("🔬 Input Data Validation")
     
+    validation_results = validate_input_data(bet_file, xrd_file, params)
+    
+    # Display validation results
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if bet_file:
+            if validation_results['bet_valid']:
+                st.success("✅ BET data: Valid format and sufficient points")
+            else:
+                st.warning("⚠️ BET data: Validation warnings")
+    
+    with col2:
+        if xrd_file:
+            if validation_results['xrd_valid']:
+                st.success("✅ XRD data: Valid format and sufficient points")
+            else:
+                st.warning("⚠️ XRD data: Validation warnings")
+    
+    # Show warnings
+    if validation_results['warnings']:
+        with st.expander("🔄 Data Quality Warnings", expanded=True):
+            for warning in validation_results['warnings']:
+                st.warning(f"• {warning}")
+    
+    # Show recommendations
+    if validation_results['recommendations']:
+        with st.expander("📋 Data Quality Recommendations", expanded=False):
+            for rec in validation_results['recommendations']:
+                st.info(f"• {rec}")
     # Initialize progress
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -551,7 +782,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                 # Continue anyway as fusion is optional
         
         # ====================================================================
-        # STEP 5: FINALIZATION
+        # STEP 5: FINALIZATION - ADD VALIDATION METRICS
         # ====================================================================
         status_text.text("🎨 Preparing scientific outputs...")
         progress_bar.progress(95)
@@ -565,9 +796,25 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
         analysis_results['parameters'] = params
         analysis_results['timestamp'] = pd.Timestamp.now().isoformat()
         
+        # ============================================================================
+        # ADD SCIENTIFIC VALIDATION METRICS - NEW SECTION
+        # ============================================================================
+        analysis_results['validation'] = {
+            'input_validation': validation_results,
+            'analysis_validation': perform_analysis_validation(analysis_results)
+        }
+        
         progress_bar.progress(100)
         
         if analysis_results['analysis_valid']:
+            # Display validation summary
+            if 'analysis_validation' in analysis_results['validation']:
+                av = analysis_results['validation']['analysis_validation']
+                if av.get('all_passed', False):
+                    st.success("✅ All scientific validation checks passed")
+                else:
+                    st.warning("⚠️ Some validation checks have warnings")
+            
             status_text.text("✅ Analysis complete!")
             st.balloons()
         else:
@@ -654,12 +901,13 @@ def display_scientific_results(results, params):
     
     st.header("📊 Scientific Results")
     
-    # Create tabs for different views
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    # Create tabs for different views - ADD VALIDATION TAB
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([  # Changed from 6 to 7 tabs
         "📈 Overview", 
         "🔬 BET Analysis", 
         "📉 XRD Analysis", 
         "🧬 Morphology", 
+        "🔍 Validation",  # NEW TAB
         "📚 Methods",
         "📤 Export"
     ])
@@ -687,24 +935,18 @@ def display_scientific_results(results, params):
             display_morphology(results)
         else:
             st.warning("BET analysis data is required to visualize material morphology")
-            st.info("""
-            **Why morphology visualization requires BET data:**
-            
-            The morphology visualization generates material structure representations based on:
-            1. **Surface area** - determines pore density and texture
-            2. **Pore volume** - controls porosity level
-            3. **Pore size distribution** - determines pore sizes in visualization
-            4. **Crystallinity** (from XRD) - adds crystalline regions if available
-            
-            Please upload BET data to enable morphology visualization.
-            """)
     
+    # ============================================================================
+    # NEW VALIDATION TAB - ADD THIS SECTION
+    # ============================================================================
     with tab5:
-        display_methods(results, params)
+        display_validation(results)
     
     with tab6:
+        display_methods(results, params)
+    
+    with tab7:  # Changed from tab6 to tab7
         display_export(results, params)
-
 # ============================================================================
 # DISPLAY FUNCTIONS (To be implemented in detail)
 # ============================================================================
@@ -1204,6 +1446,107 @@ def display_methods(results, params):
         3. Ruland, W. (1961). Acta Cryst., 14, 1180.
         4. Pawley, G. S. (1981). J. Appl. Cryst., 14, 357-361.
         """)
+def display_validation(results):
+    """Display scientific validation results"""
+    st.subheader("🔬 Scientific Validation")
+    
+    if 'validation' not in results:
+        st.info("No validation data available. Run analysis to see validation results.")
+        return
+    
+    validation = results['validation']
+    
+    # Overall validation status
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if validation.get('input_validation', {}).get('bet_valid'):
+            st.success("✅ BET Data Valid")
+        elif results.get('bet_results'):
+            st.warning("⚠️ BET Data Quality")
+    
+    with col2:
+        if validation.get('input_validation', {}).get('xrd_valid'):
+            st.success("✅ XRD Data Valid")
+        elif results.get('xrd_results'):
+            st.warning("⚠️ XRD Data Quality")
+    
+    with col3:
+        if validation.get('analysis_validation', {}).get('all_passed', True):
+            st.success("✅ All Checks Passed")
+        else:
+            st.warning("⚠️ Some Checks Failed")
+    
+    # Detailed validation results in expanders
+    with st.expander("📋 Data Input Validation", expanded=True):
+        input_val = validation.get('input_validation', {})
+        
+        if input_val.get('warnings'):
+            st.subheader("⚠️ Data Quality Warnings")
+            for warning in input_val['warnings']:
+                st.warning(f"• {warning}")
+        
+        if input_val.get('recommendations'):
+            st.subheader("📋 Recommendations")
+            for rec in input_val['recommendations']:
+                st.info(f"• {rec}")
+    
+    # Analysis validation
+    with st.expander("🔬 Analysis Method Validation", expanded=True):
+        analysis_val = validation.get('analysis_validation', {})
+        
+        # BET Checks
+        if analysis_val.get('bet_checks'):
+            st.subheader("BET Analysis Validation")
+            for check in analysis_val['bet_checks']:
+                st.write(f"{check['status']} **{check['check']}:** {check['value']}")
+        
+        # XRD Checks
+        if analysis_val.get('xrd_checks'):
+            st.subheader("XRD Analysis Validation")
+            for check in analysis_val['xrd_checks']:
+                st.write(f"{check['status']} **{check['check']}:** {check['value']}")
+        
+        # Consistency Checks
+        if analysis_val.get('consistency_checks'):
+            st.subheader("BET-XRD Consistency")
+            for check in analysis_val['consistency_checks']:
+                st.write(f"{check['status']} **{check['check']}:** {check['value']}")
+    
+    # Scientific standards compliance
+    with st.expander("📜 Standards Compliance", expanded=False):
+        st.markdown("""
+        **Compliance with International Standards:**
+        
+        ✅ **BET Analysis:** IUPAC Rouquerol criteria (Rouquerol et al., 2007)
+        ✅ **XRD Analysis:** ICDD PDF standards and Scherrer method
+        ✅ **Porosity Analysis:** BJH method (Barrett, Joyner, Halenda, 1951)
+        ✅ **Error Propagation:** ISO/IEC Guide 98-3:2008 (GUM)
+        ✅ **Data Reporting:** CODATA recommended values (2018)
+        
+        **References:**
+        1. Rouquerol, J. et al. (2007). *Stud. Surf. Sci. Catal.*, 160, 49-56.
+        2. Klug, H.P. & Alexander, L.E. (1974). *X-ray Diffraction Procedures*.
+        3. Barrett, E.P. et al. (1951). *J. Am. Chem. Soc.*, 73, 373-380.
+        4. BIPM (2008). *Guide to the Expression of Uncertainty in Measurement*.
+        """)
+    
+    # Statistical validation
+    if results.get('bet_results') and results.get('xrd_results'):
+        with st.expander("📊 Statistical Validation", expanded=False):
+            # Calculate correlation metrics
+            bet = results['bet_results']
+            xrd = results['xrd_results']
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric("BET R²", f"{bet.get('bet_regression', {}).get('r_squared', 0):.6f}")
+                st.metric("XRD Peaks", f"{len(xrd.get('peaks', []))}")
+            
+            with col2:
+                st.metric("BET Points", f"{bet.get('data_points', {}).get('adsorption', 0)}")
+                st.metric("XRD Points", f"{xrd.get('n_points', 0)}")        
 @memory_safe_plot
 def display_export(results, params):
     """Export functionality"""
@@ -1417,6 +1760,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
