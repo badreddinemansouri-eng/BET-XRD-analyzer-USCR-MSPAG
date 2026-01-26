@@ -714,7 +714,7 @@ class MorphologyFusionEngine:
                     'pore_volume_cm3g': V_total,
                     'crystallinity_index': crystallinity,
                     'crystallite_size_nm': xrd_results.get('crystallite_size', {}).get('scherrer', 0)
-                }
+                },
                 'scientific_integration': integration_results
             }
         
@@ -729,4 +729,5 @@ class MorphologyFusionEngine:
                 'confidence_score': 0.0
 
             }
+
 
