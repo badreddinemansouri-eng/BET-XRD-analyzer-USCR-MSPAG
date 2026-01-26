@@ -22,7 +22,7 @@ import traceback
 warnings.filterwarnings('ignore')
 import json  # <-- ADD THIS LINE
 # Add to imports at the top of the file
-import plotly.graph_objects as go
+
 # ADD THESE IMPORTS - FIX FOR SCIENTIFICINTEGRATOR ERROR
 try:
     from scientific_integration import ScientificIntegrator
@@ -2399,6 +2399,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
