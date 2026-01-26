@@ -40,6 +40,18 @@ SCATTERING_FACTORS = {
 }
 
 # ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+def safe_trapz(y, x):
+    """Safe trapezoidal integration that works with all numpy versions"""
+    try:
+        # Try numpy's trapz
+        return np.trapz(y, x)
+    except (AttributeError, TypeError):
+        # Fallback to manual implementation
+        return np.sum(0.5 * (y[1:] + y[:-1]) * (x[1:] - x[:-1]))
+
+# ============================================================================
 # XRD DATA EXTRACTION
 # ============================================================================
 def extract_xrd_data(file, preview_only=False):
@@ -451,214 +463,50 @@ def williamson_hall_analysis(peaks, wavelength=1.5406):
         'x_data': [float(x) for x in x_vals],
         'y_data': [float(y) for y in y_vals]
     }
-        # DEBUG: Add this to see what's happening
-        print(f"DEBUG: Type of peaks: {type(peaks)}")
-        print(f"DEBUG: Content of peaks: {peaks}")
-        if peaks:
-            print(f"DEBUG: First item type: {type(peaks[0])}")
-            print(f"DEBUG: First item content: {peaks[0]}")
-        
-        # Calculate crystallinity index
-        peak_indices = []
-        if peaks:
-            peak_indices = [p.get('index', 0) for p in peaks]
-        
-        print(f"DEBUG: peak_indices = {peak_indices}")
-        print(f"DEBUG: Type of peak_indices = {type(peak_indices)}")
-        
-        crystallinity_index = calculate_crystallinity_index(
-            two_theta_proc, intensity_proc, peak_indices
-        )
+
 # ============================================================================
-# CRYSTALLINITY INDEX
+# CRYSTALLINITY INDEX - FIXED VERSION
 # ============================================================================
-# In xrd_analyzer.py - Update the calculate_crystallinity_index function:
 def calculate_crystallinity_index(two_theta, intensity, peak_indices):
     """
-    Calculate crystallinity index - COMPLETELY REWRITTEN ROBUST VERSION
+    Calculate crystallinity index - FIXED VERSION
     
     CI = A_crystalline / (A_crystalline + A_amorphous)
     
-    Reference: Ruland, W. (1961). Acta Cryst., 14, 1180-1185.
+    Parameters:
+    -----------
+    two_theta : Array of 2θ values
+    intensity : Array of intensity values
+    peak_indices : Indices of detected peaks
+    
+    Returns:
+    --------
+    Crystallinity index (0-1)
     """
-    try:
-        # Ensure inputs are numpy arrays
-        two_theta = np.asarray(two_theta, dtype=np.float64)
-        intensity = np.asarray(intensity, dtype=np.float64)
-        
-        # DEBUG
-        print(f"DEBUG in calculate_crystallinity_index:")
-        print(f"  - two_theta shape: {two_theta.shape}")
-        print(f"  - intensity shape: {intensity.shape}")
-        print(f"  - peak_indices type: {type(peak_indices)}")
-        print(f"  - peak_indices value: {peak_indices}")
-        
-        # Handle peak_indices - ensure it's a list/array
-        if peak_indices is None:
-            return 0.0
-        
-        # Check if it's a single number
-        if isinstance(peak_indices, (int, float, np.integer, np.floating)):
-            # Convert single number to list
-            peak_indices_list = [int(peak_indices)]
-        elif hasattr(peak_indices, '__iter__'):
-            # It's iterable, convert to list
-            peak_indices_list = list(peak_indices)
-        else:
-            # Not iterable, return 0
-            return 0.0
-        
-        print(f"  - peak_indices_list: {peak_indices_list}")
-        print(f"  - peak_indices_list length: {len(peak_indices_list)}")
-        
-        # If no peaks, return 0
-        if len(peak_indices_list) == 0:
-            return 0.0
-        
-        # Method 1: Area ratio method (simplified)
-        # Create amorphous background using moving average
-        window_size = min(50, len(intensity) // 10)
-        if window_size % 2 == 0:
-            window_size += 1
-        
-        # Apply moving average for background
-        from scipy.ndimage import uniform_filter1d
-        amorphous_background = uniform_filter1d(intensity, size=window_size)
-        
-        # Calculate areas using manual integration (safe)
-        def safe_integrate(y, x):
-            """Manual trapezoidal integration"""
-            if len(y) < 2 or len(x) < 2 or len(y) != len(x):
-                return 0.0
-            return float(np.sum(0.5 * (y[1:] + y[:-1]) * (x[1:] - x[:-1])))
-        
-        total_area = safe_integrate(intensity, two_theta)
-        amorphous_area = safe_integrate(amorphous_background, two_theta)
-        
-        # Ensure areas are positive
-        total_area = max(total_area, 1e-10)
-        amorphous_area = max(amorphous_area, 0)
-        
-        # Crystalline area
-        crystalline_area = max(0, total_area - amorphous_area)
-        
-        # Calculate crystallinity
-        ci = crystalline_area / total_area
-        
-        # Bound between 0 and 1
-        ci = max(0.0, min(1.0, ci))
-        
-        print(f"  - total_area: {total_area}")
-        print(f"  - amorphous_area: {amorphous_area}")
-        print(f"  - crystalline_area: {crystalline_area}")
-        print(f"  - crystallinity_index: {ci}")
-        
-        return float(ci)
-        
-    except Exception as e:
-        print(f"ERROR in calculate_crystallinity_index: {e}")
-        import traceback
-        print(traceback.format_exc())
+    if not hasattr(peak_indices, '__len__'):
         return 0.0
-def estimate_amorphous_background(intensity, iterations=50):
-    """Improved background estimation using asymmetric SNIP"""
-    # Convert to log scale
-    y = np.log(np.log(intensity + 1) + 1)
     
-    # Initialize background
-    bg = y.copy()
+    if len(peak_indices) == 0:
+        return 0.0
     
-    for i in range(iterations):
-        # Apply SNIP algorithm
-        for j in range(1, len(y) - 1):
-            bg[j] = min(bg[j], 0.5 * (bg[j-1] + bg[j+1]))
+    # Create a baseline (amorphous background)
+    # Use a broad gaussian filter to estimate amorphous background
+    amorphous_background = gaussian_filter1d(intensity, sigma=50)
     
-    # Convert back
-    bg_corrected = np.exp(np.exp(bg) - 1) - 1
+    # Calculate areas using safe trapezoidal integration
+    total_area = safe_trapz(intensity, two_theta)
+    amorphous_area = safe_trapz(amorphous_background, two_theta)
     
-    return bg_corrected
+    # Crystalline area = total area - amorphous area
+    crystalline_area = max(0, total_area - amorphous_area)
+    
+    if total_area > 0:
+        crystallinity = crystalline_area / total_area
+    else:
+        crystallinity = 0.0
+    
+    return crystallinity
 
-# In the AdvancedXRDAnalyzer class, update williamson_hall_analysis:
-def williamson_hall_analysis(self, peaks, wavelength=1.5406):
-    """
-    Williamson-Hall plot for separating size and strain effects
-    Using ALL peaks, not just major ones
-    
-    Reference: 
-    Williamson, G.K., & Hall, W.H. (1953). Acta Metallurgica, 1(1), 22-31.
-    """
-    if len(peaks) < 3:
-        return None
-    
-    x_vals, y_vals = [], []
-    errors = []
-    
-    for peak in peaks:
-        try:
-            theta_deg = peak['position'] / 2
-            theta_rad = np.deg2rad(theta_deg)
-            fwhm_rad = peak['fwhm_rad']
-            
-            # Calculate Williamson-Hall coordinates
-            x = 4 * np.sin(theta_rad)  # 4 sinθ
-            y = fwhm_rad * np.cos(theta_rad)  # β cosθ
-            
-            # Calculate error in FWHM (instrumental broadening correction)
-            # Instrumental broadening from NIST SRM 640c (Si standard)
-            instrumental_broadening = 0.02  # radians, adjust based on instrument
-            fwhm_corrected = np.sqrt(fwhm_rad**2 - instrumental_broadening**2)
-            
-            if fwhm_corrected > 0:
-                y_corrected = fwhm_corrected * np.cos(theta_rad)
-                x_vals.append(x)
-                y_vals.append(y_corrected)
-                
-                # Error estimation
-                error_fwhm = 0.05 * fwhm_rad  # 5% relative error
-                error_y = error_fwhm * np.cos(theta_rad)
-                errors.append(error_y)
-        except:
-            continue
-    
-    if len(x_vals) < 3:
-        return None
-    
-    # Weighted linear regression using errors as weights
-    try:
-        weights = 1.0 / np.array(errors)
-        coeffs = np.polyfit(x_vals, y_vals, 1, w=weights)
-        slope, intercept = coeffs
-        
-        # Calculate R²
-        y_pred = slope * np.array(x_vals) + intercept
-        ss_res = np.sum((np.array(y_vals) - y_pred)**2)
-        ss_tot = np.sum((np.array(y_vals) - np.mean(y_vals))**2)
-        r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
-        
-        # Extract parameters
-        K = 0.9  # Shape factor (Scherrer constant)
-        size_nm = (K * wavelength) / (intercept * 10) if intercept > 0 else 0
-        microstrain = slope / 4
-        
-        # Calculate dislocation density (Williamson-Smallman)
-        # ρ = 1/D² for edge dislocations
-        dislocation_density = 1 / (size_nm * 1e-9)**2 if size_nm > 0 else 0
-        
-        return {
-            'crystallite_size': float(size_nm),
-            'microstrain': float(microstrain),
-            'r_squared': float(r_squared),
-            'slope': float(slope),
-            'intercept': float(intercept),
-            'x_data': [float(x) for x in x_vals],
-            'y_data': [float(y) for y in y_vals],
-            'errors': [float(e) for e in errors],
-            'dislocation_density': float(dislocation_density),
-            'n_peaks_used': len(x_vals),
-            'method': 'Williamson-Hall (all peaks, weighted)'
-        }
-    except:
-        return None
 # ============================================================================
 # LATTICE PARAMETER REFINEMENT
 # ============================================================================
@@ -972,8 +820,11 @@ class AdvancedXRDAnalyzer:
             all_peaks = peaks  # All detected peaks
             top_peaks = peaks[:10]  # Top 10 most intensive peaks for display
             
-            # Calculate crystallinity index
-            peak_indices = [p['index'] for p in peaks]
+            # Calculate crystallinity index - FIXED
+            peak_indices = []
+            if peaks and len(peaks) > 0:
+                peak_indices = [p.get('index', i) for i, p in enumerate(peaks)]
+            
             crystallinity_index = calculate_crystallinity_index(
                 two_theta_proc, intensity_proc, peak_indices
             )
@@ -1093,9 +944,3 @@ class AdvancedXRDAnalyzer:
                 'microstrain': 0.0,
                 'ordered_mesopores': False
             }
-    
-    
-
-
-
-
