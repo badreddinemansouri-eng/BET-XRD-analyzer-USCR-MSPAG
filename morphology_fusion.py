@@ -14,8 +14,15 @@ References:
 import numpy as np
 from typing import Dict, List, Tuple, Any
 import warnings
+# ADD THIS IMPORT
+try:
+    from scientific_integration import ScientificIntegrator
+except ImportError:
+    # Fallback if not available
+    ScientificIntegrator = None
 
 warnings.filterwarnings('ignore')
+
 # Add this import at the beginning of morphology_fusion.py
 from scientific_integration import ScientificIntegrator
 # ============================================================================
@@ -141,8 +148,11 @@ class MorphologyFusionEngine:
     def __init__(self):
         self.material_classification = []
         self.confidence_scores = {}
-            # Add this line to initialize ScientificIntegrator
-        self.scientific_integrator = ScientificIntegrator()
+        # Initialize ScientificIntegrator if available
+        if ScientificIntegrator is not None:
+            self.scientific_integrator = ScientificIntegrator()
+        else:
+            self.scientific_integrator = None
     def _classify_based_on_bet(self, bet_results: Dict) -> List[Dict]:
         """
         Classify material based on BET parameters
@@ -719,3 +729,4 @@ class MorphologyFusionEngine:
                 'confidence_score': 0.0
 
             }
+
