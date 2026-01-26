@@ -509,72 +509,106 @@ class MorphologyVisualizer:
         ax.set_xlim(-2, 2)
         ax.set_ylim(-2, 2)
     
-    def _plot_sem_style(self, ax, bet_results, xrd_results=None):
-        """Create SEM/TEM-style representation"""
-        # Generate noise pattern for SEM look
-        size = 100
-        np.random.seed(42)
+    def _plot_sem_style_realistic(self, ax, bet_results, xrd_results=None):
+        """
+        Realistic SEM/TEM visualization based on actual data
         
-        # Base noise
-        Z = np.random.randn(size, size)
-        Z = gaussian_filter(Z, sigma=1)
-        
-        # Add features based on BET data
+        References:
+        1. Scherzer, O. (1949). J. Appl. Phys., 20, 20-29.
+        2. Williams, D. B., & Carter, C. B. (1996). Transmission Electron Microscopy.
+        """
+        # Extract real data
         S_bet = bet_results.get('surface_area', 0)
         V_total = bet_results.get('total_pore_volume', 0)
+        d_mean = bet_results.get('mean_pore_diameter', 0)
         
-        # Add pores as dark spots
-        n_pores = int(50 * min(V_total * 2, 1.0))
-        for _ in range(n_pores):
-            cx = np.random.randint(10, size-10)
-            cy = np.random.randint(10, size-10)
-            
-            pore_radius = 2 + int(3 * np.random.random())
-            for i in range(max(0, cx - pore_radius), min(size, cx + pore_radius)):
-                for j in range(max(0, cy - pore_radius), min(size, cy + pore_radius)):
-                    dist = np.sqrt((i - cx)**2 + (j - cy)**2)
-                    if dist < pore_radius:
-                        Z[j, i] -= 0.5 * np.exp(-dist**2 / (pore_radius**2))
-        
-        # Add crystalline features if XRD data available
         if xrd_results:
             crystallinity = xrd_results.get('crystallinity_index', 0)
-            if crystallinity > 0.4:
-                # Add grain boundaries
-                for _ in range(5):
-                    angle = np.random.random() * 2 * np.pi
-                    length = 30 + 20 * np.random.random()
-                    
-                    x_start = np.random.randint(20, size-20)
-                    y_start = np.random.randint(20, size-20)
-                    
-                    for t in np.linspace(0, 1, 50):
-                        x = int(x_start + length * t * np.cos(angle))
-                        y = int(y_start + length * t * np.sin(angle))
-                        
-                        if 0 <= x < size and 0 <= y < size:
-                            # Add bright line for grain boundary
-                            for dx in range(-1, 2):
-                                for dy in range(-1, 2):
-                                    nx, ny = x + dx, y + dy
-                                    if 0 <= nx < size and 0 <= ny < size:
-                                        Z[ny, nx] += 0.3
+            crystal_size = xrd_results.get('crystallite_size', {}).get('scherrer', 0)
+        else:
+            crystallinity = 0
+            crystal_size = 0
         
-        # Normalize and apply SEM colormap
-        Z_normalized = (Z - Z.min()) / (Z.max() - Z.min())
+        # Calculate realistic parameters
+        porosity = min(V_total * 2, 0.95)  # More realistic porosity estimation
+        pore_density = S_bet / (np.pi * d_mean**2) if d_mean > 0 else 100
         
-        # Use inverted grayscale for SEM look
-        im = ax.imshow(1 - Z_normalized, cmap='gray',
-                      extent=[-2, 2, -2, 2],
-                      vmin=0.2, vmax=0.8)
+        # Generate realistic image
+        size = 500  # Image size
+        image = np.zeros((size, size))
         
-        # Add scale bar
-        scale_bar = Rectangle((1.5, -1.9), 0.5, 0.1,
-                             facecolor='white',
-                             edgecolor='black')
-        ax.add_patch(scale_bar)
-        ax.text(1.75, -1.75, '100 nm', ha='center', va='bottom',
-               color='white', fontsize=8)
+        # Add crystalline regions if XRD data available
+        if crystallinity > 0.3 and crystal_size > 0:
+            n_crystals = int((size**2) * crystallinity / (crystal_size**2))
+            for _ in range(n_crystals):
+                x = np.random.randint(0, size)
+                y = np.random.randint(0, size)
+                radius = int(crystal_size / 2)  # pixels
+                
+                # Create crystalline grain with diffraction contrast
+                for i in range(-radius, radius):
+                    for j in range(-radius, radius):
+                        if 0 <= x+i < size and 0 <= y+j < size:
+                            dist = np.sqrt(i**2 + j**2)
+                            if dist < radius:
+                                # Simulate diffraction contrast (crystalline brighter)
+                                intensity = 150 + 100 * np.random.random()
+                                image[x+i, y+j] = max(image[x+i, y+j], intensity)
+        
+        # Add pores based on BET data
+        if pore_density > 0 and d_mean > 0:
+            n_pores = int((size**2) * porosity / (np.pi * (d_mean/2)**2))
+            for _ in range(n_pores):
+                x = np.random.randint(0, size)
+                y = np.random.randint(0, size)
+                radius = int(d_mean / 2)  # pixels
+                
+                # Create pore (dark region)
+                for i in range(-radius, radius):
+                    for j in range(-radius, radius):
+                        if 0 <= x+i < size and 0 <= y+j < size:
+                            dist = np.sqrt(i**2 + j**2)
+                            if dist < radius:
+                                # Pore is darker
+                                image[x+i, y+j] = max(0, image[x+i, y+j] - 100)
+        
+        # Add amorphous background
+        background = 100 * np.ones((size, size))
+        
+        # Apply Gaussian blur to simulate SEM/TEM resolution
+        from scipy.ndimage import gaussian_filter
+        image = gaussian_filter(image, sigma=1)
+        
+        # Combine with background
+        final_image = np.clip(background + image, 0, 255)
+        
+        # Display image
+        ax.imshow(final_image, cmap='gray', 
+                 extent=[0, size/100, 0, size/100])  # Scale to nm
+        
+        # Add scale bar (100 nm)
+        scale_length = 100  # nm
+        scale_pixels = scale_length * (size / (size/100))
+        
+        ax.plot([10, 10 + scale_pixels], [10, 10], 'w-', linewidth=3)
+        ax.text(10 + scale_pixels/2, 15, f'{scale_length} nm', 
+               color='white', ha='center', fontsize=10)
+        
+        # Remove axes
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xlim(0, size/100)
+        ax.set_ylim(0, size/100)
+        
+        # Add text with actual parameters
+        info_text = f'S_BET: {S_bet:.0f} m²/g\n'
+        info_text += f'Porosity: {porosity*100:.1f}%\n'
+        if crystal_size > 0:
+            info_text += f'Crystal size: {crystal_size:.1f} nm'
+        
+        ax.text(0.02, 0.98, info_text, transform=ax.transAxes,
+               color='white', fontsize=9, verticalalignment='top',
+               bbox=dict(boxstyle='round', facecolor='black', alpha=0.7))
     
     def _classify_material(self, bet_results, xrd_results=None):
         """Classify material type for title"""
