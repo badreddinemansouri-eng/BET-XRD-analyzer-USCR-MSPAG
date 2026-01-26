@@ -21,7 +21,8 @@ import traceback
 
 warnings.filterwarnings('ignore')
 import json  # <-- ADD THIS LINE
-
+# Add to imports at the top of the file
+import plotly.graph_objects as go
 # ADD THESE IMPORTS - FIX FOR SCIENTIFICINTEGRATOR ERROR
 try:
     from scientific_integration import ScientificIntegrator
@@ -768,7 +769,13 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     space_group=params['crystal']['space_group'],
                     lattice_params=params['crystal']['lattice_params']
                 )
-                
+                # After performing XRD analysis, add:
+                if 'xrd_results' in analysis_results:
+                    # Try to find missing hkl indices
+                    analysis_results['xrd_results'] = find_missing_hkl_indices(
+                        analysis_results['xrd_results'],
+                        scientific_params['crystal']
+                    )
                 # ENHANCE WITH CRYSTALLOGRAPHY ENGINE FOR BETTER HKL INDEXING
                 if (xrd_results['valid'] and 
                     params['crystal']['system'] != 'Unknown' and 
@@ -971,6 +978,83 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
         with st.expander("Technical details"):
             st.code(traceback.format_exc())
         return None
+def find_missing_hkl_indices(xrd_results, crystal_params):
+    """Find hkl indices for XRD peaks if not already assigned"""
+    
+    if not xrd_results or 'peaks' not in xrd_results:
+        return xrd_results
+    
+    peaks = xrd_results['peaks']
+    
+    # Check if any peaks already have hkl
+    has_hkl = any('hkl' in peak or 'hkl_detail' in peak for peak in peaks)
+    
+    if has_hkl:
+        return xrd_results
+    
+    # Try to assign hkl indices based on crystal parameters
+    crystal_system = crystal_params['system']
+    lattice_str = crystal_params['lattice_params']
+    
+    if crystal_system == 'Unknown' or not lattice_str:
+        return xrd_results
+    
+    try:
+        # Parse lattice parameters
+        import re
+        lattice_params = {}
+        for match in re.finditer(r'([abc])\s*=\s*([\d\.]+)', lattice_str):
+            lattice_params[match.group(1)] = float(match.group(2))
+        
+        if not lattice_params:
+            return xrd_results
+        
+        # Simple hkl assignment for cubic system
+        if crystal_system.lower() == 'cubic' and 'a' in lattice_params:
+            a = lattice_params['a']
+            
+            for i, peak in enumerate(peaks):
+                if 'position' in peak:
+                    theta = peak['position'] / 2  # Convert 2θ to θ
+                    
+                    # Calculate d-spacing from Bragg's law
+                    wavelength = xrd_results.get('wavelength', 1.5406)
+                    d = wavelength / (2 * np.sin(np.radians(theta)))
+                    
+                    # For cubic: d = a / sqrt(h² + k² + l²)
+                    # Find h,k,l that gives closest d-spacing
+                    best_hkl = None
+                    best_error = float('inf')
+                    
+                    for h in range(0, 5):
+                        for k in range(0, 5):
+                            for l in range(0, 5):
+                                if h == 0 and k == 0 and l == 0:
+                                    continue
+                                
+                                d_calc = a / np.sqrt(h**2 + k**2 + l**2)
+                                error = abs(d - d_calc) / d
+                                
+                                if error < best_error and error < 0.1:  # 10% tolerance
+                                    best_error = error
+                                    best_hkl = (h, k, l)
+                    
+                    if best_hkl:
+                        peak['hkl'] = f"({best_hkl[0]}{best_hkl[1]}{best_hkl[2]})"
+                        peak['hkl_detail'] = {
+                            'h': best_hkl[0],
+                            'k': best_hkl[1],
+                            'l': best_hkl[2],
+                            'error_percent': best_error * 100
+                        }
+        
+        xrd_results['indexing_method'] = 'Simple cubic indexing'
+        
+    except Exception as e:
+        print(f"Could not assign hkl indices: {e}")
+    
+    return xrd_results
+       
 # ============================================================================
 # MAIN APPLICATION
 # ============================================================================
@@ -1058,16 +1142,21 @@ def display_scientific_results(results, params):
     all_tabs = [
         "📈 Overview", 
         "🔬 BET Analysis", 
-        "📉 XRD Analysis", 
-        "🧬 Morphology", 
-        "🔍 Validation",
-        "📚 Methods",
-        "📤 Export"
+        "📉 XRD Analysis",
+        "🧬 3D XRD Visualization"  # NEW TAB
     ]
     
     # Add crystal structure tab if enabled
     if show_crystal_tab:
-        all_tabs.insert(3, "🏛️ Crystal Structure")  # Insert at position 3
+        all_tabs.append("🏛️ Crystal Structure")
+    
+    # Add remaining tabs
+    all_tabs.extend([
+        "📊 Morphology", 
+        "🔍 Validation",
+        "📚 Methods",
+        "📤 Export"
+    ])
     
     # Create tabs
     tabs = st.tabs(all_tabs)
@@ -1101,7 +1190,12 @@ def display_scientific_results(results, params):
         display_xrd_analysis(results, plotter)
     tab_index += 1
     
-    # Tab 4: Crystal Structure (optional)
+    # Tab 4: 3D XRD Visualization (NEW)
+    with tabs[tab_index]:
+        display_3d_xrd_visualization(results, params)
+    tab_index += 1
+    
+    # Tab 5: Crystal Structure (optional)
     if show_crystal_tab:
         with tabs[tab_index]:
             # Import and display crystal structure
@@ -1142,7 +1236,7 @@ def display_scientific_results(results, params):
                 st.error(f"Could not generate 3D structure: {str(e)}")
         tab_index += 1
     
-    # Tab 5: Morphology
+    # Tab 6: Morphology
     with tabs[tab_index]:
         # Only display morphology if we have BET results
         if results.get('bet_results'):
@@ -1151,17 +1245,17 @@ def display_scientific_results(results, params):
             st.warning("BET analysis data is required to visualize material morphology")
     tab_index += 1
     
-    # Tab 6: Validation
+    # Tab 7: Validation
     with tabs[tab_index]:
         display_validation(results)
     tab_index += 1
     
-    # Tab 7: Methods
+    # Tab 8: Methods
     with tabs[tab_index]:
         display_methods(results, params)
     tab_index += 1
     
-    # Tab 8: Export
+    # Tab 9: Export
     with tabs[tab_index]:
         display_export(results, params)
 # ============================================================================
@@ -1293,6 +1387,7 @@ def display_xrd_analysis(results, plotter):
         st.pyplot(fig)
         
         # Enhanced peak table with better hkl display
+        # In display_xrd_analysis function, replace the hkl handling section with:
         if xrd_res.get('peaks'):
             st.subheader("Peak Analysis with HKL Indexing")
             
@@ -1330,16 +1425,16 @@ def display_xrd_analysis(results, plotter):
             for i, peak in enumerate(all_peaks[:n_to_show]):
                 row = {
                     'Rank': i+1,
-                    '2θ (°)': peak.get('position', 0),
-                    'd-spacing (Å)': peak.get('d_spacing', 0),
-                    'Intensity': peak.get('intensity', 0),
-                    'FWHM (°)': peak.get('fwhm_deg', 0),
-                    'Size (nm)': peak.get('crystallite_size', 0)
+                    '2θ (°)': f"{peak.get('position', 0):.3f}",
+                    'd-spacing (Å)': f"{peak.get('d_spacing', 0):.3f}",
+                    'Intensity': f"{peak.get('intensity', 0):.0f}",
+                    'FWHM (°)': f"{peak.get('fwhm_deg', 0):.3f}",
+                    'Size (nm)': f"{peak.get('crystallite_size', 0):.1f}"
                 }
                 
                 # Add hkl information - SAFELY
                 hkl_value = ""
-                error_value = 0.0
+                error_value = "0.00"
                 
                 # Try multiple ways to get hkl
                 if 'hkl' in peak and peak['hkl']:
@@ -1348,10 +1443,11 @@ def display_xrd_analysis(results, plotter):
                     elif isinstance(peak['hkl'], dict):
                         hkl_value = f"({peak['hkl'].get('h', '?')}{peak['hkl'].get('k', '?')}{peak['hkl'].get('l', '?')})"
                 elif 'hkl_detail' in peak and peak['hkl_detail']:
-                    if isinstance(peak['hkl_detail'], dict) and 'h' in peak['hkl_detail']:
+                    if isinstance(peak['hkl_detail'], dict):
                         hkl_detail = peak['hkl_detail']
-                        hkl_value = f"({hkl_detail.get('h', '?')}{hkl_detail.get('k', '?')}{hkl_detail.get('l', '?')})"
-                        error_value = hkl_detail.get('error_percent', 0.0)
+                        if 'h' in hkl_detail:
+                            hkl_value = f"({hkl_detail.get('h', '?')}{hkl_detail.get('k', '?')}{hkl_detail.get('l', '?')})"
+                            error_value = f"{hkl_detail.get('error_percent', 0):.2f}"
                 
                 row['hkl'] = hkl_value
                 row['Error (%)'] = error_value
@@ -1360,41 +1456,13 @@ def display_xrd_analysis(results, plotter):
             
             peaks_df = pd.DataFrame(peaks_data)
             
-            # Ensure numeric columns are numeric
-            numeric_cols = ['Rank', '2θ (°)', 'd-spacing (Å)', 'Intensity', 'FWHM (°)', 'Size (nm)', 'Error (%)']
-            for col in numeric_cols:
-                if col in peaks_df.columns:
-                    peaks_df[col] = pd.to_numeric(peaks_df[col], errors='coerce')
-            
             # Display with safe formatting
             try:
-                # Create a copy for display
-                peaks_display = peaks_df.copy()
-                
-                # Format numeric columns
-                format_dict = {
-                    'Rank': '{:.0f}',
-                    '2θ (°)': '{:.3f}',
-                    'd-spacing (Å)': '{:.3f}',
-                    'Intensity': '{:.0f}',
-                    'FWHM (°)': '{:.3f}',
-                    'Size (nm)': '{:.1f}',
-                    'Error (%)': '{:.2f}'
-                }
-                
-                # Apply formatting only to columns that exist
-                format_dict = {k: v for k, v in format_dict.items() if k in peaks_display.columns}
-                
-                # Display the formatted dataframe
-                st.dataframe(peaks_display.style.format(format_dict))
+                st.dataframe(peaks_df)
                 
             except Exception as e:
-                # Fallback: display without formatting
                 st.warning(f"Formatting error: {str(e)[:100]}")
                 st.dataframe(peaks_df)
-        
-        # Continue with rest of function...
-        # ... existing crystallite size analysis, download buttons, etc.
         
         # Crystallite size analysis
         with st.expander("🔬 Crystallite Size Analysis", expanded=False):
@@ -1439,6 +1507,162 @@ def display_xrd_analysis(results, plotter):
                 file_name="xrd_peak_analysis.csv",
                 mime="text/csv"
             )
+@memory_safe_plot            
+def display_3d_xrd_visualization(results, params):
+    """Display 3D XRD visualization with hkl indices"""
+    st.subheader("3D XRD Pattern Visualization")
+    
+    if not results.get('xrd_results'):
+        st.warning("XRD data is required for 3D visualization")
+        return
+    
+    xrd_res = results['xrd_results']
+    if not xrd_res.get('peaks'):
+        st.warning("No peaks detected in XRD data")
+        return
+    
+    # Create a simple 3D XRD visualization
+    try:
+        import plotly.graph_objects as go
+        import numpy as np
+        
+        # Get peaks data
+        peaks = xrd_res['peaks']
+        positions = [p['position'] for p in peaks]
+        intensities = [p['intensity'] for p in peaks]
+        
+        # Normalize intensities for visualization
+        max_intensity = max(intensities)
+        norm_intensities = [i/max_intensity for i in intensities]
+        
+        # Get hkl indices
+        hkl_labels = []
+        for peak in peaks:
+            hkl = peak.get('hkl', '')
+            if not hkl and 'hkl_detail' in peak:
+                hkl_detail = peak['hkl_detail']
+                if isinstance(hkl_detail, dict):
+                    h = hkl_detail.get('h', '?')
+                    k = hkl_detail.get('k', '?')
+                    l = hkl_detail.get('l', '?')
+                    hkl = f"({h}{k}{l})"
+            hkl_labels.append(hkl)
+        
+        # Create 3D scatter plot
+        fig = go.Figure()
+        
+        # Add peak lines (vertical lines)
+        for pos, intensity, hkl in zip(positions, norm_intensities, hkl_labels):
+            # Line from base to peak
+            fig.add_trace(go.Scatter3d(
+                x=[pos, pos],
+                y=[0, intensity],
+                z=[0, 0],
+                mode='lines',
+                line=dict(color='blue', width=3),
+                showlegend=False
+            ))
+            
+            # Peak marker
+            fig.add_trace(go.Scatter3d(
+                x=[pos],
+                y=[intensity],
+                z=[0],
+                mode='markers',
+                marker=dict(
+                    size=8,
+                    color='red',
+                    opacity=0.8
+                ),
+                text=f"2θ: {pos:.2f}°<br>Intensity: {intensity:.2f}<br>hkl: {hkl}",
+                hoverinfo='text',
+                showlegend=False
+            ))
+        
+        # Update layout
+        fig.update_layout(
+            scene=dict(
+                xaxis_title='2θ (degrees)',
+                yaxis_title='Normalized Intensity',
+                zaxis_title='',
+                camera=dict(
+                    eye=dict(x=1.5, y=1.5, z=0.5)
+                )
+            ),
+            title='3D XRD Pattern Visualization',
+            width=800,
+            height=600
+        )
+        
+        # Display plot
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Add crystal structure if available
+        crystal_system = params['crystal']['system']
+        lattice_params = params['crystal']['lattice_params']
+        
+        if crystal_system != 'Unknown' and lattice_params:
+            st.subheader("Crystal Structure Information")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.info(f"**Crystal System:** {crystal_system}")
+                st.info(f"**Lattice Parameters:** {lattice_params}")
+            
+            with col2:
+                if 'indexing' in xrd_res:
+                    indexing = xrd_res['indexing']
+                    if 'figures_of_merit' in indexing:
+                        fom = indexing['figures_of_merit']
+                        if 'M20' in fom:
+                            st.info(f"**M₂₀ Figure of Merit:** {fom['M20']:.1f}")
+            
+            # Generate simple unit cell visualization
+            if crystal_system == 'Cubic':
+                st.info("**Unit Cell:** Simple cubic structure shown")
+                # You can add more detailed visualization here
+            
+    except Exception as e:
+        st.error(f"Could not create 3D visualization: {str(e)}")
+        
+        # Fallback: Create a simple 2D plot with hkl annotations
+        st.subheader("2D XRD Pattern with HKL Indices")
+        
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # Plot XRD pattern
+        if results.get('xrd_raw'):
+            ax.plot(results['xrd_raw']['two_theta'], 
+                   results['xrd_raw']['intensity'], 
+                   'k-', linewidth=1)
+        
+        # Mark peaks with hkl
+        for peak in peaks:
+            pos = peak['position']
+            intensity = peak['intensity']
+            
+            # Get hkl
+            hkl = peak.get('hkl', '')
+            if not hkl and 'hkl_detail' in peak:
+                hkl_detail = peak['hkl_detail']
+                if isinstance(hkl_detail, dict):
+                    h = hkl_detail.get('h', '?')
+                    k = hkl_detail.get('k', '?')
+                    l = hkl_detail.get('l', '?')
+                    hkl = f"({h}{k}{l})"
+            
+            ax.plot([pos], [intensity], 'ro', markersize=5)
+            ax.text(pos, intensity * 1.05, hkl, 
+                   ha='center', va='bottom', fontsize=8,
+                   rotation=45)
+        
+        ax.set_xlabel('2θ (degrees)')
+        ax.set_ylabel('Intensity')
+        ax.set_title('XRD Pattern with HKL Indices')
+        ax.grid(True, alpha=0.3)
+        
+        st.pyplot(fig)            
 @memory_safe_plot            
 def display_morphology(results):
     """Display morphology visualization and interpretation"""
@@ -2175,6 +2399,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
