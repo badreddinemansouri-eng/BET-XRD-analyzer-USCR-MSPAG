@@ -16,7 +16,8 @@ from typing import Dict, List, Tuple, Any
 import warnings
 
 warnings.filterwarnings('ignore')
-
+# Add this import at the beginning of morphology_fusion.py
+from scientific_integration import ScientificIntegrator
 # ============================================================================
 # MATERIAL CLASSIFICATION DATABASE
 # ============================================================================
@@ -140,7 +141,8 @@ class MorphologyFusionEngine:
     def __init__(self):
         self.material_classification = []
         self.confidence_scores = {}
-    
+            # Add this line to initialize ScientificIntegrator
+        self.scientific_integrator = ScientificIntegrator()
     def _classify_based_on_bet(self, bet_results: Dict) -> List[Dict]:
         """
         Classify material based on BET parameters
@@ -604,6 +606,8 @@ class MorphologyFusionEngine:
                     'error': 'Invalid input data',
                     'confidence_score': 0.0
                 }
+                    # Add scientific integration
+            integration_results = self.scientific_integrator.integrate_results(bet_results, xrd_results)    
             
             # Step 1: Individual classifications
             bet_classifications = self._classify_based_on_bet(bet_results)
@@ -701,7 +705,9 @@ class MorphologyFusionEngine:
                     'crystallinity_index': crystallinity,
                     'crystallite_size_nm': xrd_results.get('crystallite_size', {}).get('scherrer', 0)
                 }
+                'scientific_integration': integration_results
             }
+        
             
             return results
             
@@ -711,4 +717,5 @@ class MorphologyFusionEngine:
                 'error': f"Fusion error: {str(e)}",
                 'composite_classification': 'Unknown',
                 'confidence_score': 0.0
+
             }
