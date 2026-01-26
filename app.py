@@ -48,7 +48,8 @@ from xrd_analyzer import AdvancedXRDAnalyzer, extract_xrd_data
 from morphology_fusion import MorphologyFusionEngine
 from scientific_plots import PublicationPlotter
 # At the top of app.py with other imports
-from morphology_visualizer import IntegratedMorphologyAnalyzer
+from morphology_visualizer import MorphologyVisualizer
+
 import functools
 
 def memory_safe_plot(func):
@@ -2399,6 +2400,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
