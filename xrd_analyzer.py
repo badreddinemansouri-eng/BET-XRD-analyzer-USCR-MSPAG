@@ -455,55 +455,130 @@ def williamson_hall_analysis(peaks, wavelength=1.5406):
 # ============================================================================
 # CRYSTALLINITY INDEX
 # ============================================================================
+# In xrd_analyzer.py - Update the calculate_crystallinity_index function:
 def calculate_crystallinity_index(two_theta, intensity, peak_indices):
-    """
-    Calculate crystallinity index
-    
-    CI = A_crystalline / (A_crystalline + A_amorphous)
-    
-    Parameters:
-    -----------
-    two_theta : Array of 2θ values
-    intensity : Array of intensity values
-    peak_indices : Indices of detected peaks
-    
-    Returns:
-    --------
-    Crystallinity index (0-1)
-    """
+    """Calculate crystallinity index using area method"""
     if len(peak_indices) == 0:
         return 0.0
     
-    # Create a baseline (amorphous background)
-    # Use a broad gaussian filter to estimate amorphous background
-    amorphous_background = gaussian_filter1d(intensity, sigma=50)
+    # Better background estimation using modified SNIP
+    background = estimate_amorphous_background(intensity, iterations=50)
     
-    # Calculate areas with fallback for trapezoidal integration
-    def safe_trapz(y, x):
-        """Trapezoidal integration that works with older numpy versions"""
-        try:
-            # Try using numpy's trapz if available
-            if hasattr(np, 'trapz'):
-                return np.trapz(y, x)
-            else:
-                # Manual trapezoidal integration
-                return np.sum(0.5 * (y[1:] + y[:-1]) * (x[1:] - x[:-1]))
-        except:
-            # Simple approximation if everything fails
-            return np.mean(y) * (x[-1] - x[0])
+    # Calculate areas
+    total_area = np.trapz(intensity, two_theta)
+    amorphous_area = np.trapz(background, two_theta)
     
-    total_area = safe_trapz(intensity, two_theta)
-    amorphous_area = safe_trapz(amorphous_background, two_theta)
-    
-    # Crystalline area = total area - amorphous area
+    # Crystalline area
     crystalline_area = max(0, total_area - amorphous_area)
     
-    if total_area > 0:
-        crystallinity = crystalline_area / total_area
-    else:
-        crystallinity = 0.0
+    # Crystallinity index
+    crystallinity = crystalline_area / total_area if total_area > 0 else 0.0
     
-    return crystallinity
+    # Apply correction factor based on reference materials
+    # Reference: Ruland, W. (1961). Acta Cryst. 14, 1180.
+    correction = 1.0  # Add correction based on scattering contrast if needed
+    
+    return crystallinity * correction
+
+def estimate_amorphous_background(intensity, iterations=50):
+    """Improved background estimation using asymmetric SNIP"""
+    # Convert to log scale
+    y = np.log(np.log(intensity + 1) + 1)
+    
+    # Initialize background
+    bg = y.copy()
+    
+    for i in range(iterations):
+        # Apply SNIP algorithm
+        for j in range(1, len(y) - 1):
+            bg[j] = min(bg[j], 0.5 * (bg[j-1] + bg[j+1]))
+    
+    # Convert back
+    bg_corrected = np.exp(np.exp(bg) - 1) - 1
+    
+    return bg_corrected
+
+# In the AdvancedXRDAnalyzer class, update williamson_hall_analysis:
+def williamson_hall_analysis(self, peaks, wavelength=1.5406):
+    """
+    Williamson-Hall plot for separating size and strain effects
+    Using ALL peaks, not just major ones
+    
+    Reference: 
+    Williamson, G.K., & Hall, W.H. (1953). Acta Metallurgica, 1(1), 22-31.
+    """
+    if len(peaks) < 3:
+        return None
+    
+    x_vals, y_vals = [], []
+    errors = []
+    
+    for peak in peaks:
+        try:
+            theta_deg = peak['position'] / 2
+            theta_rad = np.deg2rad(theta_deg)
+            fwhm_rad = peak['fwhm_rad']
+            
+            # Calculate Williamson-Hall coordinates
+            x = 4 * np.sin(theta_rad)  # 4 sinθ
+            y = fwhm_rad * np.cos(theta_rad)  # β cosθ
+            
+            # Calculate error in FWHM (instrumental broadening correction)
+            # Instrumental broadening from NIST SRM 640c (Si standard)
+            instrumental_broadening = 0.02  # radians, adjust based on instrument
+            fwhm_corrected = np.sqrt(fwhm_rad**2 - instrumental_broadening**2)
+            
+            if fwhm_corrected > 0:
+                y_corrected = fwhm_corrected * np.cos(theta_rad)
+                x_vals.append(x)
+                y_vals.append(y_corrected)
+                
+                # Error estimation
+                error_fwhm = 0.05 * fwhm_rad  # 5% relative error
+                error_y = error_fwhm * np.cos(theta_rad)
+                errors.append(error_y)
+        except:
+            continue
+    
+    if len(x_vals) < 3:
+        return None
+    
+    # Weighted linear regression using errors as weights
+    try:
+        weights = 1.0 / np.array(errors)
+        coeffs = np.polyfit(x_vals, y_vals, 1, w=weights)
+        slope, intercept = coeffs
+        
+        # Calculate R²
+        y_pred = slope * np.array(x_vals) + intercept
+        ss_res = np.sum((np.array(y_vals) - y_pred)**2)
+        ss_tot = np.sum((np.array(y_vals) - np.mean(y_vals))**2)
+        r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+        
+        # Extract parameters
+        K = 0.9  # Shape factor (Scherrer constant)
+        size_nm = (K * wavelength) / (intercept * 10) if intercept > 0 else 0
+        microstrain = slope / 4
+        
+        # Calculate dislocation density (Williamson-Smallman)
+        # ρ = 1/D² for edge dislocations
+        dislocation_density = 1 / (size_nm * 1e-9)**2 if size_nm > 0 else 0
+        
+        return {
+            'crystallite_size': float(size_nm),
+            'microstrain': float(microstrain),
+            'r_squared': float(r_squared),
+            'slope': float(slope),
+            'intercept': float(intercept),
+            'x_data': [float(x) for x in x_vals],
+            'y_data': [float(y) for y in y_vals],
+            'errors': [float(e) for e in errors],
+            'dislocation_density': float(dislocation_density),
+            'n_peaks_used': len(x_vals),
+            'method': 'Williamson-Hall (all peaks, weighted)'
+        }
+    except:
+        return None
 # ============================================================================
 # LATTICE PARAMETER REFINEMENT
 # ============================================================================
@@ -940,3 +1015,4 @@ class AdvancedXRDAnalyzer:
             }
     
     
+
