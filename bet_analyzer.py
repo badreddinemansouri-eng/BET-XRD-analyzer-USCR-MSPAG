@@ -17,6 +17,14 @@ import warnings
 import io
 
 warnings.filterwarnings('ignore')
+def custom_trapz(y, x=None, dx=1.0):
+    """Trapezoidal integration for compatibility"""
+    y = np.asarray(y)
+    if x is None:
+        return np.sum((y[1:] + y[:-1]) / 2.0) * dx
+    else:
+        x = np.asarray(x)
+        return np.sum((y[1:] + y[:-1]) / 2.0 * np.diff(x))
 
 # ============================================================================
 # PHYSICAL CONSTANTS
@@ -51,14 +59,6 @@ GAS_CONSTANT = 8.314462618
 # ============================================================================
 # CUSTOM INTEGRATION (Compatibility)
 # ============================================================================
-def custom_trapz(y, x=None, dx=1.0):
-    """Trapezoidal integration for compatibility"""
-    y = np.asarray(y)
-    if x is None:
-        return np.sum((y[1:] + y[:-1]) / 2.0) * dx
-    else:
-        x = np.asarray(x)
-        return np.sum((y[1:] + y[:-1]) / 2.0 * np.diff(x))
 
 # ============================================================================
 # ASAP 2420 DATA EXTRACTION
@@ -852,4 +852,5 @@ def calculate_dubinin_astakhov(p_ads, q_ads, temperature=77.3):
         'r_squared': float(r_value**2),
         'method': 'Dubinin-Astakhov (n=2)'
     }
+
 
