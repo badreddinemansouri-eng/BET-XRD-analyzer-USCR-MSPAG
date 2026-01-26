@@ -16,10 +16,31 @@ import numpy as np
 import pandas as pd
 import sys
 import warnings
-
+import io     # ADD THIS
+import traceback
 
 warnings.filterwarnings('ignore')
 import json  # <-- ADD THIS LINE
+
+# ADD THESE IMPORTS - FIX FOR SCIENTIFICINTEGRATOR ERROR
+try:
+    from scientific_integration import ScientificIntegrator
+except ImportError:
+    # Create a dummy class if import fails
+    class ScientificIntegrator:
+        def __init__(self):
+            pass
+        def integrate_results(self, bet_results, xrd_results):
+            return {
+                'valid': False, 
+                'error': 'ScientificIntegrator import failed',
+                'correlation_analysis': {},
+                'material_classification': {},
+                'structure_properties': {},
+                'validation_metrics': {},
+                'recommendations': []
+            }
+
 # Import scientific engines
 from bet_analyzer import IUPACBETAnalyzer, extract_asap2420_data
 from xrd_analyzer import AdvancedXRDAnalyzer, extract_xrd_data
@@ -1304,51 +1325,73 @@ def display_xrd_analysis(results, plotter):
             # Sort peaks by intensity for display
             all_peaks = sorted(xrd_res['peaks'], key=lambda x: x['intensity'], reverse=True)
             
-            # Create enhanced DataFrame with hkl
+            # Create enhanced DataFrame with hkl - FIXED VERSION
             peaks_data = []
             for i, peak in enumerate(all_peaks[:n_to_show]):
                 row = {
                     'Rank': i+1,
-                    '2θ (°)': peak['position'],
-                    'd-spacing (Å)': peak['d_spacing'],
-                    'Intensity': peak['intensity'],
-                    'FWHM (°)': peak['fwhm_deg'],
+                    '2θ (°)': peak.get('position', 0),
+                    'd-spacing (Å)': peak.get('d_spacing', 0),
+                    'Intensity': peak.get('intensity', 0),
+                    'FWHM (°)': peak.get('fwhm_deg', 0),
                     'Size (nm)': peak.get('crystallite_size', 0)
                 }
                 
-                # Add enhanced hkl information
+                # Add hkl information - SAFELY
+                hkl_value = ""
+                error_value = 0.0
+                
+                # Try multiple ways to get hkl
                 if 'hkl' in peak and peak['hkl']:
-                    row['hkl'] = peak['hkl']
-                    if 'indexing_error' in peak:
-                        row['Error (%)'] = f"{peak['indexing_error']:.2f}"
-                    else:
-                        row['Error (%)'] = ""
+                    if isinstance(peak['hkl'], str):
+                        hkl_value = peak['hkl']
+                    elif isinstance(peak['hkl'], dict):
+                        hkl_value = f"({peak['hkl'].get('h', '?')}{peak['hkl'].get('k', '?')}{peak['hkl'].get('l', '?')})"
                 elif 'hkl_detail' in peak and peak['hkl_detail']:
-                    hkl_detail = peak['hkl_detail']
-                    if isinstance(hkl_detail, dict) and 'h' in hkl_detail:
-                        row['hkl'] = f"({hkl_detail['h']}{hkl_detail['k']}{hkl_detail['l']})"
-                        row['Error (%)'] = f"{hkl_detail.get('error_percent', 0):.2f}"
-                    else:
-                        row['hkl'] = str(hkl_detail)
-                        row['Error (%)'] = ""
-                else:
-                    row['hkl'] = ""
-                    row['Error (%)'] = ""
+                    if isinstance(peak['hkl_detail'], dict) and 'h' in peak['hkl_detail']:
+                        hkl_detail = peak['hkl_detail']
+                        hkl_value = f"({hkl_detail.get('h', '?')}{hkl_detail.get('k', '?')}{hkl_detail.get('l', '?')})"
+                        error_value = hkl_detail.get('error_percent', 0.0)
+                
+                row['hkl'] = hkl_value
+                row['Error (%)'] = error_value
                 
                 peaks_data.append(row)
             
             peaks_df = pd.DataFrame(peaks_data)
             
-            # Format the DataFrame
-            st.dataframe(peaks_df.style.format({
-                'Rank': '{:.0f}',
-                '2θ (°)': '{:.3f}',
-                'd-spacing (Å)': '{:.3f}',
-                'Intensity': '{:.0f}',
-                'FWHM (°)': '{:.3f}',
-                'Size (nm)': '{:.1f}',
-                'Error (%)': '{:.2f}'
-            }))
+            # Ensure numeric columns are numeric
+            numeric_cols = ['Rank', '2θ (°)', 'd-spacing (Å)', 'Intensity', 'FWHM (°)', 'Size (nm)', 'Error (%)']
+            for col in numeric_cols:
+                if col in peaks_df.columns:
+                    peaks_df[col] = pd.to_numeric(peaks_df[col], errors='coerce')
+            
+            # Display with safe formatting
+            try:
+                # Create a copy for display
+                peaks_display = peaks_df.copy()
+                
+                # Format numeric columns
+                format_dict = {
+                    'Rank': '{:.0f}',
+                    '2θ (°)': '{:.3f}',
+                    'd-spacing (Å)': '{:.3f}',
+                    'Intensity': '{:.0f}',
+                    'FWHM (°)': '{:.3f}',
+                    'Size (nm)': '{:.1f}',
+                    'Error (%)': '{:.2f}'
+                }
+                
+                # Apply formatting only to columns that exist
+                format_dict = {k: v for k, v in format_dict.items() if k in peaks_display.columns}
+                
+                # Display the formatted dataframe
+                st.dataframe(peaks_display.style.format(format_dict))
+                
+            except Exception as e:
+                # Fallback: display without formatting
+                st.warning(f"Formatting error: {str(e)[:100]}")
+                st.dataframe(peaks_df)
         
         # Continue with rest of function...
         # ... existing crystallite size analysis, download buttons, etc.
@@ -2156,6 +2199,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
