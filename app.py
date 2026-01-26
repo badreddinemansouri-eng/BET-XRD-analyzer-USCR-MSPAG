@@ -1884,8 +1884,12 @@ def display_crystal_structure(results, params):
     
     try:
         # Initialize 3D crystal structure generator
-        from crystal_structure_3d import CrystalStructure3D
-        structure_3d = CrystalStructure3D()
+        try:
+            from crystal_structure_3d import CrystalStructure3D
+            structure_3d = CrystalStructure3D()
+        except ImportError:
+            st.error("Could not import CrystalStructure3D. Make sure crystal_structure_3d.py is in the same directory.")
+            return
         
         # Generate crystal structure
         structure = structure_3d.generate_structure(
@@ -1913,31 +1917,6 @@ def display_crystal_structure(results, params):
         with col3:
             if 'density' in structure:
                 st.metric("Density", f"{structure['density']:.2f} g/cm³")
-        
-        # Display lattice parameters
-        with st.expander("📏 Lattice Parameters", expanded=False):
-            for param, value in lattice_params.items():
-                st.write(f"**{param}** = {value:.3f} Å")
-            
-            # Calculate unit cell volume
-            if crystal_system == 'Cubic':
-                a = lattice_params.get('a', 0)
-                volume = a**3
-                st.write(f"**Unit Cell Volume** = {volume:.3f} Å³")
-            elif crystal_system == 'Hexagonal':
-                a = lattice_params.get('a', 0)
-                c = lattice_params.get('c', 0)
-                volume = (3**0.5 / 2) * a**2 * c
-                st.write(f"**Unit Cell Volume** = {volume:.3f} Å³")
-        
-        # Interactive 3D plot (optional)
-        if params['crystal'].get('show_interactive', False):
-            st.subheader("Interactive 3D Visualization")
-            try:
-                fig_interactive = structure_3d.create_interactive_plot(structure)
-                st.plotly_chart(fig_interactive, use_container_width=True)
-            except Exception as e:
-                st.warning(f"Interactive plot requires Plotly: {str(e)}")
         
         # Download options
         st.subheader("📥 Download Structure")
@@ -1982,10 +1961,7 @@ def display_crystal_structure(results, params):
             )
         
     except Exception as e:
-        st.error(f"Error generating 3D crystal structure: {str(e)}")
-        import traceback
-        with st.expander("Technical details"):
-            st.code(traceback.format_exc())                
+        st.error(f"Error generating 3D crystal structure: {str(e)}")                
 @memory_safe_plot
 def display_export(results, params):
     """Export functionality"""
@@ -2199,6 +2175,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
