@@ -12,6 +12,29 @@ References:
 """
 
 import streamlit as st
+st.write("✅ app.py started")
+
+def test_import(name, code):
+    try:
+        exec(code, globals())
+        st.write(f"✅ {name} imported")
+    except Exception as e:
+        st.error(f"❌ {name} FAILED")
+        st.exception(e)
+        st.stop()
+
+test_import("bet_analyzer", "from bet_analyzer import IUPACBETAnalyzer")
+test_import("xrd_analyzer", "from xrd_analyzer import AdvancedXRDAnalyzer")
+test_import("morphology_visualizer", "from morphology_visualizer import MorphologyVisualizer")
+test_import("morphology_fusion", "from morphology_fusion import MorphologyFusionEngine")
+test_import("scientific_integration", "from scientific_integration import ScientificIntegrator")
+test_import("scientific_plots", "from scientific_plots import PublicationPlotter")
+test_import("crystallography_engine", "from crystallography_engine import CrystallographyEngine")
+test_import("crystal_structure_3d", "from crystal_structure_3d import CrystalStructure3D")
+
+st.success("🎉 ALL IMPORTS PASSED")
+st.stop()
+
 import numpy as np
 import pandas as pd
 import sys
@@ -2400,6 +2423,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
