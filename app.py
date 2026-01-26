@@ -1022,41 +1022,34 @@ def display_scientific_results(results, params):
     
     st.header("📊 Scientific Results")
     
-    # Create tabs for different views - ADD CRYSTAL STRUCTURE TAB
-    tab_names = [
+    # ============================================================================
+    # FIXED TAB STRUCTURE - Handle variable number of tabs
+    # ============================================================================
+    
+    # Determine which tabs to show
+    show_crystal_tab = (
+        params['crystal']['system'] != 'Unknown' and 
+        params['crystal']['lattice_params'] and
+        params['crystal'].get('enable_3d', False)
+    )
+    
+    # Define all possible tabs
+    all_tabs = [
         "📈 Overview", 
         "🔬 BET Analysis", 
         "📉 XRD Analysis", 
-        "🏛️ Crystal Structure",  # NEW TAB
         "🧬 Morphology", 
         "🔍 Validation",
         "📚 Methods",
         "📤 Export"
     ]
     
-    # Check if we should show crystal structure tab
-    show_crystal_tab = False
-    if (params['crystal']['system'] != 'Unknown' and 
-        params['crystal']['lattice_params'] and
-        params['crystal']['enable_3d']):
-        show_crystal_tab = True
-    
-    # Adjust tabs based on available data
+    # Add crystal structure tab if enabled
     if show_crystal_tab:
-        tabs = st.tabs(tab_names)
-    else:
-        # Remove crystal structure tab if not applicable
-        tabs = st.tabs([t for t in tab_names if t != "🏛️ Crystal Structure"])
-        # Create mapping
-        tab_mapping = {
-            "📈 Overview": 0,
-            "🔬 BET Analysis": 1,
-            "📉 XRD Analysis": 2,
-            "🧬 Morphology": 3 if show_crystal_tab else 2,
-            "🔍 Validation": 4 if show_crystal_tab else 3,
-            "📚 Methods": 5 if show_crystal_tab else 4,
-            "📤 Export": 6 if show_crystal_tab else 5
-        }
+        all_tabs.insert(3, "🏛️ Crystal Structure")  # Insert at position 3
+    
+    # Create tabs
+    tabs = st.tabs(all_tabs)
     
     # Import plotter
     from scientific_plots import PublicationPlotter
@@ -1065,43 +1058,91 @@ def display_scientific_results(results, params):
         font_size=params['export']['font_size']
     )
     
+    # ============================================================================
+    # SIMPLIFIED TAB HANDLING - No unpacking errors
+    # ============================================================================
+    
+    # Create a mapping of tab indices to functions
+    tab_index = 0
+    
+    # Tab 1: Overview
+    with tabs[tab_index]:
+        display_overview(results, plotter)
+    tab_index += 1
+    
+    # Tab 2: BET Analysis
+    with tabs[tab_index]:
+        display_bet_analysis(results, plotter)
+    tab_index += 1
+    
+    # Tab 3: XRD Analysis
+    with tabs[tab_index]:
+        display_xrd_analysis(results, plotter)
+    tab_index += 1
+    
+    # Tab 4: Crystal Structure (optional)
     if show_crystal_tab:
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = tabs
-        
-        with tab1:
-            display_overview(results, plotter)
-        with tab2:
-            display_bet_analysis(results, plotter)
-        with tab3:
-            display_xrd_analysis(results, plotter)
-        with tab4:  # NEW CRYSTAL STRUCTURE TAB
-            display_crystal_structure(results, params)
-        with tab5:
+        with tabs[tab_index]:
+            # Import and display crystal structure
+            try:
+                from crystal_structure_3d import CrystalStructure3D
+                crystal_3d = CrystalStructure3D()
+                
+                # Parse lattice parameters
+                lattice_params = {}
+                import re
+                lattice_str = params['crystal']['lattice_params']
+                for match in re.finditer(r'([abc])\s*=\s*([\d\.]+)', lattice_str):
+                    lattice_params[match.group(1)] = float(match.group(2))
+                
+                # Generate and display structure
+                structure = crystal_3d.generate_structure(
+                    crystal_system=params['crystal']['system'],
+                    lattice_params=lattice_params,
+                    space_group=params['crystal']['space_group'],
+                    composition=params['crystal'].get('composition', 'SiO2')
+                )
+                
+                # Create visualization
+                fig = crystal_3d.create_3d_plot(structure)
+                st.pyplot(fig)
+                
+                # Add information
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Crystal System", params['crystal']['system'])
+                with col2:
+                    st.metric("Space Group", params['crystal']['space_group'] or "Not specified")
+                with col3:
+                    if 'density' in structure:
+                        st.metric("Density", f"{structure['density']:.2f} g/cm³")
+                
+            except Exception as e:
+                st.error(f"Could not generate 3D structure: {str(e)}")
+        tab_index += 1
+    
+    # Tab 5: Morphology
+    with tabs[tab_index]:
+        # Only display morphology if we have BET results
+        if results.get('bet_results'):
             display_morphology(results)
-        with tab6:
-            display_validation(results)
-        with tab7:
-            display_methods(results, params)
-        with tab8:
-            display_export(results, params)
-    else:
-        # Original tab structure without crystal structure
-        tab1, tab2, tab3, tab4, tab5, tab6 = tabs
-        
-        with tab1:
-            display_overview(results, plotter)
-        with tab2:
-            display_bet_analysis(results, plotter)
-        with tab3:
-            display_xrd_analysis(results, plotter)
-        with tab4:
-            display_morphology(results)
-        with tab5:
-            display_validation(results)
-        with tab6:
-            display_methods(results, params)
-        with tab7:
-            display_export(results, params)
+        else:
+            st.warning("BET analysis data is required to visualize material morphology")
+    tab_index += 1
+    
+    # Tab 6: Validation
+    with tabs[tab_index]:
+        display_validation(results)
+    tab_index += 1
+    
+    # Tab 7: Methods
+    with tabs[tab_index]:
+        display_methods(results, params)
+    tab_index += 1
+    
+    # Tab 8: Export
+    with tabs[tab_index]:
+        display_export(results, params)
 # ============================================================================
 # DISPLAY FUNCTIONS (To be implemented in detail)
 # ============================================================================
@@ -2135,6 +2176,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
