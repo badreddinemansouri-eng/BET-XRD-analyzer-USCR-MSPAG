@@ -1375,44 +1375,37 @@ def display_morphology(results):
             morphology = analyzer.analyze_morphology(bet, xrd)
             
             if morphology['valid']:
-                # Display visualization
+                # Display main visualization
                 st.subheader("Morphology Visualization")
                 st.pyplot(morphology['visualization'])
                 
-                # Display interpretation in expanders
-                col1, col2 = st.columns(2)
+                # ENHANCED: Add realistic SEM/TEM visualization
+                st.subheader("Realistic SEM/TEM Representation")
+                
+                # Create enhanced SEM/TEM visualization
+                from morphology_visualizer import MorphologyVisualizer
+                visualizer = MorphologyVisualizer()
+                
+                # Generate realistic SEM/TEM image
+                fig_sem = visualizer.create_pore_structure_2d(bet, xrd)
+                
+                # Display with scale bar
+                col1, col2 = st.columns([3, 1])
                 
                 with col1:
-                    with st.expander("📊 Material Classification", expanded=True):
-                        classification = morphology['classification']
-                        st.write(f"**Primary Type:** {classification['primary']}")
-                        st.write("**Typical Examples:**")
-                        for example in classification.get('examples', []):
-                            st.write(f"- {example}")
-                        
-                        if 'characteristics' in classification:
-                            st.write("**Key Characteristics:**")
-                            for char in classification['characteristics']:
-                                st.write(f"- {char}")
+                    st.pyplot(fig_sem)
                 
                 with col2:
-                    with st.expander("🔍 Structure Properties", expanded=True):
-                        properties = morphology['structure_properties']
-                        
-                        # Create metrics
-                        col_a, col_b, col_c = st.columns(3)
-                        
-                        with col_a:
-                            st.metric("Porosity", f"{properties.get('porosity_percentage', 0):.1f}%")
-                        with col_b:
-                            st.metric("S/V Ratio", f"{properties.get('surface_to_volume_ratio', 0):.0f} m²/cm³")
-                        with col_c:
-                            st.metric("Accessibility", f"{properties.get('accessibility_factor', 0):.1f}/1.0")
-                        
-                        if 'crystallinity_index' in properties:
-                            st.metric("Crystallinity", f"{properties['crystallinity_index']:.2f}")
-                        if 'estimated_wall_thickness' in properties:
-                            st.metric("Wall Thickness", f"{properties['estimated_wall_thickness']:.1f} nm")
+                    st.info("**SEM/TEM Simulation Parameters:**")
+                    if bet.get('surface_area'):
+                        st.write(f"S_BET: {bet['surface_area']:.0f} m²/g")
+                    if bet.get('total_pore_volume'):
+                        st.write(f"Porosity: {bet['total_pore_volume']*100:.1f}%")
+                    if xrd and xrd.get('crystallite_size'):
+                        st.write(f"Crystal size: {xrd['crystallite_size']['scherrer']:.1f} nm")
+                
+                # Continue with existing interpretation...
+                # ... rest of the existing function continues
                 
                 # Detailed interpretation
                 st.subheader("Scientific Interpretation")
@@ -2142,6 +2135,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
