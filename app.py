@@ -193,7 +193,7 @@ def create_sidebar():
                 value=2,
                 help="Number of unit cells in each direction"
             )
-        }
+        
         
         st.markdown("---")
         st.subheader("Export Settings")
@@ -2135,6 +2135,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
