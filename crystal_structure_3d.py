@@ -24,13 +24,6 @@ class CrystalStructure3D:
             'Fe': 1.24, 'Ti': 1.47, 'Zr': 1.60, 'Ce': 1.85,
             'Na': 1.02, 'Ca': 1.00, 'Mg': 1.60
         }
-    def create_interactive_plot(self, structure):
-    if go is None:
-        return None
-    try:
-        return self._plotly_figure(structure)
-    except Exception:
-        return None
 
     def generate_structure(self, crystal_system: str, 
                           lattice_params: Dict,
@@ -168,11 +161,17 @@ class CrystalStructure3D:
         
         return fig
     
-    def create_interactive_plot(self, structure: Dict):
-        """Create interactive 3D plot using Plotly"""
+def create_interactive_plot(self, structure: Dict):
+    """
+    Create interactive 3D plot using Plotly (optional).
+    Falls back gracefully if WebGL / Plotly is not supported.
+    """
+    if go is None:
+        return None
+
+    try:
         atoms = structure['atoms']
-        
-        # Create scatter plot for atoms
+
         scatter_trace = go.Scatter3d(
             x=[atom['position'][0] for atom in atoms],
             y=[atom['position'][1] for atom in atoms],
@@ -187,61 +186,17 @@ class CrystalStructure3D:
             text=[f"{atom['element']}" for atom in atoms],
             hoverinfo='text'
         )
-        
-        # Create unit cell lines
-        unit_cell = structure['unit_cell']
-        lines = []
-        
-        # Add lines for unit cell edges
-        vertices = [
-            [0, 0, 0],
-            unit_cell[0],
-            unit_cell[1],
-            unit_cell[2],
-            unit_cell[0] + unit_cell[1],
-            unit_cell[0] + unit_cell[2],
-            unit_cell[1] + unit_cell[2],
-            unit_cell[0] + unit_cell[1] + unit_cell[2]
-        ]
-        
-        edges = [
-            [0, 1], [0, 2], [0, 3],
-            [1, 4], [1, 5],
-            [2, 4], [2, 6],
-            [3, 5], [3, 6],
-            [4, 7], [5, 7], [6, 7]
-        ]
-        
-        for edge in edges:
-            line = go.Scatter3d(
-                x=[vertices[edge[0]][0], vertices[edge[1]][0]],
-                y=[vertices[edge[0]][1], vertices[edge[1]][1]],
-                z=[vertices[edge[0]][2], vertices[edge[1]][2]],
-                mode='lines',
-                line=dict(color='black', width=3),
-                showlegend=False
-            )
-            lines.append(line)
-        
-        fig = go.Figure(data=[scatter_trace] + lines)
-        
+
+        fig = go.Figure(data=[scatter_trace])
         fig.update_layout(
-            scene=dict(
-                xaxis_title='X (Å)',
-                yaxis_title='Y (Å)',
-                zaxis_title='Z (Å)',
-                aspectmode='cube',
-                camera=dict(
-                    eye=dict(x=1.5, y=1.5, z=1.5)
-                )
-            ),
-            title=dict(
-                text=f"Interactive 3D Crystal Structure<br>Space Group: {structure.get('space_group', 'Unknown')}",
-                x=0.5
-            ),
-            width=800,
-            height=600
+            scene=dict(aspectmode='cube'),
+            title="Interactive 3D Crystal Structure"
         )
-        
 
         return fig
+
+    except Exception:
+        # Any Plotly / WebGL failure → safe fallback
+        return None
+
+
