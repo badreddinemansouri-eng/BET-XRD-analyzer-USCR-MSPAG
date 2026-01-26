@@ -1738,20 +1738,44 @@ def display_validation(results):
     
     validation = results['validation']
     
-    # Overall validation status
+    # Show detailed validation results
+    with st.expander("📋 Detailed Validation Results", expanded=True):
+        # BET Validation
+        if validation.get('analysis_validation', {}).get('bet_checks'):
+            st.subheader("BET Validation Checks")
+            for check in validation['analysis_validation']['bet_checks']:
+                if check['status'] == '✅':
+                    st.success(f"{check['check']}: {check['value']}")
+                elif check['status'] == '⚠️':
+                    st.warning(f"{check['check']}: {check['value']}")
+                else:
+                    st.error(f"{check['check']}: {check['value']}")
+        
+        # XRD Validation
+        if validation.get('analysis_validation', {}).get('xrd_checks'):
+            st.subheader("XRD Validation Checks")
+            for check in validation['analysis_validation']['xrd_checks']:
+                if check['status'] == '✅':
+                    st.success(f"{check['check']}: {check['value']}")
+                elif check['status'] == '⚠️':
+                    st.warning(f"{check['check']}: {check['value']}")
+                else:
+                    st.error(f"{check['check']}: {check['value']}")
+    
+    # Show summary
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if validation.get('input_validation', {}).get('bet_valid'):
-            st.success("✅ BET Data Valid")
-        elif results.get('bet_results'):
-            st.warning("⚠️ BET Data Quality")
+        bet_passed = sum(1 for check in validation.get('analysis_validation', {}).get('bet_checks', []) 
+                        if check['status'] == '✅')
+        bet_total = len(validation.get('analysis_validation', {}).get('bet_checks', []))
+        st.metric("BET Checks", f"{bet_passed}/{bet_total}")
     
     with col2:
-        if validation.get('input_validation', {}).get('xrd_valid'):
-            st.success("✅ XRD Data Valid")
-        elif results.get('xrd_results'):
-            st.warning("⚠️ XRD Data Quality")
+        xrd_passed = sum(1 for check in validation.get('analysis_validation', {}).get('xrd_checks', []) 
+                        if check['status'] == '✅')
+        xrd_total = len(validation.get('analysis_validation', {}).get('xrd_checks', []))
+        st.metric("XRD Checks", f"{xrd_passed}/{xrd_total}")
     
     with col3:
         if validation.get('analysis_validation', {}).get('all_passed', True):
@@ -1759,76 +1783,32 @@ def display_validation(results):
         else:
             st.warning("⚠️ Some Checks Failed")
     
-    # Detailed validation results in expanders
-    with st.expander("📋 Data Input Validation", expanded=True):
-        input_val = validation.get('input_validation', {})
-        
-        if input_val.get('warnings'):
-            st.subheader("⚠️ Data Quality Warnings")
-            for warning in input_val['warnings']:
-                st.warning(f"• {warning}")
-        
-        if input_val.get('recommendations'):
-            st.subheader("📋 Recommendations")
-            for rec in input_val['recommendations']:
-                st.info(f"• {rec}")
-    
-    # Analysis validation
-    with st.expander("🔬 Analysis Method Validation", expanded=True):
-        analysis_val = validation.get('analysis_validation', {})
-        
-        # BET Checks
-        if analysis_val.get('bet_checks'):
-            st.subheader("BET Analysis Validation")
-            for check in analysis_val['bet_checks']:
-                st.write(f"{check['status']} **{check['check']}:** {check['value']}")
-        
-        # XRD Checks
-        if analysis_val.get('xrd_checks'):
-            st.subheader("XRD Analysis Validation")
-            for check in analysis_val['xrd_checks']:
-                st.write(f"{check['status']} **{check['check']}:** {check['value']}")
-        
-        # Consistency Checks
-        if analysis_val.get('consistency_checks'):
-            st.subheader("BET-XRD Consistency")
-            for check in analysis_val['consistency_checks']:
-                st.write(f"{check['status']} **{check['check']}:** {check['value']}")
-    
-    # Scientific standards compliance
-    with st.expander("📜 Standards Compliance", expanded=False):
-        st.markdown("""
-        **Compliance with International Standards:**
-        
-        ✅ **BET Analysis:** IUPAC Rouquerol criteria (Rouquerol et al., 2007)
-        ✅ **XRD Analysis:** ICDD PDF standards and Scherrer method
-        ✅ **Porosity Analysis:** BJH method (Barrett, Joyner, Halenda, 1951)
-        ✅ **Error Propagation:** ISO/IEC Guide 98-3:2008 (GUM)
-        ✅ **Data Reporting:** CODATA recommended values (2018)
-        
-        **References:**
-        1. Rouquerol, J. et al. (2007). *Stud. Surf. Sci. Catal.*, 160, 49-56.
-        2. Klug, H.P. & Alexander, L.E. (1974). *X-ray Diffraction Procedures*.
-        3. Barrett, E.P. et al. (1951). *J. Am. Chem. Soc.*, 73, 373-380.
-        4. BIPM (2008). *Guide to the Expression of Uncertainty in Measurement*.
-        """)
-    
-    # Statistical validation
-    if results.get('bet_results') and results.get('xrd_results'):
-        with st.expander("📊 Statistical Validation", expanded=False):
-            # Calculate correlation metrics
-            bet = results['bet_results']
-            xrd = results['xrd_results']
+    # Show recommendations for fixing warnings
+    if not validation.get('analysis_validation', {}).get('all_passed', True):
+        with st.expander("🔧 How to Fix Warnings", expanded=True):
+            st.markdown("""
+            **Common issues and solutions:**
             
-            col1, col2 = st.columns(2)
+            1. **BET Linearity (R² < 0.999):**
+               - Check if material is microporous (BET may not be applicable)
+               - Verify pressure range is 0.05-0.35 P/P₀
+               - Consider using t-plot or DR methods instead
             
-            with col1:
-                st.metric("BET R²", f"{bet.get('bet_regression', {}).get('r_squared', 0):.6f}")
-                st.metric("XRD Peaks", f"{len(xrd.get('peaks', []))}")
+            2. **Negative C constant:**
+               - Material may not follow BET theory
+               - Common for highly microporous materials
+               - Consider alternative surface area methods
             
-            with col2:
-                st.metric("BET Points", f"{bet.get('data_points', {}).get('adsorption', 0)}")
-                st.metric("XRD Points", f"{xrd.get('n_points', 0)}")
+            3. **Few XRD peaks:**
+               - Material may be amorphous or nanocrystalline
+               - Check XRD measurement parameters
+               - Consider longer scan times or higher resolution
+            
+            4. **Inconsistent BET/XRD results:**
+               - Different sample preparations may cause discrepancies
+               - Ensure samples are from same batch
+               - Consider surface roughness effects
+            """)
 def display_crystal_structure(results, params):
     """Display 3D crystal structure visualization"""
     st.subheader("🏛️ 3D Crystal Structure")
@@ -2176,6 +2156,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
