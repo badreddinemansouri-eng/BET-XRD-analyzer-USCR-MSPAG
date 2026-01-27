@@ -508,7 +508,13 @@ class MorphologyVisualizer:
         
         ax.set_xlim(-2, 2)
         ax.set_ylim(-2, 2)
-    
+    def _plot_sem_style(self, ax, bet_results, xrd_results=None):
+        """
+        SEM/TEM-style visualization wrapper.
+        Calls the realistic SEM/TEM rendering implementation.
+        """
+        return self._plot_sem_style_realistic(ax, bet_results, xrd_results)
+
     def _plot_sem_style_realistic(self, ax, bet_results, xrd_results=None):
         """
         Realistic SEM/TEM visualization based on actual data
