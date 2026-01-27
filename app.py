@@ -1026,7 +1026,7 @@ def main():
     
     # Display results if available
     if st.session_state.scientific_data.get('analysis_valid', False):
-        display_scientific_results(st.session_state.scientific_data, params)
+        display_scientific_results(st.session_state.scientific_data, scientific_params)
     
     # Footer
     st.markdown("---")
@@ -1048,7 +1048,7 @@ def main():
 # ============================================================================
 # RESULTS DISPLAY
 # ============================================================================
-def display_scientific_results(results, params):
+def display_scientific_results(results, scientific_params):
     """Display comprehensive scientific results"""
     
     st.header("📊 Scientific Results")
@@ -2327,6 +2327,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
