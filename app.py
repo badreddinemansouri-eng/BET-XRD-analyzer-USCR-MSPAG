@@ -1059,9 +1059,9 @@ def display_scientific_results(results, scientific_params):
     
     # Determine which tabs to show
     show_crystal_tab = (
-        params['crystal']['system'] != 'Unknown' and 
-        params['crystal']['lattice_params'] and
-        params['crystal'].get('enable_3d', False)
+        scientific_params['crystal']['system'] != 'Unknown' and 
+        scientific_params['crystal']['lattice_params'] and
+        scientific_params['crystal'].get('enable_3d', False)
     )
     
     # Define all possible tabs
@@ -1090,8 +1090,8 @@ def display_scientific_results(results, scientific_params):
     # Import plotter
     from scientific_plots import PublicationPlotter
     plotter = PublicationPlotter(
-        color_scheme=params['export']['color_scheme'],
-        font_size=params['export']['font_size']
+        color_scheme=scientific_params['export']['color_scheme'],
+        font_size=scientific_params['export']['font_size']
     )
     
     # ============================================================================
@@ -1118,7 +1118,7 @@ def display_scientific_results(results, scientific_params):
     
     # Tab 4: 3D XRD Visualization (NEW)
     with tabs[tab_index]:
-        display_3d_xrd_visualization(results, params)
+        display_3d_xrd_visualization(results, scientific_params)
     tab_index += 1
     
     # Tab 5: Crystal Structure (optional)
@@ -1132,16 +1132,16 @@ def display_scientific_results(results, scientific_params):
                 # Parse lattice parameters
                 lattice_params = {}
                 import re
-                lattice_str = params['crystal']['lattice_params']
+                lattice_str = scientific_params['crystal']['lattice_params']
                 for match in re.finditer(r'([abc])\s*=\s*([\d\.]+)', lattice_str):
                     lattice_params[match.group(1)] = float(match.group(2))
                 
                 # Generate and display structure
                 structure = crystal_3d.generate_structure(
-                    crystal_system=params['crystal']['system'],
+                    crystal_system=scientific_params['crystal']['system'],
                     lattice_params=lattice_params,
-                    space_group=params['crystal']['space_group'],
-                    composition=params['crystal'].get('composition', 'SiO2')
+                    space_group=scientific_params['crystal']['space_group'],
+                    composition=scientific_params['crystal'].get('composition', 'SiO2')
                 )
                 
                 # Create visualization
@@ -1151,9 +1151,9 @@ def display_scientific_results(results, scientific_params):
                 # Add information
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Crystal System", params['crystal']['system'])
+                    st.metric("Crystal System", scientific_params['crystal']['system'])
                 with col2:
-                    st.metric("Space Group", params['crystal']['space_group'] or "Not specified")
+                    st.metric("Space Group", scientific_params['crystal']['space_group'] or "Not specified")
                 with col3:
                     if 'density' in structure:
                         st.metric("Density", f"{structure['density']:.2f} g/cm³")
@@ -1178,12 +1178,12 @@ def display_scientific_results(results, scientific_params):
     
     # Tab 8: Methods
     with tabs[tab_index]:
-        display_methods(results, params)
+        display_methods(results, scientific_params)
     tab_index += 1
     
     # Tab 9: Export
     with tabs[tab_index]:
-        display_export(results, params)
+        display_export(results, scientific_params)
 # ============================================================================
 # DISPLAY FUNCTIONS (To be implemented in detail)
 # ============================================================================
@@ -1434,7 +1434,7 @@ def display_xrd_analysis(results, plotter):
                 mime="text/csv"
             )
 @memory_safe_plot            
-def display_3d_xrd_visualization(results, params):
+def display_3d_xrd_visualization(results, scientific_params):
     """Display 3D XRD visualization with hkl indices"""
     st.subheader("3D XRD Pattern Visualization")
     
@@ -1526,8 +1526,8 @@ def display_3d_xrd_visualization(results, params):
 
         
         # Add crystal structure if available
-        crystal_system = params['crystal']['system']
-        lattice_params = params['crystal']['lattice_params']
+        crystal_system = scientific_params['crystal']['system']
+        lattice_params = scientific_params['crystal']['lattice_params']
         
         if crystal_system != 'Unknown' and lattice_params:
             st.subheader("Crystal Structure Information")
@@ -1812,7 +1812,7 @@ def generate_morphology_report(morphology, bet, xrd):
     
     return "\n".join(report)
 
-def display_methods(results, params):
+def display_methods(results, scientific_params):
     """Display detailed methods section with complete references"""
     st.subheader("📚 Scientific Methods & Calculations")
     
@@ -2004,15 +2004,15 @@ def display_validation(results):
                - Ensure samples are from same batch
                - Consider surface roughness effects
             """)
-def display_crystal_structure(results, params):
+def display_crystal_structure(results, scientific_params):
     """Display 3D crystal structure visualization"""
     st.subheader("🏛️ 3D Crystal Structure")
     
     # Get crystal parameters
-    crystal_system = params['crystal']['system']
-    space_group = params['crystal']['space_group']
-    lattice_str = params['crystal']['lattice_params']
-    composition = params['crystal'].get('composition', 'SiO2')
+    crystal_system = scientific_params['crystal']['system']
+    space_group = scientific_params['crystal']['space_group']
+    lattice_str = scientific_params['crystal']['lattice_params']
+    composition = scientific_params['crystal'].get('composition', 'SiO2')
     
     if crystal_system == 'Unknown' or not lattice_str:
         st.info("""
@@ -2115,7 +2115,7 @@ def display_crystal_structure(results, params):
     except Exception as e:
         st.error(f"Error generating 3D crystal structure: {str(e)}")                
 @memory_safe_plot
-def display_export(results, params):
+def display_export(results, scientific_params):
     """Export functionality"""
     st.subheader("📤 Export Scientific Data")
     
@@ -2178,8 +2178,8 @@ def display_export(results, params):
     
     from scientific_plots import PublicationPlotter
     plotter = PublicationPlotter(
-        color_scheme=params['export']['color_scheme'],
-        font_size=params['export']['font_size']
+        color_scheme=scientific_params['export']['color_scheme'],
+        font_size=scientific_params['export']['font_size']
     )
     
     # BET Figure (if BET data exists)
@@ -2198,7 +2198,7 @@ def display_export(results, params):
                 'TIFF (1200 DPI)': ('tiff', 1200)
             }
             
-            export_format = params['export']['figure_format']
+            export_format = scientific_params['export']['figure_format']
             fmt, dpi = format_map.get(export_format, ('png', 600))
             
             fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches='tight')
@@ -2327,6 +2327,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
