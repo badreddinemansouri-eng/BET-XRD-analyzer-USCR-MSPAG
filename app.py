@@ -1595,7 +1595,20 @@ def display_3d_xrd_visualization(results, scientific_params):
 def display_morphology(results):
     """Display morphology visualization and interpretation"""
     st.subheader("Integrated Morphology Analysis")
+    st.markdown(
+        "⚠️ **Advanced morphology visualization is computationally intensive.** "
+        "Click the button below to generate the full morphology and SEM/TEM-style analysis."
+    )
     
+    run_heavy_morphology = st.button(
+        "Generate high-resolution morphology & SEM/TEM visualization",
+        help="Computationally intensive – runs on demand"
+    )
+    
+    if not run_heavy_morphology:
+        st.info("Morphology visualization has not been generated yet.")
+        return
+
     # Check if we have BET results (even if failed)
     if results.get('bet_results'):
         bet = results['bet_results']
@@ -2327,6 +2340,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
