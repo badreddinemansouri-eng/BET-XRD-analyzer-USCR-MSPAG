@@ -1019,7 +1019,7 @@ def main():
     # Execute analysis
     if analyze_button:
         with st.spinner("Initializing scientific analysis pipeline..."):
-            results = execute_scientific_analysis(bet_file, xrd_file, params)
+            results = execute_scientific_analysis(bet_file, xrd_file, scientific_params)
             
             if results:
                 st.session_state.scientific_data = results
@@ -2327,6 +2327,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
