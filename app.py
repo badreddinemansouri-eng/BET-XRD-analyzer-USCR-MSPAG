@@ -2230,7 +2230,7 @@ def display_export(results, scientific_params):
                 'TIFF (1200 DPI)': ('tiff', 1200)
             }
             
-            export_format = params['export']['figure_format']
+            export_format = scientific_params['export']['figure_format']
             fmt, dpi = format_map.get(export_format, ('png', 600))
             
             fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches='tight')
@@ -2327,6 +2327,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
