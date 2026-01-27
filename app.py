@@ -775,7 +775,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     # Try to find missing hkl indices
                     analysis_results['xrd_results'] = find_missing_hkl_indices(
                         analysis_results['xrd_results'],
-                        scientific_params['crystal']
+                        params['crystal']
                     )
                 # ENHANCE WITH CRYSTALLOGRAPHY ENGINE FOR BETTER HKL INDEXING
                 if (xrd_results['valid'] and 
@@ -979,82 +979,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
         with st.expander("Technical details"):
             st.code(traceback.format_exc())
         return None
-def find_missing_hkl_indices(xrd_results, crystal_params):
-    """Find hkl indices for XRD peaks if not already assigned"""
-    
-    if not xrd_results or 'peaks' not in xrd_results:
-        return xrd_results
-    
-    peaks = xrd_results['peaks']
-    
-    # Check if any peaks already have hkl
-    has_hkl = any('hkl' in peak or 'hkl_detail' in peak for peak in peaks)
-    
-    if has_hkl:
-        return xrd_results
-    
-    # Try to assign hkl indices based on crystal parameters
-    crystal_system = crystal_params['system']
-    lattice_str = crystal_params['lattice_params']
-    
-    if crystal_system == 'Unknown' or not lattice_str:
-        return xrd_results
-    
-    try:
-        # Parse lattice parameters
-        import re
-        lattice_params = {}
-        for match in re.finditer(r'([abc])\s*=\s*([\d\.]+)', lattice_str):
-            lattice_params[match.group(1)] = float(match.group(2))
-        
-        if not lattice_params:
-            return xrd_results
-        
-        # Simple hkl assignment for cubic system
-        if crystal_system.lower() == 'cubic' and 'a' in lattice_params:
-            a = lattice_params['a']
-            
-            for i, peak in enumerate(peaks):
-                if 'position' in peak:
-                    theta = peak['position'] / 2  # Convert 2θ to θ
-                    
-                    # Calculate d-spacing from Bragg's law
-                    wavelength = xrd_results.get('wavelength', 1.5406)
-                    d = wavelength / (2 * np.sin(np.radians(theta)))
-                    
-                    # For cubic: d = a / sqrt(h² + k² + l²)
-                    # Find h,k,l that gives closest d-spacing
-                    best_hkl = None
-                    best_error = float('inf')
-                    
-                    for h in range(0, 5):
-                        for k in range(0, 5):
-                            for l in range(0, 5):
-                                if h == 0 and k == 0 and l == 0:
-                                    continue
-                                
-                                d_calc = a / np.sqrt(h**2 + k**2 + l**2)
-                                error = abs(d - d_calc) / d
-                                
-                                if error < best_error and error < 0.1:  # 10% tolerance
-                                    best_error = error
-                                    best_hkl = (h, k, l)
-                    
-                    if best_hkl:
-                        peak['hkl'] = f"({best_hkl[0]}{best_hkl[1]}{best_hkl[2]})"
-                        peak['hkl_detail'] = {
-                            'h': best_hkl[0],
-                            'k': best_hkl[1],
-                            'l': best_hkl[2],
-                            'error_percent': best_error * 100
-                        }
-        
-        xrd_results['indexing_method'] = 'Simple cubic indexing'
-        
-    except Exception as e:
-        print(f"Could not assign hkl indices: {e}")
-    
-    return xrd_results
+
        
 # ============================================================================
 # MAIN APPLICATION
@@ -1094,14 +1019,14 @@ def main():
     # Execute analysis
     if analyze_button:
         with st.spinner("Initializing scientific analysis pipeline..."):
-            results = execute_scientific_analysis(bet_file, xrd_file, scientific_params)
+            results = execute_scientific_analysis(bet_file, xrd_file, params)
             
             if results:
                 st.session_state.scientific_data = results
     
     # Display results if available
     if st.session_state.scientific_data.get('analysis_valid', False):
-        display_scientific_results(st.session_state.scientific_data, scientific_params)
+        display_scientific_results(st.session_state.scientific_data, params)
     
     # Footer
     st.markdown("---")
@@ -1596,17 +1521,8 @@ def display_3d_xrd_visualization(results, params):
         )
         
         # Display plot
-        fig = cs3d.create_interactive_plot(structure)
-
-        if fig is None:
-            st.warning(
-                "Interactive 3D visualization is not supported in your environment. "
-                "A static 3D representation is shown instead."
-            )
-            static_fig = cs3d.create_3d_plot(structure)
-            st.pyplot(static_fig)
-        else:
-            st.plotly_chart(fig, use_container_width=True)
+ 
+        st.plotly_chart(fig, use_container_width=True)
 
         
         # Add crystal structure if available
@@ -2411,6 +2327,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
