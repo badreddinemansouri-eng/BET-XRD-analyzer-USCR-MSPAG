@@ -1594,170 +1594,48 @@ def display_3d_xrd_visualization(results, scientific_params):
 @memory_safe_plot            
 def display_morphology(results):
     """Display morphology visualization and interpretation"""
-    st.subheader("Integrated Morphology Analysis")
-    st.markdown(
-        "⚠️ **Advanced morphology visualization is computationally intensive.** "
-        "Click the button below to generate the full morphology and SEM/TEM-style analysis."
-    )
-    
-    run_heavy_morphology = st.button(
-        "Generate high-resolution morphology & SEM/TEM visualization",
-        help="Computationally intensive – runs on demand"
-    )
-    
-    if not run_heavy_morphology:
-        st.info("Morphology visualization has not been generated yet.")
-        return
 
-    # Check if we have BET results (even if failed)
-    if results.get('bet_results'):
-        bet = results['bet_results']
-        xrd = results.get('xrd_results')
-        
-        # We can still do morphology analysis even without fusion results
-        try:
-            # Initialize morphology analyzer
-            from morphology_visualizer import IntegratedMorphologyAnalyzer
-            analyzer = IntegratedMorphologyAnalyzer()
-            
-            # Perform morphology analysis
-            morphology = analyzer.analyze_morphology(bet, xrd)
-            
-            if morphology['valid']:
-                # Display main visualization
-                st.subheader("Morphology Visualization")
-                st.pyplot(morphology['visualization'])
-                
-                # ENHANCED: Add realistic SEM/TEM visualization
-                st.subheader("Realistic SEM/TEM Representation")
-                
-                # Create enhanced SEM/TEM visualization
-                from morphology_visualizer import MorphologyVisualizer
-                visualizer = MorphologyVisualizer()
-                
-                # Generate realistic SEM/TEM image
-                fig_sem = visualizer.create_pore_structure_2d(bet, xrd)
-                
-                # Display with scale bar
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    st.pyplot(fig_sem)
-                
-                with col2:
-                    st.info("**SEM/TEM Simulation Parameters:**")
-                    if bet.get('surface_area'):
-                        st.write(f"S_BET: {bet['surface_area']:.0f} m²/g")
-                    if bet.get('total_pore_volume'):
-                        st.write(f"Porosity: {bet['total_pore_volume']*100:.1f}%")
-                    if xrd and xrd.get('crystallite_size'):
-                        st.write(f"Crystal size: {xrd['crystallite_size']['scherrer']:.1f} nm")
-                
-                # Continue with existing interpretation...
-                # ... rest of the existing function continues
-                
-                # Detailed interpretation
-                st.subheader("Scientific Interpretation")
-                
-                interpretation = morphology['interpretation']
-                
-                # Create interpretation cards
-                cols = st.columns(3)
-                
-                with cols[0]:
-                    st.info(f"**Porosity:** {interpretation.get('porosity_level', 'N/A')}")
-                    st.caption(interpretation.get('porosity_description', ''))
-                
-                with cols[1]:
-                    st.info(f"**Surface Area:** {interpretation.get('surface_area_level', 'N/A')}")
-                    st.caption(interpretation.get('surface_area_description', ''))
-                
-                with cols[2]:
-                    st.info(f"**Pore Size:** {interpretation.get('pore_size_type', 'N/A')}")
-                    st.caption(interpretation.get('pore_size_description', ''))
-                
-                # Additional information
-                with st.expander("🧪 Detailed Morphological Analysis", expanded=False):
-                    if 'hierarchy' in interpretation:
-                        st.write(f"**Structural Hierarchy:** {interpretation['hierarchy']}")
-                        st.write(interpretation.get('hierarchy_description', ''))
-                    
-                    if 'crystallinity' in interpretation:
-                        st.write(f"**Crystallinity:** {interpretation['crystallinity']}")
-                        st.write(interpretation.get('crystal_description', ''))
-                    
-                    # Add structure-property relationships if available from fusion results
-                    if results.get('fusion_results') and 'structure_property_relationships' in results['fusion_results']:
-                        st.write("**Structure-Property Relationships:**")
-                        for relationship in results['fusion_results']['structure_property_relationships']:
-                            st.write(f"• {relationship}")
-                
-                # Applications and recommendations
-                with st.expander("🚀 Applications & Recommendations", expanded=False):
-                    # Check if we have fusion results
-                    if results.get('fusion_results'):
-                        fusion = results['fusion_results']
-                        if 'suggested_applications' in fusion:
-                            st.write("**Suggested Applications:**")
-                            for app in fusion['suggested_applications']:
-                                st.write(f"• {app}")
-                        
-                        if 'recommended_techniques' in fusion:
-                            st.write("\n**Recommended Further Characterization:**")
-                            for tech in fusion['recommended_techniques']:
-                                st.write(f"• {tech}")
-                    else:
-                        # Provide general recommendations based on morphology
-                        if interpretation.get('porosity_level') == 'Very High':
-                            st.write("**Suggested Applications:**")
-                            st.write("• Gas adsorption and storage")
-                            st.write("• Catalyst support materials")
-                            st.write("• Environmental remediation")
-                        
-                        if bet.get('surface_area', 0) > 1000:
-                            st.write("**Recommended Further Characterization:**")
-                            st.write("• CO₂ adsorption for micropore analysis")
-                            st.write("• High-pressure gas adsorption")
-                
-                # Download visualization
-                st.subheader("Download Visualization")
-                
-                # Save figure to buffer
-                import io
-                buf = io.BytesIO()
-                morphology['visualization'].savefig(buf, format='png', dpi=300, bbox_inches='tight')
-                buf.seek(0)
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.download_button(
-                        label="📥 Download Morphology Figure (PNG)",
-                        data=buf,
-                        file_name="morphology_visualization.png",
-                        mime="image/png"
-                    )
-                
-                with col2:
-                    # Generate morphology report
-                    report_text = generate_morphology_report(morphology, bet, xrd)
-                    st.download_button(
-                        label="📄 Download Morphology Report (TXT)",
-                        data=report_text,
-                        file_name="morphology_report.txt",
-                        mime="text/plain"
-                    )
-            else:
-                st.error("Morphology visualization failed")
-                if 'error' in morphology:
-                    st.error(f"Error: {morphology['error']}")
-                
-        except Exception as e:
-            st.error(f"Error in morphology analysis: {str(e)}")
-            import traceback
-            st.code(traceback.format_exc())
-    else:
-        st.warning("BET analysis data required for morphology visualization")
+    st.subheader("Realistic SEM/TEM Representation")
+
+    st.info(
+        "ℹ️ SEM/TEM-style morphology figures are generated offline "
+        "to ensure scientific accuracy and platform stability."
+    )
+    
+    # --- SEM/TEM REQUEST FORM ---
+    st.markdown("### 📩 Request SEM/TEM Morphology Figures")
+    
+    email = st.text_input(
+        "Your email address (for delivery)",
+        placeholder="name@institution.edu"
+    )
+    
+    request_sem_tem = st.button("📤 Submit SEM/TEM Generation Request")
+    
+    if request_sem_tem:
+        if not email:
+            st.error("Please provide a valid email address.")
+        else:
+            # Store request locally (SAFE)
+            import json, time, os
+    
+            request_data = {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "email": email,
+                "bet_results": results["bet_results"],
+                "xrd_results": results.get("xrd_results"),
+            }
+    
+            os.makedirs("sem_tem_requests", exist_ok=True)
+    
+            filename = f"sem_tem_requests/request_{int(time.time())}.json"
+            with open(filename, "w") as f:
+                json.dump(request_data, f, indent=2)
+    
+            st.success(
+                "✅ Request submitted successfully.\n\n"
+                "SEM/TEM figures will be generated offline and sent to you."
+            )
 
 # ADD THIS NEW FUNCTION outside display_morphology
 def generate_morphology_report(morphology, bet, xrd):
@@ -2340,6 +2218,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
