@@ -1639,6 +1639,35 @@ def display_morphology(results):
                 "xrd_results": make_json_safe(results.get("xrd_results")),
                 "fusion_results": make_json_safe(results.get("fusion_results"))
             }
+            # --- SAVE REQUEST TO DISK ---
+        # --- SAVE REQUEST TO DISK ---
+        REQUEST_DIR = "sem_tem_requests"
+        os.makedirs(REQUEST_DIR, exist_ok=True)
+        
+        request_id = f"request_{time.strftime('%Y%m%d_%H%M%S')}"
+        request_path = os.path.join(REQUEST_DIR, f"{request_id}.json")
+        
+        with open(request_path, "w") as f:
+            json.dump(request_data, f, indent=2)
+        
+        # --- USER FEEDBACK ---
+        st.success("✅ SEM/TEM morphology request submitted successfully!")
+        
+        st.info(
+            f"📁 Request ID: `{request_id}`\n\n"
+            f"The request has been securely recorded."
+        )
+        
+        # --- ALLOW USER TO DOWNLOAD THE REQUEST (CRITICAL) ---
+        with open(request_path, "rb") as f:
+            st.download_button(
+                label="⬇ Download SEM/TEM request file (JSON)",
+                data=f,
+                file_name=f"{request_id}.json",
+                mime="application/json"
+            )
+
+
 
 
 # ADD THIS NEW FUNCTION outside display_morphology
@@ -2222,6 +2251,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
