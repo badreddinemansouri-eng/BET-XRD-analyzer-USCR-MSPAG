@@ -1619,26 +1619,26 @@ def display_morphology(results):
             # Store request locally (SAFE)
             import json, time, os
     
-def make_json_safe(obj):
-    if isinstance(obj, dict):
-        return {k: make_json_safe(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [make_json_safe(v) for v in obj]
-    elif hasattr(obj, "item"):  # numpy scalar
-        return obj.item()
-    elif hasattr(obj, "tolist"):  # numpy array
-        return obj.tolist()
-    else:
-        return obj
-
-
-request_data = {
-    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-    "email": email,
-    "bet_results": make_json_safe(results["bet_results"]),
-    "xrd_results": make_json_safe(results.get("xrd_results")),
-    "fusion_results": make_json_safe(results.get("fusion_results"))
-}
+            def make_json_safe(obj):
+                if isinstance(obj, dict):
+                    return {k: make_json_safe(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [make_json_safe(v) for v in obj]
+                elif hasattr(obj, "item"):  # numpy scalar
+                    return obj.item()
+                elif hasattr(obj, "tolist"):  # numpy array
+                    return obj.tolist()
+                else:
+                    return obj
+            
+            
+            request_data = {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "email": email,
+                "bet_results": make_json_safe(results["bet_results"]),
+                "xrd_results": make_json_safe(results.get("xrd_results")),
+                "fusion_results": make_json_safe(results.get("fusion_results"))
+            }
 
 
 # ADD THIS NEW FUNCTION outside display_morphology
@@ -2222,6 +2222,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
