@@ -717,62 +717,59 @@ def complete_analysis(
 
         all_peaks = peaks
         top_peaks = peaks[:10]
-
+        from xrd_phase_identifier import identify_phases
         # ============================================================
         # AUTO-INDEXING (CRYSTAL SYSTEM + LATTICE)
         # ============================================================
-        lattice_dict = {}
-        indexing_error = None
-        crystal_system_final = "Unknown"
-
-        strong_peaks = peaks[:8]
-        d_spacings = [p["d_spacing"] for p in strong_peaks]
-
-        indexing_results = auto_index(d_spacings)
-
-        if indexing_results:
-            best = indexing_results[0]
-            if (
-                best.get("mean_error", 1.0) < 0.015
-                and isinstance(best.get("lattice"), dict)
-                and len(best["lattice"]) > 0
-            ):
-                crystal_system_final = best["system"]
-                lattice_dict = best["lattice"]
-                indexing_error = best["mean_error"]
+        # ============================================================
+        # DATABASE-DRIVEN PHASE IDENTIFICATION (NO ESTIMATION)
+        # ============================================================
+        
+        phase_results = identify_phases(
+            two_theta_proc,
+            intensity_proc,
+            self.wavelength
+        )
+        
+        if not phase_results:
+            crystal_system = "Unknown"
+            lattice_dict = {}
+            space_group = "Unknown"
+            phases = []
+        else:
+            phases = []
+            total_score = sum(p["score"] for p in phase_results)
+        
+            for p in phase_results:
+                phase_fraction = p["score"] / total_score * 100
+        
+                phases.append({
+                    "phase": p["phase"],
+                    "crystal_system": p["crystal_system"],
+                    "space_group": p["space_group"],
+                    "lattice": p["lattice"],
+                    "weight_percent": phase_fraction,
+                    "confidence": p["score"]
+                })
+        
+            # dominant phase
+            crystal_system = phases[0]["crystal_system"]
+            lattice_dict = phases[0]["lattice"]
+            space_group = phases[0]["space_group"]
 
         # ============================================================
         # HKL ASSIGNMENT (HIGH CONFIDENCE ONLY)
         # ============================================================
-        hkls = generate_hkl()
-
         for peak in peaks:
-            best_hkl = None
-            min_error = 1.0
-
+            peak["hkl"] = ""
+        
+        for phase in phase_results:
+            hkls = phase["hkls"]
+        
             for hkl in hkls:
-                if not allowed_hkl(hkl, crystal_system_final):
-                    continue
-
-                try:
-                    d_calc = d_spacing_from_hkl(
-                        hkl, lattice_dict, crystal_system_final
-                    )
-                except Exception:
-                    continue
-
-                error = abs(peak["d_spacing"] - d_calc) / peak["d_spacing"]
-
-                if error < min_error:
-                    min_error = error
-                    best_hkl = hkl
-
-            if best_hkl and min_error < 0.015:
-                peak["hkl"] = f"({best_hkl[0]}{best_hkl[1]}{best_hkl[2]})"
-                peak["hkl_error"] = min_error
-            else:
-                peak["hkl"] = ""
-
+                for peak in peaks:
+                    if abs(peak["position"] - hkl["2theta"]) < 0.15:
+                        peak["hkl"] = f"({hkl['hkl'][0][0]}{hkl['hkl'][0][1]}{hkl['hkl'][0][2]})"
         # ============================================================
         # CRYSTALLINITY INDEX (AREA-BASED, CORRECT)
         # ============================================================
@@ -857,6 +854,7 @@ def complete_analysis(
             "crystal_system": "Unknown",
             "lattice_parameters": {},
         }
+
 
 
 
