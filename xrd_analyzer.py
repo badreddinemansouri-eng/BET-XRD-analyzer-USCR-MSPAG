@@ -17,6 +17,9 @@ import peakutils
 from typing import Dict, Tuple, List, Optional, Any
 import warnings
 import re
+from xrd_auto_solve import auto_index
+from xrd_auto_indexer import generate_hkl, d_spacing_from_hkl
+
 
 warnings.filterwarnings('ignore')
 
@@ -772,10 +775,7 @@ class AdvancedXRDAnalyzer:
             'structure': 'Disordered'
         }
     
-    def complete_analysis(self, two_theta, intensity, 
-                         crystal_system='Unknown',
-                         space_group='',
-                         lattice_params=''):
+    def complete_analysis(self, two_theta, intensity):
         """
         Complete XRD analysis
         
@@ -804,50 +804,70 @@ class AdvancedXRDAnalyzer:
             # Store all peaks and top peaks separately
             all_peaks = peaks  # All detected peaks
             top_peaks = peaks[:10]  # Top 10 most intensive peaks for display
+            # ============================================================
+            # AUTO-INDEX CRYSTAL SYSTEM + LATTICE PARAMETERS (NEW)
+            # ============================================================
             
+            # Use strongest peaks only for indexing
+            strong_peaks = peaks[:8]
+            d_spacings = [p["d_spacing"] for p in strong_peaks]
+            
+            indexing_results = auto_index(d_spacings)
+            
+            if indexing_results:
+                best_solution = indexing_results[0]
+                crystal_system = best_solution["system"]
+                lattice_dict = best_solution["lattice"]
+                indexing_error = best_solution["mean_error"]
+            else:
+                crystal_system = "Unknown"
+                lattice_dict = {}
+                indexing_error = None
+            # ============================================================
+            # HKL ASSIGNMENT (CALCULATED, NOT ESTIMATED)
+            # ============================================================
+            
+            hkls = generate_hkl()
+            
+            for peak in peaks:
+                best_hkl = None
+                min_error = 1.0
+            
+                for hkl in hkls:
+                    try:
+                        d_calc = d_spacing_from_hkl(hkl, lattice_dict, crystal_system)
+                        error = abs(peak["d_spacing"] - d_calc) / peak["d_spacing"]
+            
+                        if error < min_error:
+                            min_error = error
+                            best_hkl = hkl
+                    except:
+                        continue
+            
+                if best_hkl and min_error < 0.02:
+                    peak["hkl"] = f"({best_hkl[0]}{best_hkl[1]}{best_hkl[2]})"
+                    peak["hkl_error"] = min_error
+                else:
+                    peak["hkl"] = ""
+
+
             # Calculate crystallinity index - FIXED
             peak_indices = []
             if peaks and len(peaks) > 0:
                 peak_indices = [p.get('index', i) for i, p in enumerate(peaks)]
             
+            peak_indices = [p["index"] for p in peaks] if peaks else []
+            
             crystallinity_index = calculate_crystallinity_index(
-                two_theta_proc, intensity_proc, peaks
+                two_theta_proc,
+                intensity_proc,
+                peak_indices
             )
+
 
             
             # Try to assign hkl indices to top peaks if crystal system is known
-            if crystal_system != 'Unknown' and lattice_params:
-                # Parse lattice parameters
-                a, b, c = 1.0, 1.0, 1.0
-                # Simple parsing: a=4.0, b=4.0, c=4.0
-                for param in lattice_params.split(','):
-                    if '=' in param:
-                        key, value = param.strip().split('=')
-                        key = key.strip()
-                        value = float(value.strip())
-                        if key == 'a':
-                            a = value
-                        elif key == 'b':
-                            b = value
-                        elif key == 'c':
-                            c = value
-                
-                # Assign hkl to top peaks
-                for peak in top_peaks:
-                    try:
-                        hkl_list = calculate_miller_indices(
-                            d_spacing=peak['d_spacing'],
-                            a=a, b=b, c=c,
-                            crystal_system=crystal_system
-                        )
-                        if hkl_list:
-                            # Take the best match (first one)
-                            best_hkl = hkl_list[0]
-                            peak['hkl'] = f"({abs(best_hkl['h'])}{abs(best_hkl['k'])}{abs(best_hkl['l'])})"
-                            peak['hkl_detail'] = best_hkl
-                    except Exception as e:
-                        peak['hkl'] = ''
-            
+
             # Calculate crystallite statistics
             size_stats = self.calculate_crystallite_statistics(peaks)
             
@@ -930,4 +950,5 @@ class AdvancedXRDAnalyzer:
                 'microstrain': 0.0,
                 'ordered_mesopores': False
             }
+
 
