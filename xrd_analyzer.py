@@ -775,7 +775,15 @@ class AdvancedXRDAnalyzer:
             'structure': 'Disordered'
         }
     
-    def complete_analysis(self, two_theta, intensity):
+    def complete_analysis(
+        self,
+        two_theta,
+        intensity,
+        crystal_system="auto",
+        space_group="auto",
+        lattice_params=None
+    ):
+
         """
         Complete XRD analysis
         
@@ -791,6 +799,9 @@ class AdvancedXRDAnalyzer:
         --------
         Complete analysis dictionary
         """
+        if crystal_system in ["", None]:
+            crystal_system = "auto"
+
         try:
             # Preprocess pattern
             two_theta_proc, intensity_proc = self.preprocess_pattern(two_theta, intensity)
@@ -950,5 +961,6 @@ class AdvancedXRDAnalyzer:
                 'microstrain': 0.0,
                 'ordered_mesopores': False
             }
+
 
 
