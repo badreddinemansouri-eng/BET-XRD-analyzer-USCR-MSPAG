@@ -874,20 +874,19 @@ class AdvancedXRDAnalyzer:
                     peak["hkl_error"] = min_error
                 else:
                     peak["hkl"] = ""
+ def allowed_hkl(hkl, crystal_system):
+     h, k, l = hkl
+    
+     if crystal_system in ["cubic_fcc", "fcc"]:
+        return (h + k + l) % 2 == 0
+    
+     if crystal_system in ["cubic_bcc", "bcc"]:
+        return (h % 2 == k % 2 == l % 2)
+    
+      return True
 
-    def allowed_hkl(hkl, crystal_system):
-        h, k, l = hkl
-    
-        if crystal_system in ["cubic_fcc", "fcc"]:
-            return (h + k + l) % 2 == 0
-    
-        if crystal_system in ["cubic_bcc", "bcc"]:
-            return (h % 2 == k % 2 == l % 2)
-    
-        return True
-
-                if not allowed_hkl(hkl, crystal_system):
-                    continue
+      if not allowed_hkl(hkl, crystal_system):
+               continue
 
 
             # Calculate crystallinity index - FIXED
@@ -989,6 +988,7 @@ class AdvancedXRDAnalyzer:
                 'microstrain': 0.0,
                 'ordered_mesopores': False
             }
+
 
 
 
