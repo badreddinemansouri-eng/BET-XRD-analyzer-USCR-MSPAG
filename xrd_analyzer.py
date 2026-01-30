@@ -17,8 +17,7 @@ import peakutils
 from typing import Dict, Tuple, List, Optional, Any
 import warnings
 import re
-from xrd_auto_solve import auto_index
-from xrd_auto_indexer import generate_hkl, d_spacing_from_hkl
+
 
 
 warnings.filterwarnings('ignore')
@@ -691,169 +690,170 @@ class AdvancedXRDAnalyzer:
             'structure': 'Disordered'
         }
     
-def complete_analysis(
-    self,
-    two_theta,
-    intensity,
-    crystal_system="auto",
-    space_group="auto",
-    lattice_params=None
-):
-    """
-    Fully automatic, high-confidence XRD analysis
-    """
+    def complete_analysis(
+        self,
+        two_theta,
+        intensity,
+        crystal_system="auto",
+        space_group="auto",
+        lattice_params=None
+    ):
+        """
+        Fully automatic, high-confidence XRD analysis
+        """
+    
+        try:
+            # ============================================================
+            # PREPROCESS
+            # ============================================================
+            two_theta_proc, intensity_proc = self.preprocess_pattern(two_theta, intensity)
+    
+            # ============================================================
+            # PEAK ANALYSIS
+            # ============================================================
+            peaks = self.analyze_peaks(two_theta_proc, intensity_proc)
+            peaks.sort(key=lambda x: x["intensity"], reverse=True)
+    
+            all_peaks = peaks
+            top_peaks = peaks[:10]
+            from xrd_phase_identifier import identify_phases
+            # ============================================================
+            # AUTO-INDEXING (CRYSTAL SYSTEM + LATTICE)
+            # ============================================================
+            # ============================================================
+            # DATABASE-DRIVEN PHASE IDENTIFICATION (NO ESTIMATION)
+            # ============================================================
+            
+            phase_results = identify_phases(
+                two_theta_proc,
+                intensity_proc,
+                self.wavelength
+            )
+            
+            if not phase_results:
+                crystal_system = "Unknown"
+                lattice_dict = {}
+                space_group = "Unknown"
+                phases = []
+            else:
+                phases = []
+                total_score = sum(p["score"] for p in phase_results)
+            
+                for p in phase_results:
+                    phase_fraction = p["score"] / total_score * 100
+            
+                    phases.append({
+                        "phase": p["phase"],
+                        "crystal_system": p["crystal_system"],
+                        "space_group": p["space_group"],
+                        "lattice": p["lattice"],
+                        "weight_percent": phase_fraction,
+                        "confidence": p["score"]
+                    })
+            
+                # dominant phase
+                crystal_system = phases[0]["crystal_system"]
+                lattice_dict = phases[0]["lattice"]
+                space_group = phases[0]["space_group"]
+    
+            # ============================================================
+            # HKL ASSIGNMENT (HIGH CONFIDENCE ONLY)
+            # ============================================================
+            for peak in peaks:
+                peak["hkl"] = ""
+            
+            for phase in phase_results:
+                hkls = phase["hkls"]
+            
+                for hkl in hkls:
+                    for peak in peaks:
+                        if abs(peak["position"] - hkl["2theta"]) < 0.15:
+                            peak["hkl"] = f"({hkl['hkl'][0][0]}{hkl['hkl'][0][1]}{hkl['hkl'][0][2]})"
+            # ============================================================
+            # CRYSTALLINITY INDEX (AREA-BASED, CORRECT)
+            # ============================================================
+            crystallinity_index = calculate_crystallinity_index(
+                two_theta_proc,
+                intensity_proc,
+                peaks
+            )
+    
+            # ============================================================
+            # CRYSTALLITE SIZE STATISTICS (ALL PEAKS)
+            # ============================================================
+            size_stats = self.calculate_crystallite_statistics(peaks)
+    
+            # ============================================================
+            # WILLIAMSON–HALL
+            # ============================================================
+            williamson_hall = None
+            microstrain = 0.0
+            dislocation_density = 0.0
+    
+            if len(peaks) >= 3:
+                williamson_hall = williamson_hall_analysis(peaks, self.wavelength)
+                if williamson_hall and williamson_hall["crystallite_size"] > 0:
+                    microstrain = williamson_hall["microstrain"]
+                    dislocation_density = (
+                        15 * microstrain / (williamson_hall["crystallite_size"] * 1e-9)
+                    )
+    
+            # ============================================================
+            # ORDERED MESOPORES
+            # ============================================================
+            mesopore_analysis = self.check_ordered_mesopores(
+                two_theta_proc, intensity_proc, peaks
+            )
+    
+            # ============================================================
+            # FINAL RESULTS
+            # ============================================================
+            return {
+                "valid": True,
+                "wavelength": float(self.wavelength),
+                "two_theta": two_theta_proc.tolist(),
+                "intensity": intensity_proc.tolist(),
+    
+                "peaks": all_peaks,
+                "top_peaks": top_peaks,
+                "n_peaks_total": len(all_peaks),
+    
+                "crystallinity_index": float(crystallinity_index),
+    
+                "crystallite_size": {
+                    "mean": float(size_stats["mean_size"]),
+                    "std": float(size_stats["std_size"]),
+                    "distribution": size_stats["distribution"],
+                    "values": [p["crystallite_size"] for p in peaks],
+                },
+    
+                "williamson_hall": williamson_hall,
+                "microstrain": float(microstrain),
+                "dislocation_density": float(dislocation_density),
+    
+                "ordered_mesopores": mesopore_analysis["ordered"],
+                "mesopore_analysis": mesopore_analysis,
+    
+                "crystal_system": crystal_system_final,
+                "space_group": space_group,
+                "lattice_parameters": lattice_dict,
+                "indexing_error": indexing_error,
+    
+                "background_subtraction": self.background_subtraction,
+                "smoothing": self.smoothing,
+                "scherrer_constant": float(self.scherrer_constant),
+                "n_points": len(two_theta_proc),
+            }
+    
+        except Exception as e:
+            return {
+                "valid": False,
+                "error": str(e),
+                "peaks": [],
+                "crystal_system": "Unknown",
+                "lattice_parameters": {},
+            }
 
-    try:
-        # ============================================================
-        # PREPROCESS
-        # ============================================================
-        two_theta_proc, intensity_proc = self.preprocess_pattern(two_theta, intensity)
-
-        # ============================================================
-        # PEAK ANALYSIS
-        # ============================================================
-        peaks = self.analyze_peaks(two_theta_proc, intensity_proc)
-        peaks.sort(key=lambda x: x["intensity"], reverse=True)
-
-        all_peaks = peaks
-        top_peaks = peaks[:10]
-        from xrd_phase_identifier import identify_phases
-        # ============================================================
-        # AUTO-INDEXING (CRYSTAL SYSTEM + LATTICE)
-        # ============================================================
-        # ============================================================
-        # DATABASE-DRIVEN PHASE IDENTIFICATION (NO ESTIMATION)
-        # ============================================================
-        
-        phase_results = identify_phases(
-            two_theta_proc,
-            intensity_proc,
-            self.wavelength
-        )
-        
-        if not phase_results:
-            crystal_system = "Unknown"
-            lattice_dict = {}
-            space_group = "Unknown"
-            phases = []
-        else:
-            phases = []
-            total_score = sum(p["score"] for p in phase_results)
-        
-            for p in phase_results:
-                phase_fraction = p["score"] / total_score * 100
-        
-                phases.append({
-                    "phase": p["phase"],
-                    "crystal_system": p["crystal_system"],
-                    "space_group": p["space_group"],
-                    "lattice": p["lattice"],
-                    "weight_percent": phase_fraction,
-                    "confidence": p["score"]
-                })
-        
-            # dominant phase
-            crystal_system = phases[0]["crystal_system"]
-            lattice_dict = phases[0]["lattice"]
-            space_group = phases[0]["space_group"]
-
-        # ============================================================
-        # HKL ASSIGNMENT (HIGH CONFIDENCE ONLY)
-        # ============================================================
-        for peak in peaks:
-            peak["hkl"] = ""
-        
-        for phase in phase_results:
-            hkls = phase["hkls"]
-        
-            for hkl in hkls:
-                for peak in peaks:
-                    if abs(peak["position"] - hkl["2theta"]) < 0.15:
-                        peak["hkl"] = f"({hkl['hkl'][0][0]}{hkl['hkl'][0][1]}{hkl['hkl'][0][2]})"
-        # ============================================================
-        # CRYSTALLINITY INDEX (AREA-BASED, CORRECT)
-        # ============================================================
-        crystallinity_index = calculate_crystallinity_index(
-            two_theta_proc,
-            intensity_proc,
-            peaks
-        )
-
-        # ============================================================
-        # CRYSTALLITE SIZE STATISTICS (ALL PEAKS)
-        # ============================================================
-        size_stats = self.calculate_crystallite_statistics(peaks)
-
-        # ============================================================
-        # WILLIAMSON–HALL
-        # ============================================================
-        williamson_hall = None
-        microstrain = 0.0
-        dislocation_density = 0.0
-
-        if len(peaks) >= 3:
-            williamson_hall = williamson_hall_analysis(peaks, self.wavelength)
-            if williamson_hall and williamson_hall["crystallite_size"] > 0:
-                microstrain = williamson_hall["microstrain"]
-                dislocation_density = (
-                    15 * microstrain / (williamson_hall["crystallite_size"] * 1e-9)
-                )
-
-        # ============================================================
-        # ORDERED MESOPORES
-        # ============================================================
-        mesopore_analysis = self.check_ordered_mesopores(
-            two_theta_proc, intensity_proc, peaks
-        )
-
-        # ============================================================
-        # FINAL RESULTS
-        # ============================================================
-        return {
-            "valid": True,
-            "wavelength": float(self.wavelength),
-            "two_theta": two_theta_proc.tolist(),
-            "intensity": intensity_proc.tolist(),
-
-            "peaks": all_peaks,
-            "top_peaks": top_peaks,
-            "n_peaks_total": len(all_peaks),
-
-            "crystallinity_index": float(crystallinity_index),
-
-            "crystallite_size": {
-                "mean": float(size_stats["mean_size"]),
-                "std": float(size_stats["std_size"]),
-                "distribution": size_stats["distribution"],
-                "values": [p["crystallite_size"] for p in peaks],
-            },
-
-            "williamson_hall": williamson_hall,
-            "microstrain": float(microstrain),
-            "dislocation_density": float(dislocation_density),
-
-            "ordered_mesopores": mesopore_analysis["ordered"],
-            "mesopore_analysis": mesopore_analysis,
-
-            "crystal_system": crystal_system_final,
-            "space_group": space_group,
-            "lattice_parameters": lattice_dict,
-            "indexing_error": indexing_error,
-
-            "background_subtraction": self.background_subtraction,
-            "smoothing": self.smoothing,
-            "scherrer_constant": float(self.scherrer_constant),
-            "n_points": len(two_theta_proc),
-        }
-
-    except Exception as e:
-        return {
-            "valid": False,
-            "error": str(e),
-            "peaks": [],
-            "crystal_system": "Unknown",
-            "lattice_parameters": {},
-        }
 
 
 
