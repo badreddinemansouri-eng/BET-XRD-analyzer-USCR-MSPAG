@@ -293,100 +293,6 @@ def calculate_d_spacing(theta_deg, wavelength=1.5406):
     theta_rad = np.deg2rad(theta_deg / 2)  # Convert to θ (not 2θ)
     return wavelength / (2 * np.sin(theta_rad))
 
-def calculate_miller_indices(d_spacing, a=1.0, b=1.0, c=1.0, 
-                           alpha=90, beta=90, gamma=90,
-                           crystal_system='cubic'):
-    """
-    Calculate possible Miller indices for given d-spacing
-    
-    Parameters:
-    -----------
-    d_spacing : Experimental d-spacing in Å
-    a, b, c : Lattice parameters in Å
-    alpha, beta, gamma : Lattice angles in degrees
-    crystal_system : Crystal system
-    
-    Returns:
-    --------
-    List of possible (hkl) indices
-    """
-    # Convert angles to radians
-    alpha_rad = np.deg2rad(alpha)
-    beta_rad = np.deg2rad(beta)
-    gamma_rad = np.deg2rad(gamma)
-    
-    # Reciprocal lattice calculations based on crystal system
-    indices = []
-    
-    if crystal_system.lower() == 'cubic':
-        # d = a / √(h² + k² + l²)
-        for h in range(-3, 4):
-            for k in range(-3, 4):
-                for l in range(-3, 4):
-                    if h == 0 and k == 0 and l == 0:
-                        continue
-                    
-                    d_calc = a / np.sqrt(h**2 + k**2 + l**2)
-                    error = abs(d_calc - d_spacing) / d_spacing
-                    
-                    if error < 0.02:  # 2% tolerance
-                        indices.append({
-                            'h': h, 'k': k, 'l': l,
-                            'd_calculated': d_calc,
-                            'error_percent': error * 100
-                        })
-    
-    elif crystal_system.lower() == 'hexagonal':
-        # 1/d² = (4/3a²)(h² + hk + k²) + (l²/c²)
-        for h in range(-3, 4):
-            for k in range(-3, 4):
-                for l in range(-3, 4):
-                    if h == 0 and k == 0 and l == 0:
-                        continue
-                    
-                    term1 = (4/3) * (h**2 + h*k + k**2) / (a**2)
-                    term2 = l**2 / (c**2)
-                    d_calc = 1 / np.sqrt(term1 + term2)
-                    
-                    error = abs(d_calc - d_spacing) / d_spacing
-                    
-                    if error < 0.02:
-                        indices.append({
-                            'h': h, 'k': k, 'l': l,
-                            'd_calculated': d_calc,
-                            'error_percent': error * 100
-                        })
-    
-    elif crystal_system.lower() == 'tetragonal':
-        # 1/d² = (h² + k²)/a² + l²/c²
-        for h in range(-3, 4):
-            for k in range(-3, 4):
-                for l in range(-3, 4):
-                    if h == 0 and k == 0 and l == 0:
-                        continue
-                    
-                    d_calc = 1 / np.sqrt((h**2 + k**2)/a**2 + l**2/c**2)
-                    error = abs(d_calc - d_spacing) / d_spacing
-                    
-                    if error < 0.02:
-                        indices.append({
-                            'h': h, 'k': k, 'l': l,
-                            'd_calculated': d_calc,
-                            'error_percent': error * 100
-                        })
-    
-    else:
-        # Simple calculation for unknown system
-        indices.append({
-            'h': '?', 'k': '?', 'l': '?',
-            'd_calculated': d_spacing,
-            'error_percent': 0.0
-        })
-    
-    # Sort by error
-    indices.sort(key=lambda x: x['error_percent'])
-    
-    return indices[:5]  # Return top 5 matches
 
 # ============================================================================
 # CRYSTALLITE SIZE ANALYSIS
@@ -785,198 +691,134 @@ class AdvancedXRDAnalyzer:
             'structure': 'Disordered'
         }
     
-    def complete_analysis(
-        self,
-        two_theta,
-        intensity,
-        crystal_system="auto",
-        space_group="auto",
-        lattice_params=None
-    ):
+def complete_analysis_database_only(
+    self,
+    two_theta,
+    intensity,
+    confidence_threshold=0.95
+):
+    """
+    DATABASE-ONLY XRD ANALYSIS
+    High-confidence phase identification using COD.
+    NO estimation. NO guessing.
+    """
 
-        """
-        Complete XRD analysis
-        
-        Parameters:
-        -----------
-        two_theta : Array of 2θ values
-        intensity : Array of intensity values
-        crystal_system : Crystal system
-        space_group : Space group
-        lattice_params : Lattice parameters string
-        
-        Returns:
-        --------
-        Complete analysis dictionary
-        """
-        if crystal_system in ["", None]:
-            crystal_system = "auto"
+    try:
+        # --------------------------------------------------
+        # 1. Preprocess
+        # --------------------------------------------------
+        two_theta, intensity = self.preprocess_pattern(two_theta, intensity)
 
-        try:
-            # Preprocess pattern
-            two_theta_proc, intensity_proc = self.preprocess_pattern(two_theta, intensity)
-            
-            # Detect and analyze peaks
-            peaks = self.analyze_peaks(two_theta_proc, intensity_proc)
-            
-            # Sort peaks by intensity (descending) to get most intensive peaks
-            peaks.sort(key=lambda x: x['intensity'], reverse=True)
-            
-            # Store all peaks and top peaks separately
-            all_peaks = peaks  # All detected peaks
-            top_peaks = peaks[:10]  # Top 10 most intensive peaks for display
-            # ============================================================
-            # AUTO-INDEX CRYSTAL SYSTEM + LATTICE PARAMETERS (NEW)
-            # ============================================================
-            
-            # Use strongest peaks only for indexing
-            strong_peaks = peaks[:8]
-            d_spacings = [p["d_spacing"] for p in strong_peaks]
-            
-            indexing_results = auto_index(d_spacings)
-            
-            lattice_dict = {}
-            indexing_error = None
-            
-            if indexing_results:
-                best_solution = indexing_results[0]
-            
-                if (
-                    best_solution.get("mean_error", 1.0) < 0.015
-                    and isinstance(best_solution.get("lattice"), dict)
-                    and len(best_solution["lattice"]) > 0
-                ):
-                    crystal_system = best_solution["system"]
-                    lattice_dict = best_solution["lattice"]
-                    indexing_error = best_solution["mean_error"]
-                else:
-                    crystal_system = "Unknown"
-            else:
-                crystal_system = "Unknown"
+        # --------------------------------------------------
+        # 2. Detect peaks
+        # --------------------------------------------------
+        peaks = self.analyze_peaks(two_theta, intensity)
+        if len(peaks) < 3:
+            return {"valid": False, "reason": "Insufficient peaks for identification"}
 
+        # --------------------------------------------------
+        # 3. Compute d-spacings
+        # --------------------------------------------------
+        exp_peaks = []
+        for p in peaks:
+            exp_peaks.append({
+                "2theta": p["position"],
+                "d": p["d_spacing"],
+                "intensity": p["intensity"]
+            })
 
-            # ============================================================
-            # HKL ASSIGNMENT (CALCULATED, NOT ESTIMATED)
-            # ============================================================
-            
-            hkls = generate_hkl()
-            
-            for peak in peaks:
-                best_hkl = None
-                min_error = 1.0
-            
-                for hkl in hkls:
-                    if not allowed_hkl(hkl, crystal_system):
-                        continue
-            
-                    try:
-                        d_calc = d_spacing_from_hkl(hkl, lattice_dict, crystal_system)
-                        error = abs(peak["d_spacing"] - d_calc) / peak["d_spacing"]
-            
-                        if error < min_error:
-                            min_error = error
-                            best_hkl = hkl
-                    except:
-                        continue
-            
-                if best_hkl and min_error < 0.02:
-                    peak["hkl"] = f"({best_hkl[0]}{best_hkl[1]}{best_hkl[2]})"
-                    peak["hkl_error"] = min_error
-                else:
-                    peak["hkl"] = ""
-            
-            crystallinity_index = calculate_crystallinity_index(
-                two_theta_proc,
-                intensity_proc,
-                peaks
-            )
+        # Normalize intensities
+        max_I = max(p["intensity"] for p in exp_peaks)
+        for p in exp_peaks:
+            p["I_rel"] = p["intensity"] / max_I
 
+        # --------------------------------------------------
+        # 4. Query COD (ONLINE)
+        # --------------------------------------------------
+        from cod_interface import query_cod_phases
+        reference_phases = query_cod_phases(exp_peaks)
 
-            
-            # Try to assign hkl indices to top peaks if crystal system is known
+        if not reference_phases:
+            return {"valid": False, "reason": "No database matches found"}
 
-            # Calculate crystallite statistics
-            size_stats = self.calculate_crystallite_statistics(peaks)
-            
-            # Williamson-Hall analysis (if enough peaks)
-            williamson_hall = None
-            microstrain = 0.0
-            dislocation_density = 0.0
-            
-            if len(peaks) >= 3:
-                williamson_hall = williamson_hall_analysis(peaks, self.wavelength)
-                if williamson_hall:
-                    microstrain = williamson_hall['microstrain']
-                    # Dislocation density: ρ = 15ε/(aD) [simplified]
-                    if williamson_hall['crystallite_size'] > 0:
-                        dislocation_density = 15 * microstrain / (
-                            williamson_hall['crystallite_size'] * 1e-9
-                        )
-            
-            # Check for ordered mesopores
-            mesopore_analysis = self.check_ordered_mesopores(
-                two_theta_proc, intensity_proc, peaks
-            )
-            
-            # Parse lattice parameters if provided
-            if lattice_params:
-                lattice_dict = {}
-                for match in re.finditer(r'([abc])\s*=\s*([\d\.]+)', lattice_params):
-                    lattice_dict[match.group(1)] = float(match.group(2))
+        accepted_phases = []
 
-            
-            # Try to refine lattice parameters
-            refined_params = None
-            if crystal_system != 'Unknown' and len(peaks) >= 3:
-                refined_params = refine_lattice_parameters(
-                    peaks, self.wavelength, crystal_system
-                )
-            
-            # Compile results
-            results = {
-                'valid': True,
-                'wavelength': float(self.wavelength),
-                'two_theta': two_theta_proc.tolist(),
-                'intensity': intensity_proc.tolist(),
-                'peaks': all_peaks,  # All peaks
-                'top_peaks': top_peaks,  # Top intensive peaks for display
-                'n_peaks_total': len(all_peaks),
-                'crystallinity_index': float(crystallinity_index),
-                'crystallite_size': {
-                    'scherrer': float(size_stats['mean_size']),
-                    'williamson_hall': williamson_hall['crystallite_size'] if williamson_hall else 0.0,
-                    'distribution': size_stats['distribution']
-                },
-                'microstrain': float(microstrain),
-                'dislocation_density': float(dislocation_density),
-                'ordered_mesopores': mesopore_analysis['ordered'],
-                'mesopore_analysis': mesopore_analysis,
-                'williamson_hall': williamson_hall,
-                'crystal_system': crystal_system,
-                'space_group': space_group,
-                'lattice_parameters': lattice_dict,
-                'refined_parameters': refined_params,
-                'background_subtraction': self.background_subtraction,
-                'smoothing': self.smoothing,
-                'scherrer_constant': float(self.scherrer_constant),
-                'n_points': len(two_theta_proc)
-            }
-            
-            return results
-            
-        except Exception as e:
+        # --------------------------------------------------
+        # 5. Match experimental vs reference
+        # --------------------------------------------------
+        for phase in reference_phases:
+            ref_peaks = phase["reflections"]
+
+            matched = 0
+            error_sum = 0
+
+            for ep in exp_peaks:
+                for rp in ref_peaks:
+                    error = abs(ep["d"] - rp["d"]) / rp["d"]
+                    if error < 0.01:
+                        matched += 1
+                        error_sum += error
+                        break
+
+            if matched < 3:
+                continue
+
+            confidence = 1 - (error_sum / matched)
+
+            if confidence >= confidence_threshold:
+                accepted_phases.append({
+                    "name": phase["name"],
+                    "cod_id": phase["cod_id"],
+                    "confidence": round(confidence, 3),
+                    "crystal_system": phase["crystal_system"],
+                    "space_group": phase["space_group"],
+                    "lattice": phase["lattice"],
+                    "reflections": phase["reflections"]
+                })
+
+        if not accepted_phases:
             return {
-                'valid': False,
-                'error': str(e),
-                'wavelength': float(self.wavelength),
-                'peaks': [],
-                'top_peaks': [],
-                'n_peaks_total': 0,
-                'crystallinity_index': 0.0,
-                'crystallite_size': {'scherrer': 0.0, 'williamson_hall': 0.0, 'distribution': 'Unknown'},
-                'microstrain': 0.0,
-                'ordered_mesopores': False
+                "valid": False,
+                "reason": "No phase exceeded confidence threshold"
             }
+
+        # --------------------------------------------------
+        # 6. Multi-phase quantification
+        # --------------------------------------------------
+        total_area = sum(p["area"] for p in peaks)
+        for ph in accepted_phases:
+            matched_area = 0
+            for rp in ph["reflections"]:
+                for p in peaks:
+                    if abs(p["d_spacing"] - rp["d"]) / rp["d"] < 0.01:
+                        matched_area += p["area"]
+                        break
+
+            ph["phase_fraction"] = round(100 * matched_area / total_area, 2)
+
+        # --------------------------------------------------
+        # 7. Crystallite size (ALL peaks)
+        # --------------------------------------------------
+        size_stats = self.calculate_crystallite_statistics(peaks)
+
+        # --------------------------------------------------
+        # 8. Final output
+        # --------------------------------------------------
+        return {
+            "valid": True,
+            "n_phases": len(accepted_phases),
+            "phases": accepted_phases,
+            "crystallite_size": size_stats,
+            "crystallinity_index": calculate_crystallinity_index(
+                two_theta, intensity, peaks
+            ),
+            "n_peaks": len(peaks)
+        }
+
+    except Exception as e:
+        return {"valid": False, "error": str(e)}
+
+
 
 
 
