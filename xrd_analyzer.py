@@ -467,45 +467,30 @@ def williamson_hall_analysis(peaks, wavelength=1.5406):
 # ============================================================================
 # CRYSTALLINITY INDEX - FIXED VERSION
 # ============================================================================
-def calculate_crystallinity_index(two_theta, intensity, peak_indices):
+def calculate_crystallinity_index(two_theta, intensity, peaks):
     """
-    Calculate crystallinity index - FIXED VERSION
-    
-    CI = A_crystalline / (A_crystalline + A_amorphous)
-    
-    Parameters:
-    -----------
-    two_theta : Array of 2θ values
-    intensity : Array of intensity values
-    peak_indices : Indices of detected peaks
-    
-    Returns:
-    --------
-    Crystallinity index (0-1)
+    Crystallinity index based on crystalline peak area / total area
+    (Klug & Alexander, 1974)
     """
-    if not hasattr(peak_indices, '__len__'):
+    if not peaks:
         return 0.0
-    
-    if len(peak_indices) == 0:
-        return 0.0
-    
-    # Create a baseline (amorphous background)
-    # Use a broad gaussian filter to estimate amorphous background
-    amorphous_background = gaussian_filter1d(intensity, sigma=50)
-    
-    # Calculate areas using safe trapezoidal integration
+
     total_area = safe_trapz(intensity, two_theta)
-    amorphous_area = safe_trapz(amorphous_background, two_theta)
-    
-    # Crystalline area = total area - amorphous area
-    crystalline_area = max(0, total_area - amorphous_area)
-    
-    if total_area > 0:
-        crystallinity = crystalline_area / total_area
-    else:
-        crystallinity = 0.0
-    
-    return crystallinity
+    if total_area <= 0:
+        return 0.0
+
+    crystalline_area = 0.0
+
+    for p in peaks:
+        left = p["theta_left"]
+        right = p["theta_right"]
+
+        mask = (two_theta >= left) & (two_theta <= right)
+        if np.any(mask):
+            crystalline_area += safe_trapz(intensity[mask], two_theta[mask])
+
+    return min(crystalline_area / total_area, 1.0)
+
 
 # ============================================================================
 # LATTICE PARAMETER REFINEMENT
@@ -826,8 +811,9 @@ class AdvancedXRDAnalyzer:
                 peak_indices = [p.get('index', i) for i, p in enumerate(peaks)]
             
             crystallinity_index = calculate_crystallinity_index(
-                two_theta_proc, intensity_proc, peak_indices
+                two_theta_proc, intensity_proc, peaks
             )
+
             
             # Try to assign hkl indices to top peaks if crystal system is known
             if crystal_system != 'Unknown' and lattice_params:
@@ -944,3 +930,4 @@ class AdvancedXRDAnalyzer:
                 'microstrain': 0.0,
                 'ordered_mesopores': False
             }
+
