@@ -573,6 +573,16 @@ def refine_lattice_parameters(peaks, wavelength=1.5406,
         return {'a': float(a_estimated), 'error': 0.0}
     
     return None
+def allowed_hkl(hkl, crystal_system):
+    h, k, l = hkl
+
+    if crystal_system in ["cubic_fcc", "fcc"]:
+        return (h + k + l) % 2 == 0
+
+    if crystal_system in ["cubic_bcc", "bcc"]:
+        return (h % 2 == k % 2 == l % 2)
+
+    return True
 
 # ============================================================================
 # ADVANCED XRD ANALYZER CLASS
@@ -874,27 +884,6 @@ class AdvancedXRDAnalyzer:
                     peak["hkl_error"] = min_error
                 else:
                     peak["hkl"] = ""
- def allowed_hkl(hkl, crystal_system):
-     h, k, l = hkl
-    
-     if crystal_system in ["cubic_fcc", "fcc"]:
-        return (h + k + l) % 2 == 0
-    
-     if crystal_system in ["cubic_bcc", "bcc"]:
-        return (h % 2 == k % 2 == l % 2)
-    
-      return True
-
-      if not allowed_hkl(hkl, crystal_system):
-               continue
-
-
-            # Calculate crystallinity index - FIXED
-            peak_indices = []
-            if peaks and len(peaks) > 0:
-                peak_indices = [p.get('index', i) for i, p in enumerate(peaks)]
-            
-            if peaks else []
             
             crystallinity_index = calculate_crystallinity_index(
                 two_theta_proc,
@@ -988,6 +977,7 @@ class AdvancedXRDAnalyzer:
                 'microstrain': 0.0,
                 'ordered_mesopores': False
             }
+
 
 
 
