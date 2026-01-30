@@ -699,93 +699,48 @@ class AdvancedXRDAnalyzer:
         lattice_params=None
     ):
         """
-        Fully automatic, high-confidence XRD analysis
+        Complete XRD analysis (SAFE + UI-STABLE VERSION)
         """
     
         try:
-            # ============================================================
+            # --------------------------------------------------
+            # DEFAULTS (ABSOLUTELY REQUIRED)
+            # --------------------------------------------------
+            crystal_system_final = "Unknown"
+            space_group_final = "Unknown"
+            lattice_dict = {}
+            crystallinity_index = 0.0
+            phases = []
+            multiphase = False
+    
+            # --------------------------------------------------
             # PREPROCESS
-            # ============================================================
+            # --------------------------------------------------
             two_theta_proc, intensity_proc = self.preprocess_pattern(two_theta, intensity)
     
-            # ============================================================
+            # --------------------------------------------------
             # PEAK ANALYSIS
-            # ============================================================
+            # --------------------------------------------------
             peaks = self.analyze_peaks(two_theta_proc, intensity_proc)
-            peaks.sort(key=lambda x: x["intensity"], reverse=True)
+            peaks.sort(key=lambda x: x['intensity'], reverse=True)
     
             all_peaks = peaks
             top_peaks = peaks[:10]
-            from xrd_phase_identifier import identify_phases
-            # ============================================================
-            # AUTO-INDEXING (CRYSTAL SYSTEM + LATTICE)
-            # ============================================================
-            # ============================================================
-            # DATABASE-DRIVEN PHASE IDENTIFICATION (NO ESTIMATION)
-            # ============================================================
-            
-            phase_results = identify_phases(
-                two_theta_proc,
-                intensity_proc,
-                self.wavelength
-            )
-            
-            if not phase_results:
-                crystal_system = "Unknown"
-                lattice_dict = {}
-                space_group = "Unknown"
-                phases = []
-            else:
-                phases = []
-                total_score = sum(p["score"] for p in phase_results)
-            
-                for p in phase_results:
-                    phase_fraction = p["score"] / total_score * 100
-            
-                    phases.append({
-                        "phase": p["phase"],
-                        "crystal_system": p["crystal_system"],
-                        "space_group": p["space_group"],
-                        "lattice": p["lattice"],
-                        "weight_percent": phase_fraction,
-                        "confidence": p["score"]
-                    })
-            
-                # dominant phase
-                crystal_system = phases[0]["crystal_system"]
-                lattice_dict = phases[0]["lattice"]
-                space_group = phases[0]["space_group"]
     
-            # ============================================================
-            # HKL ASSIGNMENT (HIGH CONFIDENCE ONLY)
-            # ============================================================
-            for peak in peaks:
-                peak["hkl"] = ""
-            
-            for phase in phase_results:
-                hkls = phase["hkls"]
-            
-                for hkl in hkls:
-                    for peak in peaks:
-                        if abs(peak["position"] - hkl["2theta"]) < 0.15:
-                            peak["hkl"] = f"({hkl['hkl'][0][0]}{hkl['hkl'][0][1]}{hkl['hkl'][0][2]})"
-            # ============================================================
-            # CRYSTALLINITY INDEX (AREA-BASED, CORRECT)
-            # ============================================================
+            # --------------------------------------------------
+            # CRYSTALLINITY INDEX (ALWAYS CALCULATED)
+            # --------------------------------------------------
             crystallinity_index = calculate_crystallinity_index(
                 two_theta_proc,
                 intensity_proc,
                 peaks
             )
     
-            # ============================================================
-            # CRYSTALLITE SIZE STATISTICS (ALL PEAKS)
-            # ============================================================
+            # --------------------------------------------------
+            # CRYSTALLITE STATISTICS
+            # --------------------------------------------------
             size_stats = self.calculate_crystallite_statistics(peaks)
     
-            # ============================================================
-            # WILLIAMSON–HALL
-            # ============================================================
             williamson_hall = None
             microstrain = 0.0
             dislocation_density = 0.0
@@ -794,21 +749,33 @@ class AdvancedXRDAnalyzer:
                 williamson_hall = williamson_hall_analysis(peaks, self.wavelength)
                 if williamson_hall and williamson_hall["crystallite_size"] > 0:
                     microstrain = williamson_hall["microstrain"]
-                    dislocation_density = (
-                        15 * microstrain / (williamson_hall["crystallite_size"] * 1e-9)
+                    dislocation_density = 15 * microstrain / (
+                        williamson_hall["crystallite_size"] * 1e-9
                     )
     
-            # ============================================================
+            # --------------------------------------------------
             # ORDERED MESOPORES
-            # ============================================================
+            # --------------------------------------------------
             mesopore_analysis = self.check_ordered_mesopores(
                 two_theta_proc, intensity_proc, peaks
             )
     
-            # ============================================================
-            # FINAL RESULTS
-            # ============================================================
-            return {
+            # --------------------------------------------------
+            # (FUTURE) DATABASE INDEXING PLACEHOLDER
+            # --------------------------------------------------
+            # This is where pymatgen / COD / ICSD will plug in
+            # For now, we stay safe and explicit
+    
+            # crystal_system_final = detected_system
+            # lattice_dict = detected_lattice
+            # space_group_final = detected_space_group
+            # phases = detected_phases
+            # multiphase = len(phases) > 1
+    
+            # --------------------------------------------------
+            # FINAL RESULTS (UI CONTRACT — NEVER BREAKS)
+            # --------------------------------------------------
+            results = {
                 "valid": True,
                 "wavelength": float(self.wavelength),
                 "two_theta": two_theta_proc.tolist(),
@@ -821,23 +788,25 @@ class AdvancedXRDAnalyzer:
                 "crystallinity_index": float(crystallinity_index),
     
                 "crystallite_size": {
-                    "mean": float(size_stats["mean_size"]),
-                    "std": float(size_stats["std_size"]),
+                    "scherrer": float(size_stats["mean_size"]),
+                    "williamson_hall": williamson_hall["crystallite_size"] if williamson_hall else 0.0,
                     "distribution": size_stats["distribution"],
-                    "values": [p["crystallite_size"] for p in peaks],
                 },
     
-                "williamson_hall": williamson_hall,
                 "microstrain": float(microstrain),
                 "dislocation_density": float(dislocation_density),
     
                 "ordered_mesopores": mesopore_analysis["ordered"],
                 "mesopore_analysis": mesopore_analysis,
     
+                "williamson_hall": williamson_hall,
+    
                 "crystal_system": crystal_system_final,
-                "space_group": space_group,
+                "space_group": space_group_final,
                 "lattice_parameters": lattice_dict,
-                "indexing_error": indexing_error,
+    
+                "phases": phases,
+                "multiphase": multiphase,
     
                 "background_subtraction": self.background_subtraction,
                 "smoothing": self.smoothing,
@@ -845,14 +814,21 @@ class AdvancedXRDAnalyzer:
                 "n_points": len(two_theta_proc),
             }
     
+            return results
+    
         except Exception as e:
             return {
                 "valid": False,
                 "error": str(e),
-                "peaks": [],
+                "crystallinity_index": 0.0,
                 "crystal_system": "Unknown",
+                "space_group": "Unknown",
                 "lattice_parameters": {},
+                "peaks": [],
+                "top_peaks": [],
+                "n_peaks_total": 0,
             }
+
 
 
 
