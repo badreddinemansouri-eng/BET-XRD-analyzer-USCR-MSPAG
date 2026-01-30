@@ -825,25 +825,25 @@ class AdvancedXRDAnalyzer:
             
             indexing_results = auto_index(d_spacings)
             
+            lattice_dict = {}
+            indexing_error = None
+            
             if indexing_results:
                 best_solution = indexing_results[0]
-                crystal_system = best_solution["system"]
-                lattice_dict = best_solution["lattice"]
-                indexing_error = best_solution["mean_error"]
-            else:
-                crystal_system = "Unknown"
-                lattice_dict = {}
-                indexing_error = None
+            
                 if (
-                    indexing_results
-                    and best_solution["mean_error"] < 0.015
-                    and len(best_solution["lattice"]) >= 1
+                    best_solution.get("mean_error", 1.0) < 0.015
+                    and isinstance(best_solution.get("lattice"), dict)
+                    and len(best_solution["lattice"]) > 0
                 ):
                     crystal_system = best_solution["system"]
                     lattice_dict = best_solution["lattice"]
+                    indexing_error = best_solution["mean_error"]
                 else:
                     crystal_system = "Unknown"
-                    lattice_dict = {}
+            else:
+                crystal_system = "Unknown"
+
 
             # ============================================================
             # HKL ASSIGNMENT (CALCULATED, NOT ESTIMATED)
@@ -856,6 +856,9 @@ class AdvancedXRDAnalyzer:
                 min_error = 1.0
             
                 for hkl in hkls:
+                    if not allowed_hkl(hkl, crystal_system):
+                        continue
+            
                     try:
                         d_calc = d_spacing_from_hkl(hkl, lattice_dict, crystal_system)
                         error = abs(peak["d_spacing"] - d_calc) / peak["d_spacing"]
@@ -871,13 +874,18 @@ class AdvancedXRDAnalyzer:
                     peak["hkl_error"] = min_error
                 else:
                     peak["hkl"] = ""
-                def allowed_hkl(hkl, crystal_system):
-                    h, k, l = hkl
-                    if crystal_system == "cubic_fcc":
-                        return (h + k + l) % 2 == 0
-                    if crystal_system == "cubic_bcc":
-                        return (h % 2 == k % 2 == l % 2)
-                    return True
+
+    def allowed_hkl(hkl, crystal_system):
+        h, k, l = hkl
+    
+        if crystal_system in ["cubic_fcc", "fcc"]:
+            return (h + k + l) % 2 == 0
+    
+        if crystal_system in ["cubic_bcc", "bcc"]:
+            return (h % 2 == k % 2 == l % 2)
+    
+        return True
+
                 if not allowed_hkl(hkl, crystal_system):
                     continue
 
@@ -887,12 +895,12 @@ class AdvancedXRDAnalyzer:
             if peaks and len(peaks) > 0:
                 peak_indices = [p.get('index', i) for i, p in enumerate(peaks)]
             
-            peak_indices = [p["index"] for p in peaks] if peaks else []
+            if peaks else []
             
             crystallinity_index = calculate_crystallinity_index(
                 two_theta_proc,
                 intensity_proc,
-                peak_indices
+                peaks
             )
 
 
@@ -923,11 +931,11 @@ class AdvancedXRDAnalyzer:
             )
             
             # Parse lattice parameters if provided
-            lattice_dict = {}
             if lattice_params:
-                # Simple parsing: look for a=, b=, c= values
+                lattice_dict = {}
                 for match in re.finditer(r'([abc])\s*=\s*([\d\.]+)', lattice_params):
                     lattice_dict[match.group(1)] = float(match.group(2))
+
             
             # Try to refine lattice parameters
             refined_params = None
@@ -981,6 +989,7 @@ class AdvancedXRDAnalyzer:
                 'microstrain': 0.0,
                 'ordered_mesopores': False
             }
+
 
 
 
