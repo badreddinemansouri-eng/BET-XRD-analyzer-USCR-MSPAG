@@ -813,7 +813,9 @@ class AdvancedXRDAnalyzer:
             
             except Exception as e:
                 phases = []
-    
+            for p in peaks:
+            if "hkl" in p:
+                p["hkl_value"] = p["hkl"]
             # crystal_system_final = detected_system
             # lattice_dict = detected_lattice
             # space_group_final = detected_space_group
@@ -876,6 +878,7 @@ class AdvancedXRDAnalyzer:
                 "top_peaks": [],
                 "n_peaks_total": 0,
             }
+
 
 
 
