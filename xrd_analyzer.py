@@ -704,7 +704,7 @@ class AdvancedXRDAnalyzer:
         """
         Complete XRD analysis (SAFE + UI-STABLE VERSION)
         """
-    
+        results = {}   # ← ADD THIS LINE
         try:
             # --------------------------------------------------
             # DEFAULTS (ABSOLUTELY REQUIRED)
@@ -900,6 +900,7 @@ class AdvancedXRDAnalyzer:
                 results["xrd"]["peaks"],
                 phases
             )
+
 
 
 
