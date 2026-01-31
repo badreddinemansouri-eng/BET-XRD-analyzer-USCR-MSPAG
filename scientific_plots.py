@@ -737,16 +737,19 @@ class PublicationPlotter:
         # ====================================================================
         # SUBPLOT E: XRD analysis summary
         # ====================================================================
+        # ====================================================================
+        # SUBPLOT E: XRD analysis summary
+        # ====================================================================
         ax5 = fig.add_subplot(gs[2, 1])
         ax5.axis('tight')
         ax5.axis('off')
         
-        # Create summary table
         summary_data = []
+        
         # ===============================
         # PHASE IDENTIFICATION SUMMARY
         # ===============================
-        phases = xrd_res.get("phases", [])
+        phases = xrd_results.get("phases", [])
         
         phase_text = "None detected"
         if phases:
@@ -755,6 +758,8 @@ class PublicationPlotter:
                 f"[score={p['score']:.2f}]"
                 for p in phases[:3]
             ])
+        
+        summary_data.append(['Identified Phases', phase_text])
         
         # Crystallinity
         crystallinity = xrd_results.get('crystallinity_index', 0)
@@ -778,10 +783,6 @@ class PublicationPlotter:
         n_peaks = xrd_results.get('n_peaks_total', len(peaks))
         summary_data.append(['Total Peaks Detected', f'{n_peaks}'])
         
-        # Number of major peaks shown
-        n_major_peaks = len(peaks)
-        summary_data.append(['Major Peaks Shown', f'{n_major_peaks}'])
-        
         # Ordered mesopores
         ordered = xrd_results.get('ordered_mesopores', False)
         summary_data.append(['Ordered Mesopores', 'Yes' if ordered else 'No'])
@@ -790,29 +791,30 @@ class PublicationPlotter:
         crystal_system = xrd_results.get('crystal_system', 'Unknown')
         summary_data.append(['Crystal System', crystal_system])
         
-        # Create table
-        table = ax5.table(cellText=summary_data,
-                         colLabels=['Parameter', 'Value'],
-                         colWidths=[0.5, 0.5],
-                         cellLoc='left',
-                         loc='center')
+        # Lattice parameters
+        lattice = xrd_results.get('lattice_parameters', {})
+        lattice_text = ", ".join([f"{k}={v:.3f}" for k, v in lattice.items()]) if lattice else "N/A"
+        summary_data.append(['Lattice Parameters (Å)', lattice_text])
         
-        # Style table
+        table = ax5.table(
+            cellText=summary_data,
+            colLabels=['Parameter', 'Value'],
+            colWidths=[0.5, 0.5],
+            cellLoc='left',
+            loc='center'
+        )
+        
         table.auto_set_font_size(False)
         table.set_fontsize(self.font_size - 1)
         table.scale(1, 1.2)
         
-        # Style header
         for (row, col), cell in table.get_celld().items():
-            if row == 0:  # Header row
+            if row == 0:
                 cell.set_text_props(weight='bold')
                 cell.set_facecolor(self.colors['primary'][2])
                 cell.set_text_props(color='white')
             else:
-                if row % 2 == 0:
-                    cell.set_facecolor('#F5F5F5')
-                else:
-                    cell.set_facecolor('#FFFFFF')
+                cell.set_facecolor('#F5F5F5' if row % 2 == 0 else '#FFFFFF')
         
         ax5.set_title('(E) XRD Analysis Summary', pad=10)
         
@@ -1048,6 +1050,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
