@@ -1457,9 +1457,18 @@ def display_xrd_analysis(results, plotter):
             
             st.write(f"**Size Distribution:** {dist}")
             
-            if xrd_res['microstrain']:
-                st.write(f"**Microstrain:** {xrd_res['microstrain']:.4f}")
-                st.write(f"**Dislocation Density:** {xrd_res['dislocation_density']:.2e} m⁻²")
+            microstrain = xrd_res.get('microstrain', None)
+            dislocation = xrd_res.get('dislocation_density', None)
+            
+            if microstrain is not None and microstrain > 0:
+                st.write(f"**Microstrain:** {microstrain:.4e}")
+            else:
+                st.write("**Microstrain:** Not determined")
+            
+            if dislocation is not None and dislocation > 0:
+                st.write(f"**Dislocation Density:** {dislocation:.2e} m⁻²")
+            else:
+                st.write("**Dislocation Density:** Not determined")
         
         # Download full peak data
         if xrd_res.get('peaks'):
@@ -2353,6 +2362,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
