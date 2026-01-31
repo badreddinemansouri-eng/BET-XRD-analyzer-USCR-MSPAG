@@ -770,6 +770,25 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     space_group=params['crystal']['space_group'],
                     lattice_params=params['crystal']['lattice_params']
                 )
+                # ===============================
+                # NORMALIZE PHASE IDENTIFICATION
+                # ===============================
+                if xrd_results.get("primary_phase"):
+                    primary = xrd_results["primary_phase"]
+                
+                    xrd_results["crystal_system"] = primary.get("crystal_system", "Unknown")
+                    xrd_results["space_group"] = primary.get("space_group", "")
+                    xrd_results["lattice_parameters"] = primary.get("lattice", {})
+                
+                    # Overwrite HKL into peaks (UI expects this)
+                    for p in xrd_results.get("peaks", []):
+                        if "hkl" not in p:
+                            p["hkl"] = ""
+                
+                else:
+                    xrd_results.setdefault("crystal_system", "Unknown")
+                    xrd_results.setdefault("space_group", "")
+                    xrd_results.setdefault("lattice_parameters", {})
                 # After performing XRD analysis, add:
                 if 'xrd_results' in analysis_results:
                     # Try to find missing hkl indices
@@ -2246,6 +2265,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
