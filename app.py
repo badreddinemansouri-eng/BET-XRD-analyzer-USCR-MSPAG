@@ -1350,7 +1350,35 @@ def display_bet_analysis(results, plotter):
 def display_xrd_analysis(results, plotter):
     """Display detailed XRD analysis"""
     st.subheader("Advanced XRD Analysis")
+    if xrd_res.get("phases"):
+        st.subheader("🔬 Identified Phases (CIF-Validated)")
     
+        df = pd.DataFrame([
+            {
+                "Phase": p["phase"],
+                "Crystal system": p["crystal_system"],
+                "Space group": p["space_group"],
+                "Confidence": p["confidence_level"],
+                "Score": round(p["score"], 3)
+            }
+            for p in xrd_res["phases"]
+        ])
+    
+        st.dataframe(df, use_container_width=True)
+        
+    if xrd_res.get("phase_fractions"):
+        st.subheader("📊 Phase Fractions (Intensity-Weighted)")
+    
+        fr = xrd_res["phase_fractions"]
+        labels = [f'{f["phase"]} ({f["fraction"]}%)' for f in fr]
+        values = [f["fraction"] for f in fr]
+    
+        fig, ax = plt.subplots()
+        ax.pie(values, labels=labels, autopct="%1.1f%%", startangle=90)
+        ax.axis("equal")
+    
+        st.pyplot(fig)
+
     if results.get('xrd_results') and results.get('xrd_raw'):
         xrd_res = results['xrd_results']
         xrd_raw = results['xrd_raw']
@@ -2362,6 +2390,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
