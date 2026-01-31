@@ -931,7 +931,7 @@ class PublicationPlotter:
             xrd = results['xrd_results']
             
             # Create gauge chart for crystallinity
-            crystallinity = xrd['crystallinity_index']
+            xrd.get('crystallinity_index', 0.0)
             
             # Draw gauge
             theta = np.linspace(0, np.pi, 100)
@@ -1033,6 +1033,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
