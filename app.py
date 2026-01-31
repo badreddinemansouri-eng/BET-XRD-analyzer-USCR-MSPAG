@@ -1442,7 +1442,54 @@ def display_xrd_analysis(results, plotter):
                     'hkl_k': peak.get('hkl_detail', {}).get('k', ''),
                     'hkl_l': peak.get('hkl_detail', {}).get('l', '')
                 })
-            
+    def display_xrd_phases(results):
+        phases = results.get("xrd_phases", [])
+    
+        if not phases:
+            st.warning("No crystalline phases identified with confidence ≥ 0.85")
+            return
+    
+        table = []
+        for p in phases:
+            lat = p["lattice"]
+            table.append({
+                "Phase": p["phase"],
+                "Crystal system": p["crystal_system"],
+                "Space group": p["space_group"],
+                "a (Å)": round(lat["a"], 4),
+                "b (Å)": round(lat["b"], 4),
+                "c (Å)": round(lat["c"], 4),
+                "Confidence": round(p["score"], 3)
+            })
+    
+        st.subheader("🧱 Identified Crystalline Phases (CIF-validated)")
+        st.dataframe(table, use_container_width=True)
+    def display_phase_fractions(results):
+        fractions = results.get("xrd_phase_fractions", [])
+    
+        if not fractions:
+            return
+    
+        st.subheader("📊 Phase Composition (Semi-quantitative)")
+        st.dataframe(fractions, use_container_width=True)
+    def display_peak_phase_table(results):
+        peaks = results["xrd"]["peaks"]
+    
+        rows = []
+        for p in peaks:
+            if p.get("phase"):
+                rows.append({
+                    "2θ (deg)": round(p["position"], 3),
+                    "Intensity": round(p["intensity"], 1),
+                    "Phase": p["phase"],
+                    "HKL": p["hkl"],
+                    "Confidence": round(p["phase_confidence"], 3)
+                })
+    
+        if rows:
+            st.subheader("📌 Peak–Phase–HKL Assignment")
+            st.dataframe(rows, use_container_width=True)        
+             
             peaks_df_full = pd.DataFrame(all_peaks_data)
             csv = peaks_df_full.to_csv(index=False)
             
@@ -2265,6 +2312,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
