@@ -881,7 +881,7 @@ class AdvancedXRDAnalyzer:
                 "top_peaks": [],
                 "n_peaks_total": 0,
             }
-from xrd_phase_quantification import (
+from scientific_integration import (
     calculate_phase_fractions,
     map_peaks_to_phases
 )
@@ -898,6 +898,7 @@ if phases:
         results["xrd"]["peaks"],
         phases
     )
+
 
 
 
