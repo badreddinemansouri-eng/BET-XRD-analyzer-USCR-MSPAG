@@ -17,7 +17,7 @@ import peakutils
 from typing import Dict, Tuple, List, Optional, Any
 import warnings
 import re
-
+from xrd_phase_identifier import identify_phases
 
 
 warnings.filterwarnings('ignore')
@@ -765,6 +765,54 @@ class AdvancedXRDAnalyzer:
             # --------------------------------------------------
             # This is where pymatgen / COD / ICSD will plug in
             # For now, we stay safe and explicit
+            # ============================================================
+            # PHASE IDENTIFICATION (COD + pymatgen) – HIGH CONFIDENCE
+            # ============================================================
+            
+            phases = []
+            primary_phase = None
+            
+            try:
+                phase_matches = identify_phases(
+                    two_theta_proc,
+                    intensity_proc,
+                    wavelength=self.wavelength
+                )
+            
+                if phase_matches:
+                    primary_phase = phase_matches[0]
+            
+                    crystal_system = primary_phase["crystal_system"]
+                    space_group = primary_phase["space_group"]
+                    lattice_dict = primary_phase["lattice"]
+            
+                    # Assign HKL to experimental peaks
+                    for peak in peaks:
+                        best_hkl = None
+                        min_error = 1e9
+            
+                        for hkl_block in primary_phase["hkls"]:
+                            for hkl in hkl_block:
+                                try:
+                                    d_calc = primary_phase["structure"].lattice.d_hkl(hkl["hkl"])
+                                    error = abs(d_calc - peak["d_spacing"]) / peak["d_spacing"]
+            
+                                    if error < min_error:
+                                        min_error = error
+                                        best_hkl = hkl["hkl"]
+                                except:
+                                    continue
+            
+                        if best_hkl and min_error < 0.01:
+                            peak["hkl"] = f"({best_hkl[0]}{best_hkl[1]}{best_hkl[2]})"
+                            peak["hkl_error"] = min_error
+                        else:
+                            peak["hkl"] = ""
+            
+                    phases = phase_matches
+            
+            except Exception as e:
+                phases = []
     
             # crystal_system_final = detected_system
             # lattice_dict = detected_lattice
@@ -805,8 +853,8 @@ class AdvancedXRDAnalyzer:
                 "space_group": space_group_final,
                 "lattice_parameters": lattice_dict,
     
-                "phases": phases,
-                "multiphase": multiphase,
+                'phases': phases,
+                'primary_phase': primary_phase,
     
                 "background_subtraction": self.background_subtraction,
                 "smoothing": self.smoothing,
@@ -828,6 +876,7 @@ class AdvancedXRDAnalyzer:
                 "top_peaks": [],
                 "n_peaks_total": 0,
             }
+
 
 
 
