@@ -772,61 +772,44 @@ class AdvancedXRDAnalyzer:
             # PHASE IDENTIFICATION (COD + pymatgen) – HIGH CONFIDENCE
             # ============================================================
             
-            phases = []
+            # ============================================================
+            # PHASE IDENTIFICATION (COD + pymatgen)
+            # ============================================================
+            xrd_phases = []
+            phase_fractions = []
             primary_phase = None
             
             try:
-                phase_matches = identify_phases(
+                xrd_phases = identify_phases(
                     two_theta_proc,
                     intensity_proc,
                     wavelength=self.wavelength
                 )
             
-                if phase_matches:
-                    primary_phase = phase_matches[0]
+                if xrd_phases:
+                    primary_phase = xrd_phases[0]
             
-                    crystal_system = primary_phase["crystal_system"]
-                    space_group = primary_phase["space_group"]
-                    lattice_dict = primary_phase["lattice"]
+                    crystal_system_final = primary_phase.get("crystal_system", "Unknown")
+                    space_group_final = primary_phase.get("space_group", "Unknown")
+                    lattice_dict = primary_phase.get("lattice", {})
             
-                    # Assign HKL to experimental peaks
-                    for peak in peaks:
-                        best_hkl = None
-                        min_error = 1e9
+                    # 🔹 Assign HKL + phase to peaks
+                    all_peaks = map_peaks_to_phases(all_peaks, xrd_phases)
             
-                        for hkl_block in primary_phase["hkls"]:
-                            for hkl in hkl_block:
-                                try:
-                                    d_calc = primary_phase["structure"].lattice.d_hkl(hkl["hkl"])
-                                    error = abs(d_calc - peak["d_spacing"]) / peak["d_spacing"]
+                    # 🔹 Calculate phase fractions (THIS WAS MISSING)
+                    phase_fractions = calculate_phase_fractions(all_peaks, xrd_phases)
             
-                                    if error < min_error:
-                                        min_error = error
-                                        best_hkl = hkl["hkl"]
-                                except:
-                                    continue
-            
-                        if best_hkl and min_error < 0.01:
-                            peak["hkl"] = f"({best_hkl[0]}{best_hkl[1]}{best_hkl[2]})"
-                            peak["hkl_error"] = min_error
-                        else:
-                            peak["hkl"] = ""
-            
-                    phases = phase_matches
-            
-            except Exception as e:
-                phases = []
-            for p in peaks:
-                if "hkl" in p:
-                    p["hkl_value"] = p["hkl"]
+            except Exception:
+                xrd_phases = []
+                phase_fractions = []
             # crystal_system_final = detected_system
             # lattice_dict = detected_lattice
             # space_group_final = detected_space_group
             # phases = detected_phases
             # multiphase = len(phases) > 1
-            phases = identify_phases(two_theta, intensity, self.wavelength)
-            results["xrd_phases"] = phases
-            results["multiphase"] = len(phases) > 1        
+            #phases = identify_phases(two_theta, intensity, self.wavelength)
+            #results["xrd_phases"] = phases
+            #results["multiphase"] = len(phases) > 1        
     
             # --------------------------------------------------
             # FINAL RESULTS (UI CONTRACT — NEVER BREAKS)
@@ -834,41 +817,41 @@ class AdvancedXRDAnalyzer:
             results = {
                 "valid": True,
                 "wavelength": float(self.wavelength),
+            
                 "two_theta": two_theta_proc.tolist(),
                 "intensity": intensity_proc.tolist(),
-    
+            
                 "peaks": all_peaks,
                 "top_peaks": top_peaks,
                 "n_peaks_total": len(all_peaks),
-    
+            
                 "crystallinity_index": float(crystallinity_index),
-    
+            
                 "crystallite_size": {
                     "scherrer": float(size_stats["mean_size"]),
-                    "williamson_hall": williamson_hall["crystallite_size"] if williamson_hall else 0.0,
+                    "williamson_hall": williamson_hall["crystallite_size"]
+                    if williamson_hall else 0.0,
                     "distribution": size_stats["distribution"],
                 },
-    
+            
                 "microstrain": float(microstrain),
                 "dislocation_density": float(dislocation_density),
-    
+            
                 "ordered_mesopores": mesopore_analysis["ordered"],
                 "mesopore_analysis": mesopore_analysis,
-    
+            
                 "williamson_hall": williamson_hall,
-    
+            
+                # 🔬 PHASE DATA (THIS IS WHAT YOUR UI EXPECTS)
+                "phases": xrd_phases,
+                "primary_phase": primary_phase,
+                "multiphase": len(xrd_phases) > 1,
+                "phase_fractions": phase_fractions,
+            
                 "crystal_system": crystal_system_final,
                 "space_group": space_group_final,
                 "lattice_parameters": lattice_dict,
-    
-                'phases': phases,
-                'primary_phase': primary_phase,
-                "xrd_phases": xrd_phases,
-                "phases": xrd_phases,              # ← ADD THIS
-                "phase_fractions": phase_fractions,
-                "background_subtraction": self.background_subtraction,
-                "smoothing": self.smoothing,
-                "scherrer_constant": float(self.scherrer_constant),
+            
                 "n_points": len(two_theta_proc),
             }
     
@@ -888,20 +871,21 @@ class AdvancedXRDAnalyzer:
             }
     
     
-        phases = results.get("xrd_phases", [])
+        #phases = results.get("xrd_phases", [])
         
-        if phases:
-            results["xrd"]["peaks"] = map_peaks_to_phases(
-                results["xrd"]["peaks"],
-                phases
-            )
+        #if phases:
+            #results["xrd"]["peaks"] = map_peaks_to_phases(
+                #results["xrd"]["peaks"],
+                #phases
+            #)
         
-            results["xrd_phase_fractions"] = calculate_phase_fractions(
-                results["xrd"]["peaks"],
-                phases
-            )
+            #results["xrd_phase_fractions"] = calculate_phase_fractions(
+                #results["xrd"]["peaks"],
+                #phases
+            #)
 
     
+
 
 
 
