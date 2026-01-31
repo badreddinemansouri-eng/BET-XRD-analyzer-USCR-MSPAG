@@ -746,7 +746,7 @@ class PublicationPlotter:
         # ===============================
         # PHASE IDENTIFICATION SUMMARY
         # ===============================
-        phases = xrd.get("phases", [])
+        phases = xrd_res.get("phases", [])
         
         phase_text = "None detected"
         if phases:
@@ -940,13 +940,13 @@ class PublicationPlotter:
         ax3 = fig.add_subplot(gs[1, 0])
         
         if results.get('xrd_results'):
-            xrd = results['xrd_results']
+            xrd_res = results['xrd_results']
             # SAFE extraction of crystallinity
-            crystallinity = float(xrd.get("crystallinity_index", 0.0))
+            crystallinity = float(xrd_res.get("crystallinity_index", 0.0))
             crystallinity = max(0.0, min(crystallinity, 1.0))  # clamp to [0,1]
                         
             # Create gauge chart for crystallinity
-            xrd.get('crystallinity_index', 0.0)
+            xrd_res.get('crystallinity_index', 0.0)
             
             # Draw gauge
             theta = np.linspace(0, np.pi, 100)
@@ -1048,6 +1048,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
