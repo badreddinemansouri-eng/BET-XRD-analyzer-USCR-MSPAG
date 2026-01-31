@@ -18,7 +18,10 @@ from typing import Dict, Tuple, List, Optional, Any
 import warnings
 import re
 from xrd_phase_identifier import identify_phases
-
+from scientific_integration import (
+    calculate_phase_fractions,
+    map_peaks_to_phases
+)
 
 warnings.filterwarnings('ignore')
 
@@ -881,23 +884,21 @@ class AdvancedXRDAnalyzer:
                 "top_peaks": [],
                 "n_peaks_total": 0,
             }
-from scientific_integration import (
-    calculate_phase_fractions,
-    map_peaks_to_phases
-)
 
-phases = results.get("xrd_phases", [])
 
-if phases:
-    results["xrd"]["peaks"] = map_peaks_to_phases(
-        results["xrd"]["peaks"],
-        phases
-    )
+        phases = results.get("xrd_phases", [])
+        
+        if phases:
+            results["xrd"]["peaks"] = map_peaks_to_phases(
+                results["xrd"]["peaks"],
+                phases
+            )
+        
+            results["xrd_phase_fractions"] = calculate_phase_fractions(
+                results["xrd"]["peaks"],
+                phases
+            )
 
-    results["xrd_phase_fractions"] = calculate_phase_fractions(
-        results["xrd"]["peaks"],
-        phases
-    )
 
 
 
