@@ -54,6 +54,7 @@ class ScientificIntegrator:
             if xrd_results:
                 CI = xrd_results.get('crystallinity_index', 0)
                 D_crystal = xrd_results.get('crystallite_size', {}).get('scherrer', 0)
+                xrd_results["phases"] = results.get("xrd_phases", [])
             else:
                 CI = 0
                 D_crystal = 0
@@ -211,3 +212,4 @@ class ScientificIntegrator:
         return peaks        
 
         return validation
+
