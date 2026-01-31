@@ -22,12 +22,23 @@ def simulate_pattern(cif_text, wavelength):
     pattern = calc.get_pattern(structure, two_theta_range=(5, 80))
     return pattern, structure
 
-def match_score(exp_peaks, sim_peaks, tol=0.15):
-    matches = 0
-    for t in exp_peaks:
-        if np.any(np.abs(sim_peaks - t) < tol):
-            matches += 1
-    return matches / len(exp_peaks)
+def match_score(exp_peaks_2theta, sim_peaks_2theta, wavelength, tol=0.02):
+    """
+    d-spacing weighted match score (nano-safe)
+    """
+    exp_d = wavelength / (2 * np.sin(np.radians(exp_peaks_2theta / 2)))
+    sim_d = wavelength / (2 * np.sin(np.radians(sim_peaks_2theta / 2)))
+
+    score = 0.0
+
+    for d_exp in exp_d:
+        diffs = np.abs(sim_d - d_exp) / d_exp
+        best = np.min(diffs)
+        if best < tol:
+            score += 1 - best  # better match = higher weight
+
+    return score / len(exp_d)
+
 
 def identify_phases(two_theta, intensity, wavelength):
     exp_peaks = two_theta[intensity > 0.3 * np.max(intensity)]
@@ -45,18 +56,27 @@ def identify_phases(two_theta, intensity, wavelength):
             pattern, structure = simulate_pattern(cif_text, wavelength)
             score = match_score(exp_peaks, pattern.x)
 
-            if score > 0.85:
-                results.append({
-                    "phase": structure.composition.reduced_formula,
-                    "crystal_system": structure.get_crystal_system(),
-                    "space_group": structure.get_space_group_info()[0],
-                    "lattice": structure.lattice.as_dict(),
-                    "hkls": pattern.hkls,
-                    "score": score,
-                    "structure": structure
-                })
+        confidence = (
+            "confirmed" if score >= 0.85
+            else "probable" if score >= 0.65
+            else "rejected"
+        )
+        
+        if confidence != "rejected":
+            results.append({
+                "phase": structure.composition.reduced_formula,
+                "crystal_system": structure.get_crystal_system(),
+                "space_group": structure.get_space_group_info()[0],
+                "lattice": structure.lattice.as_dict(),
+                "hkls": pattern.hkls,
+                "score": score,
+                "confidence_level": confidence,
+                "structure": structure
+            })
+
         except:
             continue
 
     results.sort(key=lambda x: x["score"], reverse=True)
+
     return results
