@@ -743,6 +743,18 @@ class PublicationPlotter:
         
         # Create summary table
         summary_data = []
+        # ===============================
+        # PHASE IDENTIFICATION SUMMARY
+        # ===============================
+        phases = xrd.get("phases", [])
+        
+        phase_text = "None detected"
+        if phases:
+            phase_text = "\n".join([
+                f"{p['phase']} ({p['crystal_system']}, {p['space_group']}) "
+                f"[score={p['score']:.2f}]"
+                for p in phases[:3]
+            ])
         
         # Crystallinity
         crystallinity = xrd_results.get('crystallinity_index', 0)
@@ -1036,6 +1048,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
