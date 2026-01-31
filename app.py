@@ -1439,10 +1439,23 @@ def display_xrd_analysis(results, plotter):
         
         # Crystallite size analysis
         with st.expander("🔬 Crystallite Size Analysis", expanded=False):
-            size = xrd_res['crystallite_size']
-            st.write(f"**Scherrer Method:** {size['scherrer']:.1f} nm")
-            st.write(f"**Williamson-Hall Method:** {size['williamson_hall']:.1f} nm" if size['williamson_hall'] else "N/A")
-            st.write(f"**Size Distribution:** {size['distribution']}" if size['distribution'] else "")
+        size = xrd_res.get('crystallite_size', {})
+        
+        scherrer = size.get('scherrer', None)
+        wh = size.get('williamson_hall', None)
+        dist = size.get('distribution', 'N/A')
+        
+        if scherrer is not None:
+            st.write(f"**Scherrer Method:** {scherrer:.1f} nm")
+        else:
+            st.write("**Scherrer Method:** N/A")
+        
+        if wh and wh > 0:
+            st.write(f"**Williamson–Hall Method:** {wh:.1f} nm")
+        else:
+            st.write("**Williamson–Hall Method:** Not available")
+        
+        st.write(f"**Size Distribution:** {dist}")
             
             if xrd_res['microstrain']:
                 st.write(f"**Microstrain:** {xrd_res['microstrain']:.4f}")
@@ -2340,6 +2353,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
