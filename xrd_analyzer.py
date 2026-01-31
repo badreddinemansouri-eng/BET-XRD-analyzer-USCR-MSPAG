@@ -802,6 +802,15 @@ class AdvancedXRDAnalyzer:
             except Exception:
                 xrd_phases = []
                 phase_fractions = []
+            # --------------------------------------------------
+            # PHASE → PEAK MAPPING + FRACTIONS (SAFE)
+            # --------------------------------------------------
+            phase_fractions = []
+            
+            if phases:
+                peaks = map_peaks_to_phases(peaks, phases)
+                phase_fractions = calculate_phase_fractions(peaks, phases)
+    
             # crystal_system_final = detected_system
             # lattice_dict = detected_lattice
             # space_group_final = detected_space_group
@@ -816,21 +825,20 @@ class AdvancedXRDAnalyzer:
             # --------------------------------------------------
             results = {
                 "valid": True,
-                "wavelength": float(self.wavelength),
             
                 "two_theta": two_theta_proc.tolist(),
                 "intensity": intensity_proc.tolist(),
+                "wavelength": float(self.wavelength),
             
-                "peaks": all_peaks,
+                "peaks": peaks,
                 "top_peaks": top_peaks,
-                "n_peaks_total": len(all_peaks),
+                "n_peaks_total": len(peaks),
             
                 "crystallinity_index": float(crystallinity_index),
             
                 "crystallite_size": {
                     "scherrer": float(size_stats["mean_size"]),
-                    "williamson_hall": williamson_hall["crystallite_size"]
-                    if williamson_hall else 0.0,
+                    "williamson_hall": williamson_hall["crystallite_size"] if williamson_hall else 0.0,
                     "distribution": size_stats["distribution"],
                 },
             
@@ -838,24 +846,16 @@ class AdvancedXRDAnalyzer:
                 "dislocation_density": float(dislocation_density),
             
                 "ordered_mesopores": mesopore_analysis["ordered"],
-                "mesopore_analysis": mesopore_analysis,
             
-                "williamson_hall": williamson_hall,
+                "crystal_system": phases[0]["crystal_system"] if phases else "Unknown",
+                "space_group": phases[0]["space_group"] if phases else "Unknown",
+                "lattice_parameters": phases[0]["lattice"] if phases else {},
             
-                # 🔬 PHASE DATA (THIS IS WHAT YOUR UI EXPECTS)
-                "phases": xrd_phases,
-                "primary_phase": primary_phase,
-                "multiphase": len(xrd_phases) > 1,
+                "phases": phases,
                 "phase_fractions": phase_fractions,
-            
-                "crystal_system": crystal_system_final,
-                "space_group": space_group_final,
-                "lattice_parameters": lattice_dict,
-            
-                "n_points": len(two_theta_proc),
             }
-    
-            return results
+        return results
+
     
         except Exception as e:
             return {
@@ -870,7 +870,7 @@ class AdvancedXRDAnalyzer:
                 "n_peaks_total": 0,
             }
     
-    
+            
         #phases = results.get("xrd_phases", [])
         
         #if phases:
@@ -885,6 +885,7 @@ class AdvancedXRDAnalyzer:
             #)
 
     
+
 
 
 
