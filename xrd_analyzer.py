@@ -692,7 +692,6 @@ class AdvancedXRDAnalyzer:
             'pore_size_estimate': 0.0,
             'structure': 'Disordered'
         }
-    
     def complete_analysis(
         self,
         two_theta,
@@ -705,6 +704,7 @@ class AdvancedXRDAnalyzer:
         Complete XRD analysis (SAFE + UI-STABLE VERSION)
         """
         results = {}   # ← ADD THIS LINE
+        xrd_phases = []   # ✅ ADD THIS LINE
         try:
             # --------------------------------------------------
             # DEFAULTS (ABSOLUTELY REQUIRED)
@@ -827,7 +827,7 @@ class AdvancedXRDAnalyzer:
             phases = identify_phases(two_theta, intensity, self.wavelength)
             results["xrd_phases"] = phases
             results["multiphase"] = len(phases) > 1        
-
+    
             # --------------------------------------------------
             # FINAL RESULTS (UI CONTRACT — NEVER BREAKS)
             # --------------------------------------------------
@@ -886,8 +886,8 @@ class AdvancedXRDAnalyzer:
                 "top_peaks": [],
                 "n_peaks_total": 0,
             }
-
-
+    
+    
         phases = results.get("xrd_phases", [])
         
         if phases:
@@ -900,6 +900,9 @@ class AdvancedXRDAnalyzer:
                 results["xrd"]["peaks"],
                 phases
             )
+
+    
+
 
 
 
