@@ -821,7 +821,10 @@ class AdvancedXRDAnalyzer:
             # space_group_final = detected_space_group
             # phases = detected_phases
             # multiphase = len(phases) > 1
-    
+            phases = identify_phases(two_theta, intensity, wavelength)
+            results["xrd_phases"] = phases
+            results["multiphase"] = len(phases) > 1        
+
             # --------------------------------------------------
             # FINAL RESULTS (UI CONTRACT — NEVER BREAKS)
             # --------------------------------------------------
@@ -895,6 +898,7 @@ if phases:
         results["xrd"]["peaks"],
         phases
     )
+
 
 
 
