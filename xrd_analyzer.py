@@ -824,7 +824,7 @@ class AdvancedXRDAnalyzer:
             # space_group_final = detected_space_group
             # phases = detected_phases
             # multiphase = len(phases) > 1
-            phases = identify_phases(two_theta, intensity, wavelength)
+            phases = identify_phases(two_theta, intensity, self.wavelength)
             results["xrd_phases"] = phases
             results["multiphase"] = len(phases) > 1        
 
@@ -863,7 +863,9 @@ class AdvancedXRDAnalyzer:
     
                 'phases': phases,
                 'primary_phase': primary_phase,
-    
+                "xrd_phases": xrd_phases,
+                "phases": xrd_phases,              # ← ADD THIS
+                "phase_fractions": phase_fractions,
                 "background_subtraction": self.background_subtraction,
                 "smoothing": self.smoothing,
                 "scherrer_constant": float(self.scherrer_constant),
@@ -898,6 +900,7 @@ class AdvancedXRDAnalyzer:
                 results["xrd"]["peaks"],
                 phases
             )
+
 
 
 
