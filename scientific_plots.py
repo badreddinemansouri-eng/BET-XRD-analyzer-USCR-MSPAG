@@ -929,7 +929,10 @@ class PublicationPlotter:
         
         if results.get('xrd_results'):
             xrd = results['xrd_results']
-            
+            # SAFE extraction of crystallinity
+            crystallinity = float(xrd.get("crystallinity_index", 0.0))
+            crystallinity = max(0.0, min(crystallinity, 1.0))  # clamp to [0,1]
+                        
             # Create gauge chart for crystallinity
             xrd.get('crystallinity_index', 0.0)
             
@@ -1033,6 +1036,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
