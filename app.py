@@ -1350,6 +1350,8 @@ def display_bet_analysis(results, plotter):
 def display_xrd_analysis(results, plotter):
     """Display detailed XRD analysis"""
     st.subheader("Advanced XRD Analysis")
+        # ✅ ADD THIS LINE
+    xrd_res = results.get("xrd_results", {})
     if xrd_res.get("phases"):
         st.subheader("🔬 Identified Phases (CIF-Validated)")
     
@@ -2390,6 +2392,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
