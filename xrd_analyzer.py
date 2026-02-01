@@ -724,7 +724,15 @@ class AdvancedXRDAnalyzer:
             peaks = self.analyze_peaks(two_theta_proc, intensity_proc)
             peaks.sort(key=lambda x: x["intensity"], reverse=True)
     
-            top_peaks = peaks[:10]
+            valid_peaks = [
+                p for p in peaks
+                if p.get("fwhm_rad", 0) > 0 and p.get("position", 0) > 10
+            ]
+            
+            if len(valid_peaks) >= 3:
+                williamson_hall = williamson_hall_analysis(valid_peaks, self.wavelength)
+            else:
+                williamson_hall = None
     
             # --------------------------------------------------
             # CRYSTALLINITY
@@ -775,7 +783,14 @@ class AdvancedXRDAnalyzer:
             except Exception:
                 phases = []
                 phase_fractions = []
-    
+            # ===============================
+            # PHASE → PEAK MAPPING
+            # ===============================
+            if phases:
+                peaks = map_peaks_to_phases(peaks, phases)
+                phase_fractions = calculate_phase_fractions(peaks, phases)
+            else:
+                phase_fractions = []
             # --------------------------------------------------
             # FINAL RESULTS (RETURN ONLY ONCE)
             # --------------------------------------------------
@@ -834,6 +849,7 @@ class AdvancedXRDAnalyzer:
         return results
 
     
+
 
 
 
