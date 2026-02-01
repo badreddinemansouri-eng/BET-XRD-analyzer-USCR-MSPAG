@@ -1370,237 +1370,152 @@ def display_bet_analysis(results, plotter):
             st.write(f"**Closure Pressure:** {hyst['closure_pressure']:.3f} P/P₀")
 @memory_safe_plot
 def display_xrd_analysis(results, plotter):
-    """Display detailed XRD analysis"""
+    """Display detailed XRD analysis (STABLE VERSION)"""
+
     st.subheader("Advanced XRD Analysis")
-        # ✅ ADD THIS LINE
+
+    # ============================================================
+    # SAFE EXTRACTION
+    # ============================================================
     xrd_res = results.get("xrd_results", {})
-    if xrd_res.get("phases"):
+    xrd_raw = results.get("xrd_raw", {})
+
+    # ============================================================
+    # PHASE IDENTIFICATION TABLE
+    # ============================================================
+    phases = xrd_res.get("phases", [])
+
+    if phases:
         st.subheader("🔬 Identified Phases (CIF-Validated)")
-    
-        df = pd.DataFrame([
+
+        phase_df = pd.DataFrame([
             {
                 "Phase": p["phase"],
                 "Crystal system": p["crystal_system"],
                 "Space group": p["space_group"],
-                "Confidence": p["confidence_level"],
-                "Score": round(p["score"], 3)
+                "Confidence level": p.get("confidence_level", ""),
+                "Score": round(p["score"], 3),
             }
-            for p in xrd_res["phases"]
+            for p in phases
         ])
-    
-        st.dataframe(df, use_container_width=True)
-        
-    if xrd_res.get("phase_fractions"):
+
+        st.dataframe(phase_df, use_container_width=True)
+    else:
+        st.info("No crystalline phase identified with sufficient confidence.")
+
+    # ============================================================
+    # PHASE FRACTIONS
+    # ============================================================
+    fractions = xrd_res.get("phase_fractions", [])
+
+    if fractions:
         st.subheader("📊 Phase Fractions (Intensity-Weighted)")
-    
-        fr = xrd_res["phase_fractions"]
-        labels = [f'{f["phase"]} ({f["fraction"]}%)' for f in fr]
-        values = [f["fraction"] for f in fr]
-    
+
+        frac_df = pd.DataFrame(fractions)
+        st.dataframe(frac_df, use_container_width=True)
+
         fig, ax = plt.subplots()
-        ax.pie(values, labels=labels, autopct="%1.1f%%", startangle=90)
+        ax.pie(
+            frac_df["fraction"],
+            labels=[
+                f'{row["phase"]} ({row["fraction"]:.1f}%)'
+                for _, row in frac_df.iterrows()
+            ],
+            autopct="%1.1f%%",
+            startangle=90,
+        )
         ax.axis("equal")
-    
         st.pyplot(fig)
 
-    if results.get('xrd_results') and results.get('xrd_raw'):
-        xrd_res = results['xrd_results']
-        xrd_raw = results['xrd_raw']
-        
-        # XRD figure with peak indexing
+    # ============================================================
+    # XRD PATTERN + PEAK INDEXING
+    # ============================================================
+    if xrd_raw and xrd_res:
         fig = plotter.create_xrd_figure(xrd_raw, xrd_res)
         st.pyplot(fig)
-        
-        # Enhanced peak table with better hkl display
-        # In display_xrd_analysis function, replace the hkl handling section with:
-        if xrd_res.get('peaks'):
-            st.subheader("Peak Analysis with HKL Indexing")
-            
-            # Show indexing quality if available
-            if 'indexing' in xrd_res:
-                indexing = xrd_res['indexing']
-                fom = indexing.get('figures_of_merit', {})
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if 'M20' in fom:
-                        st.metric("M₂₀ Figure of Merit", f"{fom['M20']:.1f}")
-                with col2:
-                    if 'mean_error' in fom:
-                        st.metric("Mean Indexing Error", f"{fom['mean_error']:.2f}%")
-                with col3:
-                    if 'n_indexed' in fom:
-                        st.metric("Indexed Peaks", f"{fom['n_indexed']}/{len(xrd_res['peaks'])}")
-            
-            # Let user choose how many peaks to show
-            n_peaks_total = len(xrd_res['peaks'])
-            n_to_show = st.slider(
-                "Number of peaks to display",
-                min_value=1,
-                max_value=n_peaks_total,
-                value=min(20, n_peaks_total),
-                help="All peaks shown (not just major ones)"
-            )
-            
-            # Sort peaks by intensity for display
-            all_peaks = sorted(xrd_res['peaks'], key=lambda x: x['intensity'], reverse=True)
-            
-            # Create enhanced DataFrame with hkl - FIXED VERSION
-            peaks_data = []
-            for i, peak in enumerate(all_peaks[:n_to_show]):
-                row = {
-                    'Rank': i+1,
-                    '2θ (°)': f"{peak.get('position', 0):.3f}",
-                    'd-spacing (Å)': f"{peak.get('d_spacing', 0):.3f}",
-                    'Intensity': f"{peak.get('intensity', 0):.0f}",
-                    'FWHM (°)': f"{peak.get('fwhm_deg', 0):.3f}",
-                    'Size (nm)': f"{peak.get('crystallite_size', 0):.1f}"
-                }
-                
-                # Add hkl information - SAFELY
-                hkl_value = ""
-                error_value = "0.00"
-                
-                # Try multiple ways to get hkl
-                if 'hkl' in peak and peak['hkl']:
-                    if isinstance(peak['hkl'], str):
-                        hkl_value = peak['hkl']
-                    elif isinstance(peak['hkl'], dict):
-                        hkl_value = f"({peak['hkl'].get('h', '?')}{peak['hkl'].get('k', '?')}{peak['hkl'].get('l', '?')})"
-                elif 'hkl_detail' in peak and peak['hkl_detail']:
-                    if isinstance(peak['hkl_detail'], dict):
-                        hkl_detail = peak['hkl_detail']
-                        if 'h' in hkl_detail:
-                            hkl_value = f"({hkl_detail.get('h', '?')}{hkl_detail.get('k', '?')}{hkl_detail.get('l', '?')})"
-                            error_value = f"{hkl_detail.get('error_percent', 0):.2f}"
-                
-                row['hkl'] = hkl_value
-                row['Error (%)'] = error_value
-                
-                peaks_data.append(row)
-            
-            peaks_df = pd.DataFrame(peaks_data)
-            
-            # Display with safe formatting
-            try:
-                st.dataframe(peaks_df)
-                
-            except Exception as e:
-                st.warning(f"Formatting error: {str(e)[:100]}")
-                st.dataframe(peaks_df)
-        
-        # Crystallite size analysis
-        with st.expander("🔬 Crystallite Size Analysis", expanded=False):
-            size = xrd_res.get('crystallite_size', {})
-            
-            scherrer = size.get('scherrer', None)
-            wh = size.get('williamson_hall', None)
-            dist = size.get('distribution', 'N/A')
-            
-            if scherrer is not None:
-                st.write(f"**Scherrer Method:** {scherrer:.1f} nm")
-            else:
-                st.write("**Scherrer Method:** N/A")
-            
-            if wh and wh > 0:
-                st.write(f"**Williamson–Hall Method:** {wh:.1f} nm")
-            else:
-                st.write("**Williamson–Hall Method:** Not available")
-            
-            st.write(f"**Size Distribution:** {dist}")
-            
-            microstrain = xrd_res.get('microstrain', None)
-            dislocation = xrd_res.get('dislocation_density', None)
-            
-            if microstrain is not None and microstrain > 0:
-                st.write(f"**Microstrain:** {microstrain:.4e}")
-            else:
-                st.write("**Microstrain:** Not determined")
-            
-            if dislocation is not None and dislocation > 0:
-                st.write(f"**Dislocation Density:** {dislocation:.2e} m⁻²")
-            else:
-                st.write("**Dislocation Density:** Not determined")
-        
-        # Download full peak data
-        if xrd_res.get('peaks'):
-            st.subheader("Download Peak Data")
-            
-            # Create CSV with all peaks
-            all_peaks_data = []
-            for i, peak in enumerate(xrd_res['peaks']):
-                all_peaks_data.append({
-                    'peak_number': i+1,
-                    'two_theta_deg': peak['position'],
-                    'd_spacing_angstrom': peak.get('d_spacing', 0),
-                    'intensity': peak['intensity'],
-                    'fwhm_deg': peak['fwhm_deg'],
-                    'fwhm_rad': peak['fwhm_rad'],
-                    'peak_area': peak.get('area', 0),
-                    'asymmetry': peak.get('asymmetry', 1.0),
-                    'crystallite_size_nm': peak.get('crystallite_size', 0),
-                    'hkl': peak.get('hkl', ''),
-                    'hkl_h': peak.get('hkl_detail', {}).get('h', ''),
-                    'hkl_k': peak.get('hkl_detail', {}).get('k', ''),
-                    'hkl_l': peak.get('hkl_detail', {}).get('l', '')
-                })
-    def display_xrd_phases(results):
-        phases = results.get("xrd_phases", [])
-    
-        if not phases:
-            st.warning("No crystalline phases identified with confidence ≥ 0.85")
-            return
-    
+
+    # ============================================================
+    # PEAK TABLE (ALL PEAKS, NOT ONLY MAJOR)
+    # ============================================================
+    peaks = xrd_res.get("peaks", [])
+
+    if peaks:
+        st.subheader("📌 Peak Analysis with HKL & Phase Assignment")
+
+        n_total = len(peaks)
+        n_show = st.slider(
+            "Number of peaks to display",
+            1,
+            n_total,
+            min(20, n_total),
+        )
+
+        peaks_sorted = sorted(peaks, key=lambda x: x["intensity"], reverse=True)
+
         table = []
-        for p in phases:
-            lat = p["lattice"]
+        for i, p in enumerate(peaks_sorted[:n_show]):
             table.append({
-                "Phase": p["phase"],
-                "Crystal system": p["crystal_system"],
-                "Space group": p["space_group"],
-                "a (Å)": round(lat["a"], 4),
-                "b (Å)": round(lat["b"], 4),
-                "c (Å)": round(lat["c"], 4),
-                "Confidence": round(p["score"], 3)
+                "Rank": i + 1,
+                "2θ (°)": round(p["position"], 3),
+                "d (Å)": round(p.get("d_spacing", 0), 4),
+                "Intensity": round(p["intensity"], 1),
+                "FWHM (°)": round(p["fwhm_deg"], 4),
+                "Size (nm)": round(p.get("crystallite_size", 0), 2),
+                "Phase": p.get("phase", ""),
+                "HKL": p.get("hkl", ""),
+                "Confidence": round(p.get("phase_confidence", 0), 3),
             })
-    
-        st.subheader("🧱 Identified Crystalline Phases (CIF-validated)")
-        st.dataframe(table, use_container_width=True)
-    def display_phase_fractions(results):
-        fractions = results.get("xrd_phase_fractions", [])
-    
-        if not fractions:
-            return
-    
-        st.subheader("📊 Phase Composition (Semi-quantitative)")
-        st.dataframe(fractions, use_container_width=True)
-    def display_peak_phase_table(results):
-        peaks = results["xrd"]["peaks"]
-    
-        rows = []
-        for p in peaks:
-            if p.get("phase"):
-                rows.append({
-                    "2θ (deg)": round(p["position"], 3),
-                    "Intensity": round(p["intensity"], 1),
-                    "Phase": p["phase"],
-                    "HKL": p["hkl"],
-                    "Confidence": round(p["phase_confidence"], 3)
-                })
-    
-        if rows:
-            st.subheader("📌 Peak–Phase–HKL Assignment")
-            st.dataframe(rows, use_container_width=True)        
-             
-            peaks_df_full = pd.DataFrame(all_peaks_data)
-            csv = peaks_df_full.to_csv(index=False)
-            
-            st.download_button(
-                label="📥 Download Full Peak Data (CSV)",
-                data=csv,
-                file_name="xrd_peak_analysis.csv",
-                mime="text/csv"
-            )
+
+        st.dataframe(pd.DataFrame(table), use_container_width=True)
+
+    # ============================================================
+    # CRYSTALLITE SIZE ANALYSIS
+    # ============================================================
+    with st.expander("🔬 Crystallite Size Analysis", expanded=False):
+        size = xrd_res.get("crystallite_size", {})
+
+        st.write(f"**Scherrer:** {size.get('scherrer', 0):.2f} nm")
+
+        wh = size.get("williamson_hall", 0)
+        if wh > 0:
+            st.write(f"**Williamson–Hall:** {wh:.2f} nm")
+        else:
+            st.write("**Williamson–Hall:** Not available")
+
+        st.write(f"**Distribution:** {size.get('distribution', 'N/A')}")
+
+        microstrain = xrd_res.get("microstrain", 0)
+        if microstrain > 0:
+            st.write(f"**Microstrain:** {microstrain:.3e}")
+
+        rho = xrd_res.get("dislocation_density", 0)
+        if rho > 0:
+            st.write(f"**Dislocation density:** {rho:.3e} m⁻²")
+
+    # ============================================================
+    # CSV EXPORT (ALL PEAKS)
+    # ============================================================
+    if peaks:
+        all_peaks_df = pd.DataFrame([
+            {
+                "2theta_deg": p["position"],
+                "d_spacing_A": p.get("d_spacing", 0),
+                "intensity": p["intensity"],
+                "fwhm_deg": p["fwhm_deg"],
+                "crystallite_size_nm": p.get("crystallite_size", 0),
+                "phase": p.get("phase", ""),
+                "hkl": p.get("hkl", ""),
+                "confidence": p.get("phase_confidence", 0),
+            }
+            for p in peaks
+        ])
+
+        st.download_button(
+            "📥 Download Full XRD Peak Data (CSV)",
+            all_peaks_df.to_csv(index=False),
+            file_name="xrd_peak_analysis.csv",
+            mime="text/csv",
+        )
 @memory_safe_plot            
 def display_3d_xrd_visualization(results, scientific_params):
     """Display 3D XRD visualization with hkl indices"""
@@ -2414,6 +2329,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
