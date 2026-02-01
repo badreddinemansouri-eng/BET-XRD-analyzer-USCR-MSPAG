@@ -614,8 +614,11 @@ class PublicationPlotter:
         
         if peaks:
             # Extract crystallite sizes from major peaks
-            sizes = [p.get('crystallite_size', 0) for p in peaks 
-                    if p.get('crystallite_size', 0) > 0]
+            sizes = [
+                p["crystallite_size"]
+                for p in peaks
+                if "crystallite_size" in p and p["crystallite_size"] > 0
+            ]
             
             if sizes:
                 # Create histogram
@@ -1050,6 +1053,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
