@@ -268,7 +268,29 @@ def create_sidebar():
                 step=1
             )
         }
+        # ============================================================
+        # XRD PHASE SEARCH SETTINGS
+        # ============================================================
+        st.sidebar.subheader("🔬 XRD Phase Search")
         
+        ALL_ELEMENTS = [
+            "H","He","Li","Be","B","C","N","O","F","Ne",
+            "Na","Mg","Al","Si","P","S","Cl","Ar",
+            "K","Ca","Sc","Ti","V","Cr","Mn","Fe","Co","Ni","Cu","Zn",
+            "Ga","Ge","As","Se","Br","Kr",
+            "Rb","Sr","Y","Zr","Nb","Mo","Tc","Ru","Rh","Pd","Ag","Cd",
+            "In","Sn","Sb","Te","I","Xe",
+            "Cs","Ba","La","Ce","Pr","Nd","Sm","Eu","Gd","Tb","Dy","Ho",
+            "Er","Tm","Yb","Lu","Hf","Ta","W","Re","Os","Ir","Pt","Au",
+            "Hg","Tl","Pb","Bi"
+        ]
+        
+        selected_elements = st.sidebar.multiselect(
+            "Expected elements in sample (for phase search)",
+            ALL_ELEMENTS,
+            default=["O"]
+        )
+
         st.markdown("---")
         st.subheader("Scientific References")
         
@@ -2392,6 +2414,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
