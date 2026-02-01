@@ -828,7 +828,36 @@ class PublicationPlotter:
                     fontsize=self.font_size + 4, y=0.98)
         
         return fig
+    def create_phase_fraction_plot(self, phase_fractions):
+        """
+        Bar chart of phase fractions (CIF-validated only)
+        """
+        fig, ax = plt.subplots(figsize=(6, 4))
     
+        if not phase_fractions:
+            ax.text(0.5, 0.5, "No phase fraction data",
+                    ha="center", va="center")
+            return fig
+    
+        phases = [p["phase"] for p in phase_fractions]
+        fractions = [p["fraction"] for p in phase_fractions]
+    
+        bars = ax.bar(phases, fractions, color=self.colors["primary"])
+    
+        for bar, frac in zip(bars, fractions):
+            ax.text(bar.get_x() + bar.get_width()/2,
+                    bar.get_height() + 1,
+                    f"{frac:.1f}%",
+                    ha="center", va="bottom",
+                    fontsize=self.font_size - 1)
+    
+        ax.set_ylabel("Phase fraction (%)")
+        ax.set_title("Phase Composition (Semi-quantitative)")
+        ax.set_ylim(0, max(fractions) * 1.2)
+        ax.grid(True, axis="y", alpha=0.3)
+    
+        return fig
+
     def create_summary_figure(self, results: Dict) -> plt.Figure:
         """
         Create summary figure combining key results
@@ -1053,6 +1082,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
