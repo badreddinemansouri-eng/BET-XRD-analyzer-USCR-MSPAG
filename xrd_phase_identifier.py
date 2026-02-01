@@ -54,8 +54,9 @@ def identify_phases(two_theta, intensity, wavelength):
 
     results = []
 
-    exp_peaks = two_theta[intensity > 0.3 * np.max(intensity)]
-    elements_guess = ["Ti", "O", "Fe", "Bi"]
+    # USE PEAK POSITIONS, NOT RAW INTENSITY
+    mask = intensity > 0.3 * np.max(intensity)
+    exp_peaks = np.array(two_theta)[mask]
 
     try:
         cif_entries = fetch_cod_cifs(elements_guess)
@@ -99,3 +100,4 @@ def identify_phases(two_theta, intensity, wavelength):
 
     results.sort(key=lambda x: x["score"], reverse=True)
     return results
+
