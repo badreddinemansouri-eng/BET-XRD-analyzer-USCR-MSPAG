@@ -701,102 +701,111 @@ class AdvancedXRDAnalyzer:
         lattice_params=None
     ):
         """
-        Complete XRD analysis (SAFE + UI-STABLE VERSION)
+        Complete XRD analysis – FINAL SAFE VERSION
+        (Phase-aware, UI-stable, database-backed)
         """
     
-        # --------------------------------------------------
-        # ALWAYS-DEFINED DEFAULTS (CRITICAL)
-        # --------------------------------------------------
-        results = {}
-        phases = []
-        phase_fractions = []
-        primary_phase = None
-    
         try:
-            # --------------------------------------------------
+            # ============================================================
             # PREPROCESS
-            # --------------------------------------------------
+            # ============================================================
             two_theta_proc, intensity_proc = self.preprocess_pattern(two_theta, intensity)
     
-            # --------------------------------------------------
-            # PEAK ANALYSIS
-            # --------------------------------------------------
+            # ============================================================
+            # PEAK DETECTION
+            # ============================================================
             peaks = self.analyze_peaks(two_theta_proc, intensity_proc)
             peaks.sort(key=lambda x: x["intensity"], reverse=True)
     
-            valid_peaks = [
-                p for p in peaks
-                if p.get("fwhm_rad", 0) > 0 and p.get("position", 0) > 10
-            ]
-            
-            if len(valid_peaks) >= 3:
-                williamson_hall = williamson_hall_analysis(valid_peaks, self.wavelength)
-            else:
-                williamson_hall = None
+            all_peaks = peaks
+            top_peaks = peaks[:10]
     
-            # --------------------------------------------------
-            # CRYSTALLINITY
-            # --------------------------------------------------
+            # ============================================================
+            # CRYSTALLINITY INDEX (ALWAYS)
+            # ============================================================
             crystallinity_index = calculate_crystallinity_index(
                 two_theta_proc, intensity_proc, peaks
             )
     
-            # --------------------------------------------------
-            # SIZE + STRAIN
-            # --------------------------------------------------
+            # ============================================================
+            # SCHERRER SIZE — FOR **ALL** PEAKS (IMPORTANT)
+            # ============================================================
+            for p in peaks:
+                if p.get("fwhm_rad", 0) > 0:
+                    theta_rad = np.deg2rad(p["position"] / 2)
+                    p["crystallite_size"] = scherrer_crystallite_size(
+                        p["fwhm_rad"], theta_rad, self.wavelength, self.scherrer_constant
+                    )
+                else:
+                    p["crystallite_size"] = 0.0
+    
             size_stats = self.calculate_crystallite_statistics(peaks)
+    
+            # ============================================================
+            # WILLIAMSON–HALL (USE ALL VALID PEAKS)
+            # ============================================================
+            wh_peaks = [
+                p for p in peaks
+                if p["fwhm_rad"] > 0 and p["position"] > 10
+            ]
     
             williamson_hall = None
             microstrain = 0.0
             dislocation_density = 0.0
     
-            if len(peaks) >= 3:
-                williamson_hall = williamson_hall_analysis(peaks, self.wavelength)
+            if len(wh_peaks) >= 3:
+                williamson_hall = williamson_hall_analysis(wh_peaks, self.wavelength)
                 if williamson_hall and williamson_hall["crystallite_size"] > 0:
                     microstrain = williamson_hall["microstrain"]
                     dislocation_density = 15 * microstrain / (
                         williamson_hall["crystallite_size"] * 1e-9
                     )
     
-            # --------------------------------------------------
+            # ============================================================
             # MESOPORES
-            # --------------------------------------------------
+            # ============================================================
             mesopore_analysis = self.check_ordered_mesopores(
                 two_theta_proc, intensity_proc, peaks
             )
     
-            # --------------------------------------------------
+            # ============================================================
             # PHASE IDENTIFICATION (COD + pymatgen)
-            # --------------------------------------------------
+            # ============================================================
+            phases = []
+            crystal_system_final = "Unknown"
+            space_group_final = "Unknown"
+            lattice_dict = {}
+    
             try:
                 phases = identify_phases(
-                    two_theta_proc,
-                    intensity_proc,
-                    wavelength=self.wavelength
+                    two_theta_proc, intensity_proc, self.wavelength
                 )
     
                 if phases:
-                    primary_phase = phases[0]
+                    primary = phases[0]
+                    crystal_system_final = primary["crystal_system"]
+                    space_group_final = primary["space_group"]
+                    lattice_dict = primary["lattice"]
+    
+                    # HKL + phase assignment
                     peaks = map_peaks_to_phases(peaks, phases)
+    
+                    # Phase fractions (semi-quantitative, CIF-validated)
                     phase_fractions = calculate_phase_fractions(peaks, phases)
+                else:
+                    phase_fractions = []
     
             except Exception:
                 phases = []
                 phase_fractions = []
-            # ===============================
-            # PHASE → PEAK MAPPING
-            # ===============================
-            if phases:
-                peaks = map_peaks_to_phases(peaks, phases)
-                phase_fractions = calculate_phase_fractions(peaks, phases)
-            else:
-                phase_fractions = []
-            # --------------------------------------------------
-            # FINAL RESULTS (RETURN ONLY ONCE)
-            # --------------------------------------------------
-            results = {
+    
+            # ============================================================
+            # FINAL RESULTS — UI CONTRACT (NEVER BREAKS)
+            # ============================================================
+            return {
                 "valid": True,
                 "wavelength": float(self.wavelength),
+    
                 "two_theta": two_theta_proc.tolist(),
                 "intensity": intensity_proc.tolist(),
     
@@ -817,22 +826,26 @@ class AdvancedXRDAnalyzer:
                 "dislocation_density": float(dislocation_density),
     
                 "ordered_mesopores": mesopore_analysis["ordered"],
+                "mesopore_analysis": mesopore_analysis,
     
-                "crystal_system": primary_phase["crystal_system"]
-                if primary_phase else "Unknown",
+                "williamson_hall": williamson_hall,
     
-                "space_group": primary_phase["space_group"]
-                if primary_phase else "Unknown",
-    
-                "lattice_parameters": primary_phase["lattice"]
-                if primary_phase else {},
+                "crystal_system": crystal_system_final,
+                "space_group": space_group_final,
+                "lattice_parameters": lattice_dict,
     
                 "phases": phases,
                 "phase_fractions": phase_fractions,
+                "multiphase": len(phases) > 1,
+    
+                "background_subtraction": self.background_subtraction,
+                "smoothing": self.smoothing,
+                "scherrer_constant": float(self.scherrer_constant),
+                "n_points": len(two_theta_proc),
             }
     
         except Exception as e:
-            results = {
+            return {
                 "valid": False,
                 "error": str(e),
                 "crystallinity_index": 0.0,
@@ -846,9 +859,7 @@ class AdvancedXRDAnalyzer:
                 "phase_fractions": [],
             }
     
-        return results
 
-    
 
 
 
