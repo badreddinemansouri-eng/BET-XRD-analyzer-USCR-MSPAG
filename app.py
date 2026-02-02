@@ -814,7 +814,9 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     intensity=analysis_results['xrd_raw']['intensity'],
                     elements=st.session_state.get("xrd_elements", [])
                 )
-            
+                # 🔍 DEBUG — PUT THIS HERE
+                st.write("DEBUG XRD KEYS:", xrd_results.keys())
+                st.write("DEBUG XRD_RESULTS:", xrd_results
                 # ===============================
                 # NORMALIZE PHASE IDENTIFICATION
                 # ===============================
@@ -896,7 +898,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     with col1:
                         st.metric("Crystallinity", f"{xrd_results["xrd_results"]["crystallinity_index"]:.2f}")
                     with col2:
-                        size = xrd_res['crystallite_size']['scherrer']
+                        size = size = xrd_res["xrd_results"]["crystallite_size"]['scherrer']
                         st.metric("Size", f"{size:.1f} nm" if size else "N/A")
                     with col3:
                         st.metric("Peaks", f"{len(xrd_res['peaks'])}")
@@ -2365,6 +2367,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
