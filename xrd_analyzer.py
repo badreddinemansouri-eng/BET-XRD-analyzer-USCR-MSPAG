@@ -692,119 +692,120 @@ class AdvancedXRDAnalyzer:
             'pore_size_estimate': 0.0,
             'structure': 'Disordered'
         }
-def complete_analysis(self, two_theta, intensity):
-    """
-    FULL XRD ANALYSIS — DATABASE DRIVEN (COD + OPTIMADE)
-    UI-STABLE, JOURNAL-GRADE
-    """
-
-    # -----------------------------
-    # SAFE DEFAULTS (NEVER BREAK UI)
-    # -----------------------------
-    xrd_results = {
-        "phases": [],
-        "phase_fractions": [],
-        "peaks": [],
-        "top_peaks": [],
-        "crystallinity_index": 0.0,
-        "crystallite_size": {
-            "scherrer": 0.0,
-            "williamson_hall": 0.0,
-            "distribution": "N/A"
-        },
-        "microstrain": 0.0,
-        "dislocation_density": 0.0,
-        "crystal_system": "Unknown",
-        "space_group": "Unknown",
-        "lattice_parameters": {},
-    }
-
-    try:
+    def complete_analysis(self, two_theta, intensity):
+        """
+        FULL XRD ANALYSIS — DATABASE DRIVEN (COD + OPTIMADE)
+        UI-STABLE, JOURNAL-GRADE
+        """
+    
         # -----------------------------
-        # PREPROCESS
+        # SAFE DEFAULTS (NEVER BREAK UI)
         # -----------------------------
-        two_theta_p, intensity_p = self.preprocess_pattern(two_theta, intensity)
-
-        # -----------------------------
-        # PEAK DETECTION (ALL PEAKS)
-        # -----------------------------
-        peaks = self.analyze_peaks(two_theta_p, intensity_p)
-        peaks.sort(key=lambda x: x["intensity"], reverse=True)
-
-        xrd_results["peaks"] = peaks
-        xrd_results["top_peaks"] = peaks[:15]
-
-        # -----------------------------
-        # CRYSTALLINITY (AREA-BASED)
-        # -----------------------------
-        xrd_results["crystallinity_index"] = calculate_crystallinity_index(
-            two_theta_p, intensity_p, peaks
-        )
-
-        # -----------------------------
-        # CRYSTALLITE SIZE (ALL PEAKS)
-        # -----------------------------
-        size_stats = self.calculate_crystallite_statistics(peaks)
-        xrd_results["crystallite_size"]["scherrer"] = size_stats["mean_size"]
-        xrd_results["crystallite_size"]["distribution"] = size_stats["distribution"]
-
-        if len(peaks) >= 3:
-            wh = williamson_hall_analysis(peaks, self.wavelength)
-            if wh:
-                xrd_results["crystallite_size"]["williamson_hall"] = wh["crystallite_size"]
-                xrd_results["microstrain"] = wh["microstrain"]
-                xrd_results["dislocation_density"] = (
-                    15 * wh["microstrain"] / (wh["crystallite_size"] * 1e-9)
-                )
-
-        # -----------------------------
-        # PHASE IDENTIFICATION (NEW ENGINE)
-        # -----------------------------
-        elements = st.session_state.get("xrd_elements", [])
-
-        if elements:
-            phases = identify_phases(
-                two_theta_p,
-                intensity_p,
-                wavelength=self.wavelength,
-                elements=elements
+        xrd_results = {
+            "phases": [],
+            "phase_fractions": [],
+            "peaks": [],
+            "top_peaks": [],
+            "crystallinity_index": 0.0,
+            "crystallite_size": {
+                "scherrer": 0.0,
+                "williamson_hall": 0.0,
+                "distribution": "N/A"
+            },
+            "microstrain": 0.0,
+            "dislocation_density": 0.0,
+            "crystal_system": "Unknown",
+            "space_group": "Unknown",
+            "lattice_parameters": {},
+        }
+    
+        try:
+            # -----------------------------
+            # PREPROCESS
+            # -----------------------------
+            two_theta_p, intensity_p = self.preprocess_pattern(two_theta, intensity)
+    
+            # -----------------------------
+            # PEAK DETECTION (ALL PEAKS)
+            # -----------------------------
+            peaks = self.analyze_peaks(two_theta_p, intensity_p)
+            peaks.sort(key=lambda x: x["intensity"], reverse=True)
+    
+            xrd_results["peaks"] = peaks
+            xrd_results["top_peaks"] = peaks[:15]
+    
+            # -----------------------------
+            # CRYSTALLINITY (AREA-BASED)
+            # -----------------------------
+            xrd_results["crystallinity_index"] = calculate_crystallinity_index(
+                two_theta_p, intensity_p, peaks
             )
-
-            xrd_results["phases"] = phases
-
-            if phases:
-                # Global crystal info (best phase)
-                best = phases[0]
-                xrd_results["crystal_system"] = best["crystal_system"]
-                xrd_results["space_group"] = best["space_group"]
-                xrd_results["lattice_parameters"] = best["lattice"]
-
-                # Map peaks → phases + HKL
-                peaks = map_peaks_to_phases(peaks, phases)
-                xrd_results["peaks"] = peaks
-
-                # Phase fractions
-                xrd_results["phase_fractions"] = calculate_phase_fractions(
-                    peaks, phases
+    
+            # -----------------------------
+            # CRYSTALLITE SIZE (ALL PEAKS)
+            # -----------------------------
+            size_stats = self.calculate_crystallite_statistics(peaks)
+            xrd_results["crystallite_size"]["scherrer"] = size_stats["mean_size"]
+            xrd_results["crystallite_size"]["distribution"] = size_stats["distribution"]
+    
+            if len(peaks) >= 3:
+                wh = williamson_hall_analysis(peaks, self.wavelength)
+                if wh:
+                    xrd_results["crystallite_size"]["williamson_hall"] = wh["crystallite_size"]
+                    xrd_results["microstrain"] = wh["microstrain"]
+                    xrd_results["dislocation_density"] = (
+                        15 * wh["microstrain"] / (wh["crystallite_size"] * 1e-9)
+                    )
+    
+            # -----------------------------
+            # PHASE IDENTIFICATION (NEW ENGINE)
+            # -----------------------------
+            elements = st.session_state.get("xrd_elements", [])
+    
+            if elements:
+                phases = identify_phases(
+                    two_theta_p,
+                    intensity_p,
+                    wavelength=self.wavelength,
+                    elements=elements
                 )
-
-        return {
-            "valid": True,
-            "xrd_results": xrd_results,
-            "xrd_raw": {
-                "two_theta": two_theta_p.tolist(),
-                "intensity": intensity_p.tolist()
+    
+                xrd_results["phases"] = phases
+    
+                if phases:
+                    # Global crystal info (best phase)
+                    best = phases[0]
+                    xrd_results["crystal_system"] = best["crystal_system"]
+                    xrd_results["space_group"] = best["space_group"]
+                    xrd_results["lattice_parameters"] = best["lattice"]
+    
+                    # Map peaks → phases + HKL
+                    peaks = map_peaks_to_phases(peaks, phases)
+                    xrd_results["peaks"] = peaks
+    
+                    # Phase fractions
+                    xrd_results["phase_fractions"] = calculate_phase_fractions(
+                        peaks, phases
+                    )
+    
+            return {
+                "valid": True,
+                "xrd_results": xrd_results,
+                "xrd_raw": {
+                    "two_theta": two_theta_p.tolist(),
+                    "intensity": intensity_p.tolist()
+                }
             }
-        }
-
-    except Exception as e:
-        return {
-            "valid": False,
-            "error": str(e),
-            "xrd_results": xrd_results
-        }
+    
+        except Exception as e:
+            return {
+                "valid": False,
+                "error": str(e),
+                "xrd_results": xrd_results
+            }
 
     
+
 
 
 
