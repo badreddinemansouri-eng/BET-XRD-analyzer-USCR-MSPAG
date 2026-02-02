@@ -814,6 +814,22 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     intensity=analysis_results['xrd_raw']['intensity'],
                     elements=st.session_state.get("xrd_elements", [])
                 )
+                xrd_out = xrd_analyzer.complete_analysis(
+                    two_theta=analysis_results['xrd_raw']['two_theta'],
+                    intensity=analysis_results['xrd_raw']['intensity'],
+                    elements=st.session_state.get("xrd_elements", [])
+                )
+                
+                # 🔧 GLOBAL NORMALIZATION FIX (ADD THIS)
+                if xrd_out.get("valid") and "xrd_results" in xrd_out:
+                    xrd_results = xrd_out["xrd_results"]
+                else:
+                    xrd_results = {
+                        "peaks": [],
+                        "crystallinity_index": 0.0,
+                        "crystallite_size": {},
+                        "phases": []
+                    }
                 # 🔍 DEBUG — PUT THIS HERE
                 st.write("DEBUG XRD KEYS:", xrd_results.keys())
                 st.write("DEBUG XRD_RESULTS:", xrd_results)
@@ -2367,6 +2383,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
