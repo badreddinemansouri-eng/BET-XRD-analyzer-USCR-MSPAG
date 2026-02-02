@@ -852,6 +852,9 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     xrd_results.setdefault("crystal_system", "Unknown")
                     xrd_results.setdefault("space_group", "")
                     xrd_results.setdefault("lattice_parameters", {})
+                    # SAFETY MIRROR (UI STABILITY)
+                xrd_results["xrd_results"] = xrd_results
+
                 # After performing XRD analysis, add:
                 if 'xrd_results' in analysis_results:
                     # Try to find missing hkl indices
@@ -2383,6 +2386,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
