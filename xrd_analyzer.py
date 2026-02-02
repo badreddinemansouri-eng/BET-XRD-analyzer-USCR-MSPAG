@@ -692,7 +692,7 @@ class AdvancedXRDAnalyzer:
             'pore_size_estimate': 0.0,
             'structure': 'Disordered'
         }
-    def complete_analysis(self, two_theta, intensity):
+    def complete_analysis(self, two_theta, intensity, elements=None):
         """
         FULL XRD ANALYSIS — DATABASE DRIVEN (COD + OPTIMADE)
         UI-STABLE, JOURNAL-GRADE
@@ -735,7 +735,7 @@ class AdvancedXRDAnalyzer:
             xrd_results["top_peaks"] = peaks[:15]
     
             # -----------------------------
-            # CRYSTALLINITY (AREA-BASED)
+            # CRYSTALLINITY
             # -----------------------------
             xrd_results["crystallinity_index"] = calculate_crystallinity_index(
                 two_theta_p, intensity_p, peaks
@@ -760,8 +760,6 @@ class AdvancedXRDAnalyzer:
             # -----------------------------
             # PHASE IDENTIFICATION (NEW ENGINE)
             # -----------------------------
-            elements = st.session_state.get("xrd_elements", [])
-    
             if elements:
                 phases = identify_phases(
                     two_theta_p,
@@ -773,19 +771,17 @@ class AdvancedXRDAnalyzer:
                 xrd_results["phases"] = phases
     
                 if phases:
-                    # Global crystal info (best phase)
                     best = phases[0]
                     xrd_results["crystal_system"] = best["crystal_system"]
                     xrd_results["space_group"] = best["space_group"]
                     xrd_results["lattice_parameters"] = best["lattice"]
     
-                    # Map peaks → phases + HKL
-                    peaks = map_peaks_to_phases(peaks, phases)
-                    xrd_results["peaks"] = peaks
+                    # Peak → phase + HKL mapping
+                    xrd_results["peaks"] = map_peaks_to_phases(peaks, phases)
     
                     # Phase fractions
                     xrd_results["phase_fractions"] = calculate_phase_fractions(
-                        peaks, phases
+                        xrd_results["peaks"], phases
                     )
     
             return {
@@ -804,7 +800,9 @@ class AdvancedXRDAnalyzer:
                 "xrd_results": xrd_results
             }
 
+
     
+
 
 
 
