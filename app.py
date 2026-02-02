@@ -2214,7 +2214,7 @@ def display_export(results, scientific_params):
                     return bool(obj)
         
                 return super().default(obj)
-        
+                export_data = json.loads(json.dumps(export_data, cls=NumpyEncoder))
         st.download_button(
             label="📄 Download Complete Analysis (JSON)",
             data=json_str,
@@ -2389,6 +2389,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
