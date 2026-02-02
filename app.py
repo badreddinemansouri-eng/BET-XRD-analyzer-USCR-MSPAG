@@ -1376,7 +1376,48 @@ def display_xrd_analysis(results, plotter):
     # ============================================================
     xrd_res = results.get("xrd_results", {})
     xrd_raw = results.get("xrd_raw", {})
-
+    # ==========================================================
+    # (2) WHY NO PHASE DETECTED — DIAGNOSTIC PANEL
+    # ==========================================================
+    if not xrd_res.get("phases"):
+        with st.expander("❓ Why were no crystalline phases identified?", expanded=True):
+    
+            st.markdown("""
+    **This is NOT a software error.**  
+    Phase identification is based strictly on **experimental peak matching**
+    against **CIF-validated structures** (COD + OPTIMADE).
+    
+    Possible scientific reasons:
+    """)
+    
+            reasons = []
+    
+            # 1. Peak broadening (nano / amorphous)
+            if xrd_res.get("crystallite_size", {}).get("scherrer", 0) < 10:
+                reasons.append("• Peaks are strongly broadened → nanocrystalline or partially amorphous material")
+    
+            # 2. Too few peaks
+            if len(xrd_res.get("peaks", [])) < 5:
+                reasons.append("• Too few resolved diffraction peaks for reliable indexing")
+    
+            # 3. Element constraints
+            elements = st.session_state.get("xrd_elements", [])
+            if not elements:
+                reasons.append("• No elements were selected in the sidebar → database search disabled")
+    
+            # 4. Database limitation (truthful)
+            reasons.append("• No CIF structure in free databases matches the experimental peak positions within tolerance")
+    
+            for r in reasons:
+                st.markdown(r)
+    
+            st.markdown("""
+    ### What you can try
+    - Select **all possible elements** present (dopants included)
+    - Use **raw, unsmoothed XRD data**
+    - Increase crystallinity (annealing) if experimentally possible
+    - Combine with **Raman / FTIR** for phase confirmation
+    """)
     # ============================================================
     # PHASE IDENTIFICATION TABLE
     # ============================================================
@@ -2326,6 +2367,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
