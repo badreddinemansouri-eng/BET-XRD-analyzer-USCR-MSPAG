@@ -2202,15 +2202,18 @@ def display_export(results, scientific_params):
         # Use a custom JSON encoder to handle numpy arrays and other non-serializable objects
         class NumpyEncoder(json.JSONEncoder):
             def default(self, obj):
-                if isinstance(obj, np.ndarray):
-                    return obj.tolist()
-                if isinstance(obj, np.integer):
-                    return int(obj)
-                if isinstance(obj, np.floating):
-                    return float(obj)
-                return super(NumpyEncoder, self).default(obj)
+                import numpy as np
         
-        json_str = json.dumps(export_data, indent=2, cls=NumpyEncoder)
+                if isinstance(obj, (np.integer,)):
+                    return int(obj)
+                if isinstance(obj, (np.floating,)):
+                    return float(obj)
+                if isinstance(obj, (np.ndarray,)):
+                    return obj.tolist()
+                if isinstance(obj, (np.bool_,)):
+                    return bool(obj)
+        
+                return super().default(obj)
         
         st.download_button(
             label="📄 Download Complete Analysis (JSON)",
@@ -2386,6 +2389,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
