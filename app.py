@@ -894,7 +894,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
-                        st.metric("Crystallinity", f"{xrd_res['crystallinity_index']:.2f}")
+                        st.metric("Crystallinity", f"{xrd_results["xrd_results"]["crystallinity_index"]:.2f}")
                     with col2:
                         size = xrd_res['crystallite_size']['scherrer']
                         st.metric("Size", f"{size:.1f} nm" if size else "N/A")
@@ -2365,6 +2365,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
