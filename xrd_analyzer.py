@@ -717,6 +717,8 @@ class AdvancedXRDAnalyzer:
             "crystal_system": "Unknown",
             "space_group": "Unknown",
             "lattice_parameters": {},
+             # ✅ ADD THIS (UI SAFETY)
+            "ordered_mesopores": False,
         }
     
         try:
@@ -801,6 +803,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
