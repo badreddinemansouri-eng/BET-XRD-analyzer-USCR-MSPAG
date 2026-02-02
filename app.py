@@ -814,7 +814,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     intensity=analysis_results['xrd_raw']['intensity'],
                     elements=st.session_state.get("xrd_elements", [])
                 )
-               st.write("Selected elements:", st.session_state.get("xrd_elements"))
+    st.write("Selected elements:", st.session_state.get("xrd_elements"))
 
                 # ===============================
                 # NORMALIZE PHASE IDENTIFICATION
@@ -2366,6 +2366,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
