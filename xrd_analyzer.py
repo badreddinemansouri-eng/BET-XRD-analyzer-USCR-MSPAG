@@ -735,9 +735,9 @@ class AdvancedXRDAnalyzer:
             xrd_results["top_peaks"] = peaks[:15]
     
             # -----------------------------
-            # CRYSTALLINITY
+            # CRYSTALLINITY (✅ FIXED)
             # -----------------------------
-            xrd_results["xrd_results"]["crystallinity_index"]= calculate_crystallinity_index(
+            xrd_results["crystallinity_index"] = calculate_crystallinity_index(
                 two_theta_p, intensity_p, peaks
             )
     
@@ -758,7 +758,7 @@ class AdvancedXRDAnalyzer:
                     )
     
             # -----------------------------
-            # PHASE IDENTIFICATION (NEW ENGINE)
+            # PHASE IDENTIFICATION
             # -----------------------------
             if elements:
                 phases = identify_phases(
@@ -776,10 +776,8 @@ class AdvancedXRDAnalyzer:
                     xrd_results["space_group"] = best["space_group"]
                     xrd_results["lattice_parameters"] = best["lattice"]
     
-                    # Peak → phase + HKL mapping
                     xrd_results["peaks"] = map_peaks_to_phases(peaks, phases)
     
-                    # Phase fractions
                     xrd_results["phase_fractions"] = calculate_phase_fractions(
                         xrd_results["peaks"], phases
                     )
@@ -801,7 +799,9 @@ class AdvancedXRDAnalyzer:
             }
 
 
+
     
+
 
 
 
