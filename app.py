@@ -809,14 +809,12 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     smoothing=params['xrd']['smoothing']
                 )
                 
-                # Perform XRD analysis
                 xrd_results = xrd_analyzer.complete_analysis(
                     two_theta=analysis_results['xrd_raw']['two_theta'],
                     intensity=analysis_results['xrd_raw']['intensity'],
-                    crystal_system=params['crystal']['system'],
-                    space_group=params['crystal']['space_group'],
-                    lattice_params=params['crystal']['lattice_params']
+                    elements=st.session_state.get("xrd_elements", [])
                 )
+
                 # ===============================
                 # NORMALIZE PHASE IDENTIFICATION
                 # ===============================
@@ -2367,6 +2365,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
