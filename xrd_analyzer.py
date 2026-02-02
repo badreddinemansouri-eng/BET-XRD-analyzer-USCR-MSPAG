@@ -737,7 +737,7 @@ class AdvancedXRDAnalyzer:
             # -----------------------------
             # CRYSTALLINITY
             # -----------------------------
-            xrd_results["crystallinity_index"] = calculate_crystallinity_index(
+            xrd_results["xrd_results"]["crystallinity_index"]= calculate_crystallinity_index(
                 two_theta_p, intensity_p, peaks
             )
     
@@ -802,6 +802,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
