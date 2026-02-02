@@ -860,7 +860,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                         params['crystal']
                     )
                 # ENHANCE WITH CRYSTALLOGRAPHY ENGINE FOR BETTER HKL INDEXING
-                if (xrd_results['valid'] and 
+                if (if xrd_results.get("peaks") and 
                     params['crystal']['system'] != 'Unknown' and 
                     params['crystal']['lattice_params']):
                     
@@ -904,7 +904,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                 
                 analysis_results['xrd_results'] = xrd_results
                 
-                if xrd_results['valid']:
+                if xrd_results.get("peaks"):
                     st.success("✅ XRD analysis completed successfully")
                     
                     # Display key results
@@ -2383,6 +2383,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
