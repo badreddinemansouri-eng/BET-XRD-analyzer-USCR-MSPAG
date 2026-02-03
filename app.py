@@ -831,8 +831,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                         "phases": []
                     }
                 # 🔍 DEBUG — PUT THIS HERE
-                st.write("DEBUG XRD KEYS:", xrd_results.keys())
-                st.write("DEBUG XRD_RESULTS:", xrd_results)
+
                 # ===============================
                 # NORMALIZE PHASE IDENTIFICATION
                 # ===============================
@@ -2408,6 +2407,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
