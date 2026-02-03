@@ -114,7 +114,9 @@ def identify_phases(two_theta, intensity, wavelength, elements):
     -------
     list of dict
     """
-
+    import streamlit as st
+    st.write("🧪 PHASE DEBUG → Elements:", elements)
+    st.write("🧪 PHASE DEBUG → Peaks used:", len(peaks))
     # ------------------------------------------------------------
     # EXPERIMENTAL PEAK SELECTION (NO ESTIMATION)
     # ------------------------------------------------------------
@@ -260,3 +262,4 @@ def identify_phases(two_theta, intensity, wavelength, elements):
 
     return final_results
     
+
