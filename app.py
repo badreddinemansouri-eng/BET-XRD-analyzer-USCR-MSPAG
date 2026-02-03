@@ -2223,7 +2223,12 @@ def display_export(results, scientific_params):
       
         
         # 1️⃣ Sanitize export data (remove NumPy objects)
+        # 0️⃣ Build CLEAN export data (THIS WAS MISSING)
+        export_data = build_export_data(results, scientific_params)
+        
+        # 1️⃣ Sanitize export data (remove NumPy objects)
         export_data = json.loads(json.dumps(export_data, cls=NumpyEncoder))
+
         
         # 2️⃣ Create JSON string (THIS WAS MISSING)
         json_str = json.dumps(export_data, indent=2)
@@ -2403,6 +2408,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
