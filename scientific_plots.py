@@ -600,7 +600,7 @@ class PublicationPlotter:
             ax2.grid(True, alpha=0.3)
         
         else:
-            ax.text(
+            ax2.text(
                 0.5, 0.3,
                 f"Detected peaks: {len(peaks)}",
                 transform=ax.transAxes,
@@ -1090,6 +1090,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
