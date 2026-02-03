@@ -2198,12 +2198,11 @@ def display_export(results, scientific_params):
             'xrd_results': results.get('xrd_results'),
             'fusion_results': results.get('fusion_results')
         }
-        
+        import numpy as np
+        import json
         # Use a custom JSON encoder to handle numpy arrays and other non-serializable objects
         class NumpyEncoder(json.JSONEncoder):
             def default(self, obj):
-                import numpy as np
-        
                 if isinstance(obj, (np.integer,)):
                     return int(obj)
                 if isinstance(obj, (np.floating,)):
@@ -2214,22 +2213,22 @@ def display_export(results, scientific_params):
                     return bool(obj)
         
                 return super().default(obj)
-            import json
-            
-            # 1️⃣ Sanitize export data (remove NumPy objects)
-            export_data = json.loads(json.dumps(export_data, cls=NumpyEncoder))
-            
-            # 2️⃣ Create JSON string (THIS WAS MISSING)
-            json_str = json.dumps(export_data, indent=2)
-            
-            # 3️⃣ Download button
-            st.download_button(
-                label="📄 Download Complete Analysis (JSON)",
-                data=json_str,
-                file_name="scientific_analysis.json",
-                mime="application/json",
-                width="stretch"   # updated API
-            )
+      
+        
+        # 1️⃣ Sanitize export data (remove NumPy objects)
+        export_data = json.loads(json.dumps(export_data, cls=NumpyEncoder))
+        
+        # 2️⃣ Create JSON string (THIS WAS MISSING)
+        json_str = json.dumps(export_data, indent=2)
+        
+        # 3️⃣ Download button
+        st.download_button(
+            label="📄 Download Complete Analysis (JSON)",
+            data=json_str,
+            file_name="scientific_analysis.json",
+            mime="application/json",
+            width="stretch"   # updated API
+        )
     
     with col2:
         # Export report
@@ -2397,6 +2396,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
