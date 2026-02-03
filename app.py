@@ -2183,21 +2183,28 @@ def display_export(results, scientific_params):
     
     with col1:
         # Export data - be careful with None values
-        export_data = {
-            'metadata': {
-                'analysis_name': 'BET_XRD_Analysis',
-                'timestamp': results.get('timestamp', 'N/A'),
-                'software_version': '3.0',
-                'references': [
-                    'Rouquerol et al., Pure Appl. Chem., 1994, 66, 1739',
-                    'Thommes et al., Pure Appl. Chem., 2015, 87, 1051'
-                ]
-            },
-            'parameters': results.get('parameters', {}),
-            'bet_results': results.get('bet_results'),
-            'xrd_results': results.get('xrd_results'),
-            'fusion_results': results.get('fusion_results')
-        }
+        def build_export_data(results, scientific_params):
+            return {
+                "metadata": {
+                    "app": "BET-XRD Analyzer",
+                    "version": "1.0",
+                },
+                "xrd": {
+                    "phases": results.get("phases", []),
+                    "phase_fractions": results.get("phase_fractions", []),
+                    "crystallinity_index": results.get("crystallinity_index"),
+                    "crystallite_size": results.get("crystallite_size"),
+                    "microstrain": results.get("microstrain"),
+                    "dislocation_density": results.get("dislocation_density"),
+                    "crystal_system": results.get("crystal_system"),
+                    "space_group": results.get("space_group"),
+                    "lattice_parameters": results.get("lattice_parameters", {}),
+                    "peaks": results.get("peaks", []),
+                    "top_peaks": results.get("top_peaks", []),
+                },
+                "parameters": scientific_params,
+            }
+
         import numpy as np
         import json
         # Use a custom JSON encoder to handle numpy arrays and other non-serializable objects
@@ -2396,6 +2403,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
