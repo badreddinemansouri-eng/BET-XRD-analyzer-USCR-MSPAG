@@ -600,6 +600,14 @@ class PublicationPlotter:
             ax2.grid(True, alpha=0.3)
         
         else:
+            ax.text(
+                0.5, 0.3,
+                f"Detected peaks: {len(peaks)}",
+                transform=ax.transAxes,
+                ha="center",
+                fontsize=9,
+                color="gray"
+            )
             ax2.text(0.5, 0.5, 'Insufficient peaks\nfor Williamson-Hall analysis',
                     transform=ax2.transAxes, ha='center', va='center',
                     fontsize=self.font_size)
@@ -1082,6 +1090,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
