@@ -336,6 +336,11 @@ def williamson_hall_analysis(peaks, wavelength=1.5406):
     --------
     Dictionary with size, strain, and plot data
     """
+    import streamlit as st
+
+    st.write("🧪 W-H DEBUG → Peaks received:", len(peaks))
+    if peaks:
+        st.write("🧪 Example peak keys:", list(peaks[0].keys()))
     if len(peaks) < 3:
         return None
     
@@ -364,7 +369,8 @@ def williamson_hall_analysis(peaks, wavelength=1.5406):
     K = 0.9  # Shape factor
     size_nm = (K * wavelength) / (intercept * 10) if intercept > 0 else 0
     microstrain = slope / 4
-    
+    st.write("🧪 W-H DEBUG → Valid peaks after filter:", len(valid_peaks))
+
     return {
         'crystallite_size': float(size_nm),
         'microstrain': float(microstrain),
@@ -803,6 +809,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
