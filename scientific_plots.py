@@ -576,8 +576,9 @@ class PublicationPlotter:
         # ====================================================================
         ax2 = fig.add_subplot(gs[1, 0])
         
-        if (xrd_results.get('williamson_hall') and 
-            len(peaks) >= 3):
+        wh = xrd_results.get("williamson_hall")
+        
+        if isinstance(wh, dict) and "x_data" in wh and len(wh["x_data"]) >= 3:
             
             wh = xrd_results['williamson_hall']
             
@@ -1096,6 +1097,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
