@@ -1482,6 +1482,12 @@ def display_xrd_analysis(results, plotter):
         )
         ax.axis("equal")
         st.pyplot(fig)
+    st.write("🧪 FINAL XRD_RESULTS KEYS:", xrd_res.keys())
+    st.write(
+        "🧪 HAS W-H:",
+        "williamson_hall" in xrd_res,
+        type(xrd_res.get("williamson_hall"))
+    )
 
     # ============================================================
     # XRD PATTERN + PEAK INDEXING
@@ -2407,6 +2413,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
