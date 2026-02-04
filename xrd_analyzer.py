@@ -321,65 +321,64 @@ def scherrer_crystallite_size(fwhm_rad, theta_rad, wavelength=1.5406, K=0.9):
 
 def williamson_hall_analysis(peaks, wavelength=1.5406):
     """
-    Williamson-Hall plot for separating size and strain effects
-    
+    Williamson–Hall analysis for nanocrystalline materials
+
     β cosθ = Kλ/D + 4ε sinθ
-    
-    Plot β cosθ vs 4 sinθ
-    
-    Parameters:
-    -----------
-    peaks : List of peak dictionaries
-    wavelength : X-ray wavelength in Å
-    
-    Returns:
-    --------
-    Dictionary with size, strain, and plot data
     """
+
+    import numpy as np
+    from scipy import stats
     import streamlit as st
 
     st.write("🧪 W-H DEBUG → Peaks received:", len(peaks))
-    if peaks:
-        st.write("🧪 Example peak keys:", list(peaks[0].keys()))
-    if len(peaks) < 3:
+
+    if not peaks or len(peaks) < 3:
+        st.warning("🧪 W-H DEBUG → Not enough raw peaks")
         return None
-    
-    x_vals = []
-    y_vals = []
-    
-    for peak in peaks:
-        theta_deg = peak['position'] / 2  # Convert 2θ to θ
-        theta_rad = np.deg2rad(theta_deg)
-        fwhm_rad = peak['fwhm_rad']
-        
-        # Williamson-Hall coordinates
-        x = 4 * np.sin(theta_rad)  # 4 sinθ
-        y = fwhm_rad * np.cos(theta_rad)  # β cosθ
-        
-        x_vals.append(x)
-        y_vals.append(y)
-    
-    # Linear regression
-    slope, intercept, r_value, _, _ = stats.linregress(x_vals, y_vals)
-    
-    # Extract parameters
-    # intercept = Kλ/D → D = Kλ/intercept
-    # slope = 4ε → ε = slope/4
-    
-    K = 0.9  # Shape factor
-    size_nm = (K * wavelength) / (intercept * 10) if intercept > 0 else 0
-    microstrain = slope / 4
+
+    # ✅ MINIMAL + PHYSICALLY CORRECT FILTER
+    valid_peaks = [
+        p for p in peaks
+        if p.get("fwhm_rad", 0) > 0 and p.get("position", 0) > 0
+    ]
+
     st.write("🧪 W-H DEBUG → Valid peaks after filter:", len(valid_peaks))
 
+    if len(valid_peaks) < 3:
+        st.warning("🧪 W-H DEBUG → Insufficient valid peaks for W–H")
+        return None
+
+    x_vals, y_vals = [], []
+
+    for p in valid_peaks:
+        theta_rad = np.deg2rad(p["position"] / 2)
+        beta = p["fwhm_rad"]
+
+        x_vals.append(4 * np.sin(theta_rad))       # 4 sinθ
+        y_vals.append(beta * np.cos(theta_rad))    # β cosθ
+
+    # Linear regression
+    slope, intercept, r_value, _, _ = stats.linregress(x_vals, y_vals)
+
+    if intercept <= 0:
+        st.warning("🧪 W-H DEBUG → Non-physical intercept")
+        return None
+
+    # Constants
+    K = 0.9
+    size_nm = (K * wavelength) / (intercept * 10)   # Å → nm
+    microstrain = slope / 4
+
     return {
-        'crystallite_size': float(size_nm),
-        'microstrain': float(microstrain),
-        'r_squared': float(r_value**2),
-        'slope': float(slope),
-        'intercept': float(intercept),
-        'x_data': [float(x) for x in x_vals],
-        'y_data': [float(y) for y in y_vals]
+        "crystallite_size": float(size_nm),
+        "microstrain": float(microstrain),
+        "r_squared": float(r_value ** 2),
+        "slope": float(slope),
+        "intercept": float(intercept),
+        "x_data": [float(x) for x in x_vals],
+        "y_data": [float(y) for y in y_vals],
     }
+
 
 # ============================================================================
 # CRYSTALLINITY INDEX - FIXED VERSION
@@ -809,6 +808,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
