@@ -478,6 +478,12 @@ class PublicationPlotter:
         --------
         matplotlib Figure object
         """
+        # ===============================
+        # FIX 1: UNWRAP XRD RESULTS
+        # ===============================
+        if "xrd_results" in xrd_results:
+            xrd_results = xrd_results["xrd_results"]
+
         # Create figure with subplots
         fig = plt.figure(figsize=(12, 10))
         gs = gridspec.GridSpec(3, 2, figure=fig, hspace=0.35, wspace=0.25)
@@ -1090,6 +1096,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
