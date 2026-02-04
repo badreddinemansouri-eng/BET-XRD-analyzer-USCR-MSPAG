@@ -789,7 +789,13 @@ class AdvancedXRDAnalyzer:
                     xrd_results["phase_fractions"] = calculate_phase_fractions(
                         xrd_results["peaks"], phases
                     )
-    
+                # ===============================
+                # FORCE PERSISTENCE (CRITICAL)
+                # ===============================
+                if "williamson_hall" in xrd_results:
+                    pass
+                elif wh:
+                    xrd_results["williamson_hall"] = wh
             return {
                 "valid": True,
                 "xrd_results": xrd_results,
@@ -809,6 +815,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
