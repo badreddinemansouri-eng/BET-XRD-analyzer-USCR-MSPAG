@@ -603,7 +603,7 @@ class PublicationPlotter:
             ax2.text(
                 0.5, 0.3,
                 f"Detected peaks: {len(peaks)}",
-                transform=ax.transAxes,
+                transform=ax2.transAxes,
                 ha="center",
                 fontsize=9,
                 color="gray"
@@ -1090,6 +1090,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
