@@ -740,7 +740,7 @@ class AdvancedXRDAnalyzer:
     
             xrd_results["peaks"] = peaks
             xrd_results["top_peaks"] = peaks[:15]
-    
+            xrd_results["n_peaks_total"] = len(peaks)
             # -----------------------------
             # CRYSTALLINITY (✅ FIXED)
             # -----------------------------
@@ -758,6 +758,7 @@ class AdvancedXRDAnalyzer:
             if len(peaks) >= 3:
                 wh = williamson_hall_analysis(peaks, self.wavelength)
                 if wh:
+                    xrd_results["williamson_hall"] = wh  # 🔑 REQUIRED FOR PLOTTING
                     xrd_results["crystallite_size"]["williamson_hall"] = wh["crystallite_size"]
                     xrd_results["microstrain"] = wh["microstrain"]
                     xrd_results["dislocation_density"] = (
@@ -808,6 +809,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
