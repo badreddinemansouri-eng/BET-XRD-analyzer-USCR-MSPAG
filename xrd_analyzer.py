@@ -796,10 +796,7 @@ class AdvancedXRDAnalyzer:
                     pass
                 elif wh:
                     xrd_results["williamson_hall"] = wh
-                    return {
-
             assert "xrd_results" not in xrd_results, "Nested xrd_results detected"
-
             return {
                 "valid": True,
                 **xrd_results,
@@ -819,6 +816,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
