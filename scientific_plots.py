@@ -495,7 +495,8 @@ class PublicationPlotter:
         # Extract data
         two_theta = np.array(xrd_raw['two_theta'])
         intensity = np.array(xrd_raw['intensity'])
-        
+        # ✅ ALWAYS DEFINE PEAKS (GLOBAL FOR THIS FIGURE)
+        peaks = xrd_results.get("top_peaks") or xrd_results.get("peaks", [])
         # ====================================================================
         # SUBPLOT A: XRD pattern with intensive peaks only
         # ====================================================================
@@ -1097,6 +1098,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
