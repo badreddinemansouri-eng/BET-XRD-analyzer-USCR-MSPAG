@@ -19,34 +19,34 @@ import sys
 import warnings
 import io     # ADD THIS
 import traceback
-def safe_import(name):
-    try:
-        __import__(name)
-        st.success(f"✅ Imported {name}")
-        return sys.modules[name]
-    except Exception as e:
-        st.error(f"❌ Failed to import {name}")
-        st.code("".join(traceback.format_exception(e)), language="python")
-        st.stop()
+#def safe_import(name):
+ #   try:
+  #      __import__(name)
+   #     st.success(f"✅ Imported {name}")
+    #    return sys.modules[name]
+   # except Exception as e:
+    #    st.error(f"❌ Failed to import {name}")
+     #   st.code("".join(traceback.format_exception(e)), language="python")
+      #  st.stop()
 
 
 # ===============================
 # 🔍 STRICT IMPORT DIAGNOSTICS
 # ===============================
 
-st.write("🔎 Running import diagnostics...")
+#st.write("🔎 Running import diagnostics...")
 
-xrd_analyzer = safe_import("xrd_analyzer")
-scientific_plots = safe_import("scientific_plots")
-scientific_integration = safe_import("scientific_integration")
-morphology_visualizer = safe_import("morphology_visualizer")
-morphology_fusion = safe_import("morphology_fusion")
-crystallography_engine = safe_import("crystallography_engine")
-xrd_auto_solve = safe_import("xrd_auto_solve")
-xrd_auto_indexer = safe_import("xrd_auto_indexer")
-xrd_phase_identifier = safe_import("xrd_phase_identifier")
+#xrd_analyzer = safe_import("xrd_analyzer")
+#scientific_plots = safe_import("scientific_plots")
+#scientific_integration = safe_import("scientific_integration")
+#morphology_visualizer = safe_import("morphology_visualizer")
+#morphology_fusion = safe_import("morphology_fusion")
+#crystallography_engine = safe_import("crystallography_engine")
+#xrd_auto_solve = safe_import("xrd_auto_solve")
+#xrd_auto_indexer = safe_import("xrd_auto_indexer")
+#xrd_phase_identifier = safe_import("xrd_phase_identifier")
 
-st.success("🎯 All core modules imported successfully")
+#st.success("🎯 All core modules imported successfully")
 warnings.filterwarnings('ignore')
 import json  # <-- ADD THIS LINE
 # Add to imports at the top of the file
@@ -2413,6 +2413,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
