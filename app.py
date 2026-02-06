@@ -809,16 +809,17 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     smoothing=params['xrd']['smoothing']
                 )
                 
-                xrd_results = xrd_analyzer.complete_analysis(
-                    two_theta=analysis_results['xrd_raw']['two_theta'],
-                    intensity=analysis_results['xrd_raw']['intensity'],
-                    elements=st.session_state.get("xrd_elements", [])
-                )
                 xrd_out = xrd_analyzer.complete_analysis(
                     two_theta=analysis_results['xrd_raw']['two_theta'],
                     intensity=analysis_results['xrd_raw']['intensity'],
                     elements=st.session_state.get("xrd_elements", [])
                 )
+                
+                if not xrd_out.get("valid", False):
+                    raise RuntimeError(xrd_out.get("error", "XRD failed"))
+                
+                xrd_results = xrd_out["xrd_results"]
+                analysis_results["xrd_raw"] = xrd_out["xrd_raw"]
                 
                 # 🔧 GLOBAL NORMALIZATION FIX (ADD THIS)
                 if xrd_out.get("valid") and "xrd_results" in xrd_out:
@@ -851,8 +852,6 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     xrd_results.setdefault("crystal_system", "Unknown")
                     xrd_results.setdefault("space_group", "")
                     xrd_results.setdefault("lattice_parameters", {})
-                    # SAFETY MIRROR (UI STABILITY)
-                xrd_results["xrd_results"] = xrd_results
 
                 # After performing XRD analysis, add:
                 if 'xrd_results' in analysis_results:
@@ -905,6 +904,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                         st.warning(f"Crystallography engine: {str(e)}")
                 
                 analysis_results['xrd_results'] = xrd_results
+                assert "xrd_results" not in xrd_results, "❌ Nested xrd_results detected"
                 
                 if xrd_results.get("peaks"):
                     st.success("✅ XRD analysis completed successfully")
@@ -914,9 +914,9 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
-                        st.metric("Crystallinity", f"{xrd_results["xrd_results"]["crystallinity_index"]:.2f}")
+                        st.metric("Crystallinity", f"{xrd_results['crystallinity_index']:.2f}")
                     with col2:
-                        size = size = xrd_res["xrd_results"]["crystallite_size"]['scherrer']
+                        size = xrd_results["crystallite_size"]["scherrer"]
                         st.metric("Size", f"{size:.1f} nm" if size else "N/A")
                     with col3:
                         st.metric("Peaks", f"{len(xrd_res['peaks'])}")
@@ -2413,6 +2413,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
