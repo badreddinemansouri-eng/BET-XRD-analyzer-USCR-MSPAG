@@ -385,7 +385,7 @@ class PublicationPlotter:
                         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
         
         ax5.set_xlabel('Relative Pressure (P/P₀)')
-        ax5.set_ylabel('Quantity Adsorbed (mmol/g)')
+        ax5.set_ylabel('Quantity Adsorbed (cm³/g)')
         ax5.set_title('(E) Hysteresis Loop Analysis', pad=10)
         if 'p_des' in bet_raw and bet_raw['p_des'] is not None:
             ax5.legend(loc='best', frameon=True)
@@ -1097,6 +1097,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
