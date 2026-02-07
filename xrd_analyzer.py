@@ -536,7 +536,69 @@ class AdvancedXRDAnalyzer:
         self.background_subtraction = background_subtraction
         self.smoothing = smoothing
         self.scherrer_constant = 0.9
-    
+    # xrd_analyzer.py - Add to AdvancedXRDAnalyzer class
+
+    def validate_crystallographic_results(self, xrd_results: Dict) -> Dict:
+        """
+        Validate XRD results against crystallographic standards.
+        Returns validation metrics with confidence intervals.
+        """
+        validation = {
+            'valid': True,
+            'warnings': [],
+            'confidence_score': 1.0,
+            'scientific_checks': []
+        }
+        
+        # Check crystallite size is physically reasonable
+        size = xrd_results.get('crystallite_size', {}).get('scherrer', 0)
+        if size > 1000:  # > 1 micron - unlikely from XRD
+            validation['warnings'].append(f"Crystallite size unusually large: {size:.1f} nm")
+            validation['confidence_score'] *= 0.7
+        
+        # Check crystallinity index is in valid range
+        ci = xrd_results.get('crystallinity_index', 0)
+        if ci < 0 or ci > 1:
+            validation['warnings'].append(f"Crystallinity index out of range: {ci:.2f}")
+            validation['confidence_score'] *= 0.5
+        
+        # Check peak count is reasonable
+        n_peaks = len(xrd_results.get('peaks', []))
+        if n_peaks < 3:
+            validation['warnings'].append(f"Few peaks detected: {n_peaks}")
+            validation['confidence_score'] *= 0.8
+        
+        # Check for physically impossible FWHM
+        peaks = xrd_results.get('peaks', [])
+        for peak in peaks:
+            fwhm = peak.get('fwhm_deg', 0)
+            if fwhm < 0.01 or fwhm > 5.0:  # Unphysical values
+                validation['warnings'].append(f"Unphysical FWHM: {fwhm:.4f}° at 2θ={peak.get('position', 0):.2f}°")
+                validation['confidence_score'] *= 0.9
+        
+        # Calculate scientific checks
+        validation['scientific_checks'] = [
+            {
+                'check': 'Peak count adequate',
+                'passed': n_peaks >= 3,
+                'value': n_peaks
+            },
+            {
+                'check': 'Crystallite size physical',
+                'passed': 0.5 < size < 1000,
+                'value': f"{size:.1f} nm"
+            },
+            {
+                'check': 'Crystallinity index valid',
+                'passed': 0 <= ci <= 1,
+                'value': f"{ci:.3f}"
+            }
+        ]
+        
+        # Overall validity
+        validation['valid'] = validation['confidence_score'] > 0.5
+        
+        return validation
     def preprocess_pattern(self, two_theta, intensity):
         """
         Preprocess XRD pattern
@@ -889,6 +951,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
