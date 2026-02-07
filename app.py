@@ -77,6 +77,7 @@ from morphology_fusion import MorphologyFusionEngine
 from scientific_plots import PublicationPlotter
 # At the top of app.py with other imports
 from morphology_visualizer import MorphologyVisualizer
+from xrd_phase_identifier_nano import identify_nanomaterial_phases
 
 import functools
 
@@ -2500,6 +2501,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
