@@ -102,118 +102,118 @@ class CrystalStructure3D:
                 })
         
         return atoms
-# crystal_structure_3d.py - Add these methods to the CrystalStructure3D class
-
-def _generate_hexagonal_structure(self, lattice_params: Dict, space_group: str, composition: str) -> List[Dict]:
-    """
-    Generate hexagonal crystal structure from space group and lattice parameters.
-    Reference: International Tables for Crystallography, Volume A
-    """
-    a = lattice_params.get('a')
-    c = lattice_params.get('c')
+    # crystal_structure_3d.py - Add these methods to the CrystalStructure3D class
     
-    if not a or not c:
-        return []
-    
-    atoms = []
-    
-    if space_group == 'P6₃/mmc':  # Hexagonal close-packed (HCP)
-        # Atom positions for HCP (Mg-type)
-        positions = [
-            [0.33333, 0.66667, 0.25],  # Wyckoff position 2c
-            [0.66667, 0.33333, 0.75]   # Wyckoff position 2c
-        ]
+    def _generate_hexagonal_structure(self, lattice_params: Dict, space_group: str, composition: str) -> List[Dict]:
+        """
+        Generate hexagonal crystal structure from space group and lattice parameters.
+        Reference: International Tables for Crystallography, Volume A
+        """
+        a = lattice_params.get('a')
+        c = lattice_params.get('c')
         
-        # Determine element from composition
-        if 'Zn' in composition:
-            element = 'Zn'
-        elif 'Ti' in composition:
-            element = 'Ti'
-        elif 'Zr' in composition:
-            element = 'Zr'
-        elif 'Mg' in composition:
-            element = 'Mg'
-        else:
-            # Get first element from composition
-            import re
-            match = re.match(r'([A-Z][a-z]?)', composition)
-            element = match.group(1) if match else 'X'
+        if not a or not c:
+            return []
         
-        for pos in positions:
-            atoms.append({
-                'element': element,
-                'position': np.array([
-                    pos[0] * a,
-                    pos[1] * a,
-                    pos[2] * c
-                ]),
-                'radius': self.atomic_radii.get(element, 1.0),
-                'color': 'blue' if element == 'Zn' else 'orange'
-            })
-    
-    return atoms
-
-def _generate_tetragonal_structure(self, lattice_params: Dict, space_group: str, composition: str) -> List[Dict]:
-    """
-    Generate tetragonal crystal structure from space group and lattice parameters.
-    Reference: Acta Cryst. (2003). A59, 210-220
-    """
-    a = lattice_params.get('a')
-    c = lattice_params.get('c')
-    
-    if not a or not c:
-        return []
-    
-    atoms = []
-    
-    if space_group == 'I4₁/amd':  # TiO₂ anatase
-        # Anatase structure: Ti at 4a, O at 8e
-        # Ti positions (Wyckoff 4a)
-        ti_positions = [
-            [0, 0, 0],
-            [0, 0.5, 0.25],
-            [0.5, 0, 0.75],
-            [0.5, 0.5, 0.5]
-        ]
+        atoms = []
         
-        # O positions (Wyckoff 8e)
-        o_positions = [
-            [0, 0, 0.208],
-            [0, 0.5, 0.458],
-            [0.5, 0, 0.958],
-            [0.5, 0.5, 0.708],
-            [0, 0, 0.792],
-            [0, 0.5, 0.542],
-            [0.5, 0, 0.042],
-            [0.5, 0.5, 0.292]
-        ]
+        if space_group == 'P6₃/mmc':  # Hexagonal close-packed (HCP)
+            # Atom positions for HCP (Mg-type)
+            positions = [
+                [0.33333, 0.66667, 0.25],  # Wyckoff position 2c
+                [0.66667, 0.33333, 0.75]   # Wyckoff position 2c
+            ]
+            
+            # Determine element from composition
+            if 'Zn' in composition:
+                element = 'Zn'
+            elif 'Ti' in composition:
+                element = 'Ti'
+            elif 'Zr' in composition:
+                element = 'Zr'
+            elif 'Mg' in composition:
+                element = 'Mg'
+            else:
+                # Get first element from composition
+                import re
+                match = re.match(r'([A-Z][a-z]?)', composition)
+                element = match.group(1) if match else 'X'
+            
+            for pos in positions:
+                atoms.append({
+                    'element': element,
+                    'position': np.array([
+                        pos[0] * a,
+                        pos[1] * a,
+                        pos[2] * c
+                    ]),
+                    'radius': self.atomic_radii.get(element, 1.0),
+                    'color': 'blue' if element == 'Zn' else 'orange'
+                })
         
-        for pos in ti_positions:
-            atoms.append({
-                'element': 'Ti',
-                'position': np.array([
-                    pos[0] * a,
-                    pos[1] * a,
-                    pos[2] * c
-                ]),
-                'radius': self.atomic_radii['Ti'],
-                'color': 'white'
-            })
-        
-        for pos in o_positions:
-            atoms.append({
-                'element': 'O',
-                'position': np.array([
-                    pos[0] * a,
-                    pos[1] * a,
-                    pos[2] * c
-                ]),
-                'radius': self.atomic_radii['O'],
-                'color': 'red'
-            })
+        return atoms
     
-    return atoms
-
+    def _generate_tetragonal_structure(self, lattice_params: Dict, space_group: str, composition: str) -> List[Dict]:
+        """
+        Generate tetragonal crystal structure from space group and lattice parameters.
+        Reference: Acta Cryst. (2003). A59, 210-220
+        """
+        a = lattice_params.get('a')
+        c = lattice_params.get('c')
+        
+        if not a or not c:
+            return []
+        
+        atoms = []
+        
+        if space_group == 'I4₁/amd':  # TiO₂ anatase
+            # Anatase structure: Ti at 4a, O at 8e
+            # Ti positions (Wyckoff 4a)
+            ti_positions = [
+                [0, 0, 0],
+                [0, 0.5, 0.25],
+                [0.5, 0, 0.75],
+                [0.5, 0.5, 0.5]
+            ]
+            
+            # O positions (Wyckoff 8e)
+            o_positions = [
+                [0, 0, 0.208],
+                [0, 0.5, 0.458],
+                [0.5, 0, 0.958],
+                [0.5, 0.5, 0.708],
+                [0, 0, 0.792],
+                [0, 0.5, 0.542],
+                [0.5, 0, 0.042],
+                [0.5, 0.5, 0.292]
+            ]
+            
+            for pos in ti_positions:
+                atoms.append({
+                    'element': 'Ti',
+                    'position': np.array([
+                        pos[0] * a,
+                        pos[1] * a,
+                        pos[2] * c
+                    ]),
+                    'radius': self.atomic_radii['Ti'],
+                    'color': 'white'
+                })
+            
+            for pos in o_positions:
+                atoms.append({
+                    'element': 'O',
+                    'position': np.array([
+                        pos[0] * a,
+                        pos[1] * a,
+                        pos[2] * c
+                    ]),
+                    'radius': self.atomic_radii['O'],
+                    'color': 'red'
+                })
+        
+        return atoms
+    
     def _generate_general_structure(self, lattice_params: Dict, space_group: str, composition: str) -> List[Dict]:
         """
         Generate general crystal structure using pymatgen for accurate generation.
@@ -516,6 +516,7 @@ def create_interactive_plot(self, structure: Dict):
     except Exception:
         # Any Plotly / WebGL failure → safe fallback
         return None
+
 
 
 
