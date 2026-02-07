@@ -1026,6 +1026,24 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     st.code(str(e))
                     import traceback
                     st.code(traceback.format_exc())
+        # In execute_scientific_analysis function, after XRD analysis:
+
+        # Add scientific validation
+        if 'xrd_results' in analysis_results:
+            xrd_validator = AdvancedXRDAnalyzer()
+            validation_result = xrd_validator.validate_crystallographic_results(analysis_results['xrd_results'])
+            
+            analysis_results['xrd_validation'] = validation_result
+            
+            # Show validation warnings
+            if validation_result['warnings']:
+                with st.expander("⚠️ XRD Scientific Validation Warnings", expanded=False):
+                    for warning in validation_result['warnings']:
+                        st.warning(warning)
+            
+            # Show confidence score
+            if validation_result['confidence_score'] < 0.8:
+                st.warning(f"XRD analysis confidence: {validation_result['confidence_score']:.2f}")
         # ====================================================================
         # STEP 4: MORPHOLOGY FUSION (if we have any valid results)
         # ====================================================================
@@ -2671,6 +2689,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
