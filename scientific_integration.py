@@ -12,6 +12,77 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List
 from scipy import stats
+def calculate_phase_fractions(peaks, phases, tol=0.15):
+    """
+    Semi-quantitative phase fractions using matched peak intensities.
+    No estimation, CIF-validated only.
+
+    Parameters
+    ----------
+    peaks : list
+        Experimental peaks with 'position' and 'intensity'
+    phases : list
+        Phase results from identify_phases()
+    tol : float
+        2θ tolerance in degrees
+
+    Returns
+    -------
+    list of dict
+    """
+    phase_intensity = {p["phase"]: 0.0 for p in phases}
+    total_intensity = 0.0
+
+    for peak in peaks:
+        t_exp = peak["position"]
+        I = peak["intensity"]
+
+        for phase in phases:
+            for hkl_entry in phase["hkls"]:
+                for refl in hkl_entry:
+                    if abs(refl["two_theta"] - t_exp) < tol:
+                        phase_intensity[phase["phase"]] += I
+                        total_intensity += I
+                        break
+
+    results = []
+    for phase in phases:
+        pname = phase["phase"]
+        frac = (
+            100 * phase_intensity[pname] / total_intensity
+            if total_intensity > 0 else 0.0
+        )
+
+        results.append({
+            "phase": pname,
+            "fraction": round(frac, 2),
+            "confidence": round(phase["score"], 3)
+        })
+
+    return sorted(results, key=lambda x: x["fraction"], reverse=True)     
+def map_peaks_to_phases(peaks, phases, tol=0.15):
+    """
+    Assign phase + HKL to experimental peaks using CIF d-spacing match.
+    """
+
+    for peak in peaks:
+        peak["phase"] = ""
+        peak["hkl"] = ""
+        peak["phase_confidence"] = 0.0
+
+        for phase in phases:
+            for hkl_entry in phase["hkls"]:
+                for refl in hkl_entry:
+                    if abs(refl["two_theta"] - peak["position"]) < tol:
+                        peak["phase"] = phase["phase"]
+                        peak["hkl"] = refl["hkl"]
+                        peak["phase_confidence"] = phase["score"]
+                        break                                
+
+
+    return peaks        
+
+    return validation
      
 def map_peaks_to_phases_nano(peaks: List[Dict], phases: List[Dict], 
                             tolerance_factor: float = 1.5) -> List[Dict]:
@@ -228,6 +299,8 @@ class ScientificIntegrator:
             'crystallite_size': f"{D_crystal:.1f} ± {D_crystal*0.1:.1f} nm"  # 10% error
         }
 
+         # MISSING return statement!
+        return validation  # <-- MUST ADD THIS LINE
 
 
 
