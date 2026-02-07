@@ -774,32 +774,76 @@ class AdvancedXRDAnalyzer:
             # -----------------------------
             # PHASE IDENTIFICATION
             # -----------------------------
+            # -----------------------------
+            # PHASE IDENTIFICATION - NANOMATERIAL OPTIMIZED
+            # -----------------------------
             if elements:
                 try:
+                    # Use nanomaterial-optimized identification
+                    # First, import the new module
+                    from xrd_phase_identifier_nano import identify_nanomaterial_phases
+                    
+                    # Get nano_scale_factor from peak analysis
+                    nano_analyzer = NanoPeakAnalyzer()
+                    nano_scale_factor = nano_analyzer.estimate_nano_scale_factor(peaks)
+                    
+                    phases = identify_nanomaterial_phases(
+                        two_theta_p,
+                        intensity_p,
+                        wavelength=self.wavelength,
+                        elements=elements,
+                        estimated_size=size_stats.get("mean_size", 0)
+                    )
+                    
+                    xrd_results["phases"] = phases
+                    
+                    if phases:
+                        best = phases[0]
+                        xrd_results["crystal_system"] = best["crystal_system"]
+                        xrd_results["space_group"] = best["space_group"]
+                        xrd_results["lattice_parameters"] = best["lattice"]
+                        
+                        # Enhanced peak-phase mapping with nanoscale corrections
+                        from xrd_phase_identifier_nano import map_peaks_to_phases_nano
+                        xrd_results["peaks"] = map_peaks_to_phases_nano(peaks, phases)
+                        
+                        # Bayesian-weighted phase fractions
+                        from xrd_phase_identifier_nano import calculate_bayesian_phase_fractions
+                        xrd_results["phase_fractions"] = calculate_bayesian_phase_fractions(
+                            xrd_results["peaks"], phases
+                        )
+                        
+                        # Add nanomaterial-specific metadata
+                        xrd_results["nanomaterial_analysis"] = {
+                            "estimated_size_nm": best.get("estimated_size_nm"),
+                            "peak_broadening_factor": nano_scale_factor,
+                            "confidence_level": best["confidence_level"],
+                            "nano_relevance": best.get("nano_relevance", "medium"),
+                            "nano_score": best.get("nano_score", 0)
+                        }
+                except ImportError as e:
+                    # Fallback to original identification if new module not available
+                    st.warning(f"Nano-optimized phase identifier not available: {e}")
+                    # Keep original code as fallback
                     phases = identify_phases(
                         two_theta_p,
                         intensity_p,
                         wavelength=self.wavelength,
                         elements=elements
                     )
-    
                     xrd_results["phases"] = phases
-    
+                    
                     if phases:
                         best = phases[0]
                         xrd_results["crystal_system"] = best["crystal_system"]
                         xrd_results["space_group"] = best["space_group"]
                         xrd_results["lattice_parameters"] = best["lattice"]
-    
+                        
                         xrd_results["peaks"] = map_peaks_to_phases(peaks, phases)
-    
+                        
                         xrd_results["phase_fractions"] = calculate_phase_fractions(
                             xrd_results["peaks"], phases
                         )
-                except Exception as phase_error:
-                    # Don't fail entire analysis if phase ID fails
-                    xrd_results["phase_error"] = str(phase_error)
-                    print(f"Phase identification warning: {phase_error}")
             
             # ===============================
             # FORCE PERSISTENCE (CRITICAL)
@@ -829,6 +873,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
