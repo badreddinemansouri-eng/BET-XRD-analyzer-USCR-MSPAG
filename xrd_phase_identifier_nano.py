@@ -1,19 +1,13 @@
 """
-ADVANCED XRD PHASE IDENTIFIER FOR NANOMATERIALS
+UNIVERSAL XRD PHASE IDENTIFIER FOR NANOMATERIALS
 ========================================================================
-Scientific Features for Nanomaterial Detection:
-1. Peak Broadening Compensation (Nano-Specific)
-2. Strain-Corrected d-spacing Matching
-3. Multi-Database Consensus Scoring
-4. Peak Profile Analysis (Pseudo-Voigt fitting)
-5. Nanoscale-Specific Tolerance Windows
-6. Bayesian Probability Scoring
-========================================================================
-References:
-1. Balzar, D. (1999). J. Appl. Cryst., 32, 364-372 (Size-Strain Analysis)
-2. McCusker, L. B. et al. (1999). Powder Diffr., 14, 2-3 (Rietveld for Nanomaterials)
-3. Langford, J. I. & Louër, D. (1996). Rep. Prog. Phys., 59, 131 (Nanocrystalline XRD)
-4. Le Bail, A. (2005). Powder Diffr., 20, 4 (Ab Initio Structure Determination)
+Professional phase identification system for ANY nanomaterial:
+- Metal nanoparticles (Au, Ag, Cu, Pt, Pd, Ni, Fe, Co)
+- Metal oxides (all transition metal oxides)
+- Metal sulfides, selenides, tellurides
+- Perovskites, spinels, layered materials
+- MOFs, COFs, and hybrid materials
+- 2D materials (graphene, TMDCs, MXenes)
 ========================================================================
 """
 
@@ -21,399 +15,524 @@ import numpy as np
 import requests
 import time
 from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
-from scipy.signal import find_peaks, peak_widths
-from scipy.optimize import curve_fit
-from scipy.stats import linregress
 import streamlit as st
+from dataclasses import dataclass
+from scipy.signal import find_peaks
+from scipy.optimize import curve_fit
+import concurrent.futures
+from functools import lru_cache
 
 # ------------------------------------------------------------
-# NANOMATERIAL-SPECIFIC PARAMETERS
+# UNIVERSAL NANOMATERIAL PARAMETERS
 # ------------------------------------------------------------
 @dataclass
-class NanoMaterialParams:
-    """Parameters optimized for nanomaterial characterization"""
-    # Peak broadening compensation (nm scale)
-    SIZE_BROADENING_FACTOR = {
-        '<5nm': 0.15,    # 15% tolerance for ultra-nano
-        '5-10nm': 0.10,  # 10% tolerance for nano
-        '10-20nm': 0.06, # 6% tolerance for fine crystalline
-        '>20nm': 0.03    # 3% tolerance for bulk-like
+class UniversalNanoParams:
+    """Universal parameters for all nanomaterial types"""
+    
+    # Peak broadening tolerance based on expected size
+    SIZE_TOLERANCE_MAP = {
+        'ultra_nano': (0.1, 20),   # < 5 nm: 0.1-20° tolerance
+        'nano': (0.08, 15),        # 5-20 nm: 0.08-15° tolerance  
+        'submicron': (0.05, 10),   # 20-100 nm: 0.05-10° tolerance
+        'micron': (0.03, 5),       # > 100 nm: 0.03-5° tolerance
     }
     
-    # Strain broadening factor (ε × 100%)
-    STRAIN_TOLERANCE = 0.05  # 5% strain tolerance
+    # Common nanomaterial structure types with their characteristics
+    NANOMATERIAL_FAMILIES = {
+        'metal_nanoparticles': ['Au', 'Ag', 'Cu', 'Pt', 'Pd', 'Ni', 'Fe', 'Co'],
+        'metal_oxides': ['TiO2', 'ZnO', 'Fe2O3', 'Fe3O4', 'CuO', 'Cu2O', 'NiO', 
+                        'Co3O4', 'MnO2', 'Al2O3', 'SiO2', 'ZrO2', 'CeO2'],
+        'metal_chalcogenides': ['MoS2', 'WS2', 'MoSe2', 'WSe2', 'CdS', 'CdSe', 
+                               'CdTe', 'ZnS', 'ZnSe', 'PbS', 'PbSe'],
+        'perovskites': ['MAPbI3', 'CsPbI3', 'BaTiO3', 'SrTiO3', 'LaMnO3'],
+        'spinels': ['Fe3O4', 'CoFe2O4', 'MnFe2O4', 'ZnFe2O4'],
+        'layered_materials': ['MoS2', 'WS2', 'BN', 'MoSe2', 'WSe2', 'Bi2Se3'],
+        'carbon_allotropes': ['C', 'graphene', 'graphite', 'carbon_nanotubes'],
+        'mofs_cofs': ['ZIF-8', 'MOF-5', 'UIO-66', 'HKUST-1'],
+    }
     
-    # Minimum peak requirements for nanomaterials
-    MIN_PEAK_SNR = 3.0    # Signal-to-noise ratio
-    MIN_PEAK_INTENSITY = 0.05  # 5% of max intensity
-    
-    # Peak shape parameters (Pseudo-Voigt)
-    PEAK_SHAPE_LORENTZIAN = 0.7  # More Lorentzian for nanomaterials
-    PEAK_SHAPE_GAUSSIAN = 0.3
+    # Database priority based on material type
+    DATABASE_PRIORITY = {
+        'metal_nanoparticles': ['COD', 'ICSD', 'MaterialsProject'],
+        'metal_oxides': ['COD', 'MaterialsProject', 'AFLOW'],
+        'perovskites': ['MaterialsProject', 'AFLOW', 'COD'],
+        '2d_materials': ['COD', '2DMatPedia', 'MaterialsProject'],
+    }
 
 # ------------------------------------------------------------
-# ADVANCED PEAK ANALYSIS FOR NANOMATERIALS
+# UNIVERSAL PEAK ANALYSIS
 # ------------------------------------------------------------
-class NanoPeakAnalyzer:
-    """Advanced peak analysis with nanomaterial-specific corrections"""
+class UniversalPeakAnalyzer:
+    """Universal peak analysis for all nanomaterial types"""
     
     @staticmethod
-    def analyze_peak_profile(two_theta: np.ndarray, intensity: np.ndarray, 
-                            peak_position: float, wavelength: float) -> Dict:
+    def detect_peaks_universal(two_theta: np.ndarray, intensity: np.ndarray, 
+                               min_snr: float = 2.0) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Analyze peak profile using Pseudo-Voigt fitting for nanomaterials
-        Returns: size, strain, and profile parameters
+        Universal peak detection for nanomaterials with adaptive threshold
         """
-        # Select region around peak (± 5° for nanomaterials)
-        mask = (two_theta >= peak_position - 5) & (two_theta <= peak_position + 5)
-        if np.sum(mask) < 10:
-            return None
+        # Calculate noise level
+        noise_level = np.std(intensity[:50]) if len(intensity) > 50 else np.std(intensity)
+        baseline = np.percentile(intensity, 10)
         
-        theta = two_theta[mask] / 2  # Convert to θ
-        I = intensity[mask]
+        # Adaptive threshold based on signal-to-noise
+        threshold = baseline + min_snr * noise_level
         
-        # Pseudo-Voigt function: η*Lorentzian + (1-η)*Gaussian
-        def pseudo_voigt(x, I0, x0, fwhm, eta):
-            # Lorentzian component
-            L = I0 * (fwhm**2 / (4 * (x - x0)**2 + fwhm**2))
-            # Gaussian component
-            G = I0 * np.exp(-4 * np.log(2) * ((x - x0) / fwhm)**2)
-            return eta * L + (1 - eta) * G
+        # Find peaks
+        peaks_idx, properties = find_peaks(
+            intensity, 
+            height=threshold,
+            prominence=threshold/2,
+            width=1,  # Minimum width for nanomaterials
+            distance=5  # Minimum distance between peaks
+        )
         
-        try:
-            # Initial guess
-            p0 = [I.max(), peak_position/2, 0.1, 0.7]  # I0, x0, fwhm, eta
-            bounds = ([0, peak_position/2 - 0.5, 0.01, 0.1], 
-                     [I.max()*2, peak_position/2 + 0.5, 2.0, 0.9])
-            
-            popt, pcov = curve_fit(pseudo_voigt, theta, I, p0=p0, bounds=bounds)
-            
-            I0, x0, fwhm_theta, eta = popt
-            
-            # Convert to radians
-            fwhm_rad = np.deg2rad(fwhm_theta * 2)  # Convert to 2θ rad
-            
-            # Scherrer size (K=0.9)
-            D_scherrer = 0.9 * wavelength / (fwhm_rad * np.cos(x0))
-            
-            # Williamson-Hall components
-            beta_total = fwhm_rad
-            size_contrib = 0.9 * wavelength / (D_scherrer * np.cos(x0))
-            strain_contrib = beta_total - size_contrib if beta_total > size_contrib else 0
-            
-            return {
-                'position_2theta': float(x0 * 2),
-                'fwhm_deg': float(fwhm_theta * 2),
-                'fwhm_rad': float(fwhm_rad),
-                'eta': float(eta),  # Lorentzian fraction
-                'size_nm': float(D_scherrer / 10),  # Å to nm
-                'strain_estimate': float(4 * strain_contrib / np.tan(x0)),
-                'intensity': float(I0),
-                'profile_type': 'Lorentzian-dominated' if eta > 0.6 else 'Gaussian-dominated'
-            }
-        except:
-            return None
+        return two_theta[peaks_idx], intensity[peaks_idx]
     
     @staticmethod
-    def estimate_nano_scale_factor(peaks: List[Dict]) -> float:
-        """Estimate nanoscale factor from peak broadening statistics"""
-        if not peaks:
-            return 1.0
+    def estimate_material_family(elements: List[str], peak_positions: List[float]) -> str:
+        """
+        Intelligently estimate material family from elements and peaks
+        """
+        if not elements:
+            return 'unknown'
         
-        fwhms = [p.get('fwhm_deg', 0) for p in peaks if p.get('fwhm_deg', 0) > 0]
-        if not fwhms:
-            return 1.0
+        elements_set = set(elements)
         
-        avg_fwhm = np.mean(fwhms)
+        # Check for metals
+        common_metals = {'Au', 'Ag', 'Cu', 'Pt', 'Pd', 'Ni', 'Fe', 'Co'}
+        if elements_set & common_metals:
+            return 'metal_nanoparticles'
         
-        # Scale factor based on FWHM (nanomaterials have broader peaks)
-        if avg_fwhm > 1.0:  # Very broad peaks
-            return 1.5  # 50% more tolerance
-        elif avg_fwhm > 0.5:
-            return 1.3  # 30% more tolerance
-        elif avg_fwhm > 0.2:
-            return 1.15  # 15% more tolerance
-        else:
-            return 1.0  # Normal tolerance
+        # Check for oxides
+        if 'O' in elements_set:
+            # Check for transition metals
+            transition_metals = {'Ti', 'Zn', 'Fe', 'Cu', 'Ni', 'Co', 'Mn', 'Cr', 'V'}
+            if elements_set & transition_metals:
+                return 'metal_oxides'
+            # Check for rare earth oxides
+            rare_earths = {'Ce', 'La', 'Nd', 'Pr', 'Sm', 'Eu', 'Gd'}
+            if elements_set & rare_earths:
+                return 'metal_oxides'
+        
+        # Check for sulfides/selenides/tellurides
+        chalcogens = {'S', 'Se', 'Te'}
+        if elements_set & chalcogens:
+            return 'metal_chalcogenides'
+        
+        # Check for perovskites (ABX3)
+        if len(elements) >= 3 and 'O' in elements:
+            # Simple check for perovskite-like composition
+            return 'perovskites'
+        
+        # Check for carbon materials
+        if 'C' in elements_set and len(elements) <= 2:
+            return 'carbon_allotropes'
+        
+        return 'unknown'
+    
+    @staticmethod
+    def calculate_peak_quality_metrics(peaks_2theta: np.ndarray, 
+                                      peaks_intensity: np.ndarray,
+                                      wavelength: float) -> Dict:
+        """
+        Calculate quality metrics for peak matching
+        """
+        if len(peaks_2theta) == 0:
+            return {}
+        
+        # Calculate d-spacings
+        d_spacings = wavelength / (2 * np.sin(np.radians(peaks_2theta / 2)))
+        
+        # Peak intensity statistics
+        intensity_ratio = peaks_intensity / np.max(peaks_intensity)
+        
+        # Peak distribution metrics
+        angular_range = peaks_2theta.max() - peaks_2theta.min()
+        peak_density = len(peaks_2theta) / angular_range if angular_range > 0 else 0
+        
+        # Estimate crystallinity from peak sharpness
+        # (simplified - in practice would use FWHM)
+        avg_intensity = np.mean(intensity_ratio)
+        
+        return {
+            'n_peaks': len(peaks_2theta),
+            'angular_range': float(angular_range),
+            'peak_density': float(peak_density),
+            'avg_intensity_ratio': float(avg_intensity),
+            'd_spacing_range': (float(d_spacings.min()), float(d_spacings.max())),
+            'quality_score': min(avg_intensity * peak_density * len(peaks_2theta) / 10, 1.0)
+        }
 
 # ------------------------------------------------------------
-# ADVANCED DATABASE SEARCH WITH NANO-OPTIMIZATION
+# UNIVERSAL DATABASE SEARCH
 # ------------------------------------------------------------
-class NanoPhaseIdentifier:
-    """Professional phase identification optimized for nanomaterials"""
+class UniversalDatabaseSearcher:
+    """Universal database search for all material types"""
     
     def __init__(self):
-        self.cod_api = "https://www.crystallography.net/cod/result"
-        self.mp_api = "https://api.materialsproject.org"
-        self.mp_api_key = None  # Would be set from environment in production
-        
-        # Crystallographic databases with nanomaterial focus
-        self.nano_focused_phases = {
-            'TiO2': ['Anatase', 'Rutile', 'Brookite', 'TiO2-B'],
-            'ZnO': ['Wurtzite', 'Zincite'],
-            'CeO2': ['Cerianite', 'Fluorite'],
-            'Fe2O3': ['Hematite', 'Maghemite'],
-            'SiO2': ['Quartz', 'Cristobalite', 'Tridymite'],
-            'Al2O3': ['Corundum', 'Gamma-alumina'],
-            'ZrO2': ['Monoclinic', 'Tetragonal', 'Cubic']
+        self.databases = {
+            'COD': self._search_cod_universal,
+            'MaterialsProject': self._search_materials_project,
+            'AFLOW': self._search_aflow,
+            'ICSD': self._search_icsd,
+            'OQMD': self._search_oqmd,
         }
+        
+        # Cache for database queries
+        self.query_cache = {}
     
-    def calculate_bayesian_score(self, exp_d: np.ndarray, sim_d: np.ndarray, 
-                                fwhm_factors: List[float], 
-                                composition_match: float = 1.0) -> float:
-        """
-        Bayesian scoring considering:
-        1. d-spacing matching with nanoscale tolerance
-        2. Peak broadening likelihood
-        3. Compositional probability
-        4. Prior knowledge from database
-        
-        Returns: Probability score (0-1)
-        """
-        if len(exp_d) == 0 or len(sim_d) == 0:
-            return 0.0
-        
-        match_scores = []
-        weights = []
-        
-        for i, d_exp in enumerate(exp_d):
-            # Nanoscale-adaptive tolerance
-            if i < len(fwhm_factors):
-                tolerance = 0.02 * fwhm_factors[i]  # Base tolerance × broadening factor
-            else:
-                tolerance = 0.05  # Default for nanomaterials
-            
-            # Find best match
-            rel_errors = np.abs(sim_d - d_exp) / d_exp
-            best_match_idx = np.argmin(rel_errors)
-            best_error = rel_errors[best_match_idx]
-            
-            if best_error < tolerance:
-                # Gaussian probability with nanoscale adjustment
-                probability = np.exp(-0.5 * (best_error / tolerance) ** 2)
-                match_scores.append(probability)
-                
-                # Weight by expected intensity (approximated by 1/d²)
-                weight = 1 / (d_exp ** 2)
-                weights.append(weight)
-        
-        if not match_scores:
-            return 0.0
-        
-        # Weighted average of match probabilities
-        weighted_score = np.average(match_scores, weights=weights)
-        
-        # Incorporate composition match
-        final_score = weighted_score * composition_match
-        
-        # Prior knowledge adjustment (if we know it's likely a nanomaterial phase)
-        if any(phase in self.nano_focused_phases for phase in ['TiO2', 'ZnO', 'CeO2']):
-            final_score *= 1.1  # 10% boost for common nanomaterial phases
-        
-        return min(final_score, 1.0)
-    
-    def fetch_nanomaterial_cifs(self, elements: List[str], max_size: float = 50.0) -> List[Dict]:
-        """
-        Fetch CIFs with nanomaterial-specific filtering
-        Prioritizes phases known to form nanostructures
-        """
-        import concurrent.futures
-        from functools import partial
-        
-        all_structures = []
-        
-        # COD search with nanomaterial filter
-        cod_structures = self._fetch_cod_nano(elements)
-        all_structures.extend(cod_structures)
-        
-        # Materials Project search (if API key available)
-        if self.mp_api_key:
-            mp_structures = self._fetch_materials_project_nano(elements, max_size)
-            all_structures.extend(mp_structures)
-        
-        # Filter for nanomaterial-relevant phases
-        nano_relevant = []
-        for struct in all_structures:
-            formula = struct.get('formula', '')
-            
-            # Check if this is a commonly nanostructured material
-            is_nano_relevant = any(
-                base in formula for base in ['TiO2', 'ZnO', 'CeO2', 'Fe2O3', 
-                                           'SiO2', 'Al2O3', 'ZrO2', 'SnO2']
-            )
-            
-            if is_nano_relevant:
-                struct['nano_relevance'] = 'high'
-                nano_relevant.append(struct)
-            else:
-                struct['nano_relevance'] = 'medium'
-                nano_relevant.append(struct)
-        
-        return nano_relevant
-    
-        # In xrd_phase_identifier_nano.py, update the _fetch_cod_nano method:
-        
-    def _fetch_cod_nano(self, elements: List[str]) -> List[Dict]:
-        """Fetch COD structures with nanomaterial focus - FIXED"""
+    @lru_cache(maxsize=100)
+    def _search_cod_universal(self, elements: Tuple[str], max_results: int = 30) -> List[Dict]:
+        """Universal COD search with robust error handling"""
         try:
             query = {
                 "format": "json",
                 "el": ",".join(elements),
-                "maxresults": 50,
-                "nonalphanumeric": "ignore"
+                "maxresults": max_results
             }
-            response = requests.get(self.cod_api, params=query, timeout=30)
+            
+            response = requests.get(
+                "https://www.crystallography.net/cod/result",
+                params=query,
+                timeout=20
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                structures = []
+                # COD returns a list of entries
+                if isinstance(data, list):
+                    for entry in data[:max_results]:
+                        if isinstance(entry, dict) and 'codid' in entry:
+                            structures.append({
+                                'database': 'COD',
+                                'id': str(entry['codid']),
+                                'formula': entry.get('formula', ''),
+                                'space_group': entry.get('sg', ''),
+                                'cif_url': f"https://www.crystallography.net/cod/{entry['codid']}.cif",
+                                'confidence': 0.8  # COD is experimental data
+                            })
+                
+                return structures
+                
+        except Exception as e:
+            st.warning(f"COD search: {str(e)[:100]}")
+        
+        return []
+    
+    def _search_materials_project(self, elements: Tuple[str], max_results: int = 20) -> List[Dict]:
+        """Materials Project search (requires API key)"""
+        # This would require an API key
+        # For now, return empty - users can add their own key
+        return []
+    
+    def _search_aflow(self, elements: Tuple[str], max_results: int = 20) -> List[Dict]:
+        """AFLOW database search for inorganic compounds"""
+        try:
+            # AFLOW API endpoint for structure search
+            formula = "".join(elements)
+            url = f"http://aflowlib.duke.edu/search/API/?p={formula}&format=json"
+            
+            response = requests.get(url, timeout=20)
             
             if response.status_code == 200:
                 data = response.json()
                 structures = []
                 
-                # DEBUG: Show what we're getting
-                st.write(f"🧪 COD API Response type: {type(data)}")
-                
-                # COD API returns a list, not a dict
-                if isinstance(data, list):
-                    entries = data
-                elif isinstance(data, dict) and 'data' in data:
-                    entries = data.get('data', [])
-                else:
-                    entries = []
-                
-                st.write(f"🧪 Number of COD entries found: {len(entries)}")
-                
-                for i, entry in enumerate(entries[:20]):  # Limit to 20 for speed
-                    try:
-                        # Handle different COD response formats
-                        if isinstance(entry, dict):
-                            # Try different possible field names for COD ID
-                            cod_id = entry.get('codid') or entry.get('cod_id') or entry.get('id')
-                            
-                            if cod_id:
-                                # Get formula if available
-                                formula = entry.get('formula') or entry.get('chemical_formula') or ''
-                                
-                                structures.append({
-                                    'database': 'COD',
-                                    'cod_id': str(cod_id),
-                                    'formula': formula,
-                                    'space_group': entry.get('space_group', ''),
-                                    'cif_url': f"https://www.crystallography.net/cod/{cod_id}.cif",
-                                    'nano_score': self._calculate_nano_score(formula, {})
-                                })
-                    except Exception as e:
-                        continue
+                for entry in data.get('results', [])[:max_results]:
+                    structures.append({
+                        'database': 'AFLOW',
+                        'id': entry.get('auid', ''),
+                        'formula': entry.get('compound', ''),
+                        'space_group': entry.get('spacegroup', ''),
+                        'cif_url': entry.get('cif_url', ''),
+                        'confidence': 0.7
+                    })
                 
                 return structures
-        except Exception as e:
-            st.warning(f"COD fetch warning: {str(e)}")
+                
+        except:
+            pass
         
         return []
     
-    def _calculate_nano_score(self, formula: str, cell_params: Dict) -> float:
-        """Calculate nanomaterial formation likelihood score"""
-        score = 0.5  # Base score
+    def _search_icsd(self, elements: Tuple[str], max_results: int = 20) -> List[Dict]:
+        """ICSD search (would require subscription)"""
+        # ICSD requires subscription, so just return empty
+        return []
+    
+    def _search_oqmd(self, elements: Tuple[str], max_results: int = 20) -> List[Dict]:
+        """Open Quantum Materials Database search"""
+        try:
+            # OQMD API endpoint
+            elements_str = "-".join(elements)
+            url = f"https://oqmd.org/api/structures?elements={elements_str}&limit={max_results}"
+            
+            response = requests.get(url, timeout=20)
+            
+            if response.status_code == 200:
+                data = response.json()
+                structures = []
+                
+                for entry in data.get('results', [])[:max_results]:
+                    structures.append({
+                        'database': 'OQMD',
+                        'id': entry.get('id', ''),
+                        'formula': entry.get('formula', ''),
+                        'space_group': entry.get('spacegroup', ''),
+                        'cif_url': f"https://oqmd.org/api/structures/{entry.get('id')}/cif",
+                        'confidence': 0.6
+                    })
+                
+                return structures
+                
+        except:
+            pass
         
-        # Common nanomaterial oxides
-        nano_oxides = ['TiO2', 'ZnO', 'CeO2', 'Fe2O3', 'SiO2', 'Al2O3', 'ZrO2']
-        if any(oxide in formula for oxide in nano_oxides):
-            score += 0.3
+        return []
+    
+    def search_all_databases(self, elements: List[str], material_family: str = 'unknown') -> List[Dict]:
+        """
+        Search all available databases in parallel
+        """
+        if not elements:
+            return []
         
-        # Check for metastable phases (common in nanomaterials)
-        if 'B' in formula or 'beta' in formula.lower() or 'gamma' in formula.lower():
-            score += 0.2
+        elements_tuple = tuple(sorted(elements))
         
-        # Small unit cell often indicates simpler nanostructures
-        if 'a' in cell_params:
-            a = float(cell_params.get('a', 10))
-            if a < 6.0:  # Small unit cell
-                score += 0.1
+        # Check cache
+        cache_key = (elements_tuple, material_family)
+        if cache_key in self.query_cache:
+            return self.query_cache[cache_key]
         
-        return min(score, 1.0)
+        st.info(f"🔍 Searching databases for: {', '.join(elements)}")
+        
+        all_structures = []
+        
+        # Determine which databases to search based on material family
+        if material_family in UniversalNanoParams.DATABASE_PRIORITY:
+            db_priority = UniversalNanoParams.DATABASE_PRIORITY[material_family]
+        else:
+            # Default priority
+            db_priority = ['COD', 'MaterialsProject', 'AFLOW', 'OQMD']
+        
+        # Search databases in parallel for speed
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = []
+            for db_name in db_priority[:3]:  # Limit to 3 databases for speed
+                if db_name in self.databases:
+                    futures.append(
+                        executor.submit(self.databases[db_name], elements_tuple, 15)
+                    )
+            
+            # Collect results
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    results = future.result(timeout=10)
+                    if results:
+                        all_structures.extend(results)
+                except Exception as e:
+                    continue
+        
+        # Remove duplicates based on formula and space group
+        unique_structures = []
+        seen = set()
+        
+        for struct in all_structures:
+            key = (struct.get('formula', ''), struct.get('space_group', ''))
+            if key not in seen:
+                seen.add(key)
+                unique_structures.append(struct)
+        
+        # Cache results
+        self.query_cache[cache_key] = unique_structures
+        
+        st.success(f"✅ Found {len(unique_structures)} unique structures from databases")
+        
+        return unique_structures
 
 # ------------------------------------------------------------
-# MAIN IDENTIFICATION ENGINE WITH NANO-OPTIMIZATION
+# UNIVERSAL MATCHING ALGORITHM
 # ------------------------------------------------------------
-def identify_nanomaterial_phases(two_theta: np.ndarray, intensity: np.ndarray, 
-                                wavelength: float, elements: List[str],
-                                estimated_size: float = None) -> List[Dict]:
+class UniversalPatternMatcher:
+    """Universal pattern matching for all material types"""
+    
+    @staticmethod
+    def match_pattern_universal(exp_d: np.ndarray, exp_intensity: np.ndarray,
+                               sim_d: np.ndarray, sim_intensity: np.ndarray,
+                               material_family: str = 'unknown') -> float:
+        """
+        Universal pattern matching with family-specific optimizations
+        """
+        if len(exp_d) == 0 or len(sim_d) == 0:
+            return 0.0
+        
+        # Family-specific matching parameters
+        params = UniversalPatternMatcher._get_family_params(material_family)
+        
+        match_scores = []
+        intensity_weights = []
+        
+        for i, d_exp in enumerate(exp_d):
+            # Adaptive tolerance based on material family and peak intensity
+            base_tolerance = params['base_tolerance']
+            intensity_factor = exp_intensity[i] / np.max(exp_intensity)
+            
+            # Higher intensity peaks get tighter tolerance
+            peak_tolerance = base_tolerance * (1.5 - 0.5 * intensity_factor)
+            
+            # Find closest simulated peak
+            d_errors = np.abs(sim_d - d_exp) / d_exp
+            min_error_idx = np.argmin(d_errors)
+            min_error = d_errors[min_error_idx]
+            
+            if min_error < peak_tolerance:
+                # Calculate match quality
+                match_quality = 1.0 - (min_error / peak_tolerance)
+                
+                # Intensity correlation
+                if len(sim_intensity) > min_error_idx:
+                    intensity_match = 1.0 - abs(exp_intensity[i] - sim_intensity[min_error_idx]) / max(exp_intensity[i], sim_intensity[min_error_idx])
+                    match_quality *= (0.7 + 0.3 * intensity_match)
+                
+                match_scores.append(match_quality)
+                
+                # Weight by experimental intensity
+                weight = exp_intensity[i] / np.sum(exp_intensity)
+                intensity_weights.append(weight)
+        
+        if not match_scores:
+            return 0.0
+        
+        # Weighted average match score
+        weighted_score = np.average(match_scores, weights=intensity_weights)
+        
+        # Coverage penalty (how many experimental peaks were matched)
+        coverage = len(match_scores) / len(exp_d)
+        coverage_penalty = 0.3 + 0.7 * coverage  # 30% penalty for poor coverage
+        
+        final_score = weighted_score * coverage_penalty
+        
+        # Family-specific adjustments
+        if material_family in ['metal_nanoparticles', 'carbon_allotropes']:
+            # These often have fewer peaks
+            if len(exp_d) < 5:
+                final_score *= 1.2  # Boost for materials with few peaks
+        
+        return min(final_score, 1.0)
+    
+    @staticmethod
+    def _get_family_params(family: str) -> Dict:
+        """Get matching parameters for specific material family"""
+        params = {
+            'base_tolerance': 0.03,  # Default 3% tolerance
+            'intensity_weight': 0.3,
+            'coverage_weight': 0.7,
+        }
+        
+        # Family-specific adjustments
+        family_adjustments = {
+            'metal_nanoparticles': {'base_tolerance': 0.04, 'intensity_weight': 0.4},
+            'metal_oxides': {'base_tolerance': 0.025, 'intensity_weight': 0.35},
+            'metal_chalcogenides': {'base_tolerance': 0.03, 'intensity_weight': 0.3},
+            'perovskites': {'base_tolerance': 0.02, 'intensity_weight': 0.4},
+            'spinels': {'base_tolerance': 0.025, 'intensity_weight': 0.35},
+            'carbon_allotropes': {'base_tolerance': 0.05, 'intensity_weight': 0.2},
+            'unknown': {'base_tolerance': 0.03, 'intensity_weight': 0.3},
+        }
+        
+        if family in family_adjustments:
+            params.update(family_adjustments[family])
+        
+        return params
+
+# ------------------------------------------------------------
+# MAIN UNIVERSAL IDENTIFICATION ENGINE
+# ------------------------------------------------------------
+def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
+                            wavelength: float, elements: List[str]) -> List[Dict]:
     """
-    Professional phase identification for nanomaterials
-    Incorporates size/strain corrections and multi-algorithm consensus
+    UNIVERSAL phase identification for ANY nanomaterial
     """
-    st.info("🔬 Running nanomaterial-optimized phase identification...")
+    st.info("🔬 Running universal nanomaterial phase identification...")
     
     # --------------------------------------------------------
-    # STEP 1: NANO-OPTIMIZED PEAK DETECTION
+    # STEP 1: UNIVERSAL PEAK DETECTION
     # --------------------------------------------------------
-    # Adaptive threshold for nanomaterials (lower due to broadening)
-    threshold = 0.15 * np.max(intensity)  # Lower threshold for weak nano-peaks
+    peak_analyzer = UniversalPeakAnalyzer()
     
-    # Find peaks with prominence filtering for nanomaterials
-    peaks_idx, properties = find_peaks(intensity, 
-                                      height=threshold,
-                                      prominence=threshold/3,
-                                      width=2)  # Wider peaks for nanomaterials
+    exp_peaks_2theta, exp_intensities = peak_analyzer.detect_peaks_universal(
+        two_theta, intensity
+    )
     
-    exp_peaks_2theta = two_theta[peaks_idx]
-    exp_intensities = intensity[peaks_idx]
-    
-    if len(exp_peaks_2theta) < 3:
-        st.warning("Insufficient peaks for reliable nanomaterial identification")
+    if len(exp_peaks_2theta) < 2:
+        st.warning("Insufficient peaks for reliable identification")
         return []
+    
+    st.success(f"✅ Detected {len(exp_peaks_2theta)} peaks for matching")
     
     # Calculate d-spacings
     exp_d = wavelength / (2 * np.sin(np.radians(exp_peaks_2theta / 2)))
     
-    # --------------------------------------------------------
-    # STEP 2: NANOMATERIAL CHARACTERIZATION
-    # --------------------------------------------------------
-    nano_analyzer = NanoPeakAnalyzer()
-    peak_profiles = []
-    fwhm_factors = []
-    
-    for i, peak_pos in enumerate(exp_peaks_2theta):
-        profile = nano_analyzer.analyze_peak_profile(two_theta, intensity, 
-                                                    peak_pos, wavelength)
-        if profile:
-            peak_profiles.append(profile)
-            # FWHM factor for tolerance scaling
-            fwhm_factor = 1 + (profile['fwhm_deg'] / 0.5)  # Broader peaks → larger tolerance
-            fwhm_factors.append(min(fwhm_factor, 2.0))  # Cap at 2×
-        else:
-            fwhm_factors.append(1.0)
-    
-    # Estimate overall nanoscale factor
-    nano_scale_factor = nano_analyzer.estimate_nano_scale_factor(peak_profiles)
+    # Normalize intensities for matching
+    exp_intensities_norm = exp_intensities / np.max(exp_intensities)
     
     # --------------------------------------------------------
-    # STEP 3: DATABASE SEARCH WITH NANO-PRIORITIZATION
+    # STEP 2: ESTIMATE MATERIAL FAMILY
     # --------------------------------------------------------
-    identifier = NanoPhaseIdentifier()
+    material_family = peak_analyzer.estimate_material_family(
+        elements, exp_peaks_2theta
+    )
     
-    # Get nanomaterial-focused structures
-    st.write("📚 Searching nanomaterial-focused databases...")
-    nano_structures = identifier.fetch_nanomaterial_cifs(elements)
+    st.info(f"📊 Material family estimated: {material_family}")
     
-    if not nano_structures:
-        st.warning("No nanomaterial-relevant structures found in databases")
+    # Calculate peak quality metrics
+    peak_quality = peak_analyzer.calculate_peak_quality_metrics(
+        exp_peaks_2theta, exp_intensities, wavelength
+    )
+    
+    # --------------------------------------------------------
+    # STEP 3: UNIVERSAL DATABASE SEARCH
+    # --------------------------------------------------------
+    db_searcher = UniversalDatabaseSearcher()
+    
+    database_structures = db_searcher.search_all_databases(elements, material_family)
+    
+    if not database_structures:
+        st.warning("No structures found in databases. Try different elements.")
         return []
     
     # --------------------------------------------------------
-    # STEP 4: MULTI-ALGORITHM MATCHING
+    # STEP 4: PATTERN SIMULATION AND MATCHING
     # --------------------------------------------------------
+    matcher = UniversalPatternMatcher()
     results = []
     
-    for struct in nano_structures[:30]:  # Limit to top 30 nanomaterial candidates
+    st.info(f"🧪 Simulating and matching {len(database_structures)} structures...")
+    
+    progress_bar = st.progress(0)
+    
+    for i, struct in enumerate(database_structures):
         try:
-            # Fetch and simulate pattern
+            # Update progress
+            progress = (i + 1) / len(database_structures)
+            progress_bar.progress(progress)
+            
+            # Fetch CIF
             cif_url = struct.get('cif_url')
             if not cif_url:
                 continue
-                
-            cif_text = requests.get(cif_url, timeout=30).text
             
-            # Simulate pattern
+            # Download CIF
+            cif_response = requests.get(cif_url, timeout=15)
+            if cif_response.status_code != 200:
+                continue
+            
+            cif_text = cif_response.text
+            
+            # Simulate XRD pattern
             from pymatgen.io.cif import CifParser
             from pymatgen.analysis.diffraction.xrd import XRDCalculator
             
@@ -422,35 +541,27 @@ def identify_nanomaterial_phases(two_theta: np.ndarray, intensity: np.ndarray,
             calc = XRDCalculator(wavelength=wavelength)
             pattern = calc.get_pattern(structure, two_theta_range=(5, 80))
             
-            # Simulated d-spacings
+            # Simulated data
             sim_d = wavelength / (2 * np.sin(np.radians(pattern.x / 2)))
+            sim_intensity = pattern.y / np.max(pattern.y) if len(pattern.y) > 0 else np.zeros_like(pattern.x)
             
-            # --------------------------------------------------------
-            # STEP 5: BAYESIAN SCORING WITH NANO-CORRECTIONS
-            # --------------------------------------------------------
-            # Composition matching
-            comp_elements = [el.symbol for el in structure.composition.elements]
-            comp_match = len(set(elements) & set(comp_elements)) / max(len(elements), 1)
-            
-            # Calculate Bayesian score
-            bayesian_score = identifier.calculate_bayesian_score(
-                exp_d, sim_d, fwhm_factors, comp_match
+            # Match patterns
+            match_score = matcher.match_pattern_universal(
+                exp_d, exp_intensities_norm,
+                sim_d, sim_intensity,
+                material_family
             )
             
-            # Apply nanoscale boost
-            nano_boost = struct.get('nano_score', 0.5)
-            final_score = bayesian_score * (1 + 0.2 * nano_boost)  # Up to 20% boost
-            
-            # Threshold for nanomaterials (lower due to difficulties)
-            if final_score < 0.4:  # Lower threshold for nanomaterials
+            # Threshold for nanomaterials (lower due to peak broadening)
+            if match_score < 0.35:  # 35% match threshold for nanomaterials
                 continue
             
-            # Confidence levels for nanomaterials
-            if final_score >= 0.7:
+            # Determine confidence level
+            if match_score >= 0.7:
                 confidence = "confirmed"
-            elif final_score >= 0.5:
+            elif match_score >= 0.5:
                 confidence = "probable"
-            elif final_score >= 0.4:
+            elif match_score >= 0.35:
                 confidence = "possible"
             else:
                 continue
@@ -463,62 +574,59 @@ def identify_nanomaterial_phases(two_theta: np.ndarray, intensity: np.ndarray,
                 "space_group": structure.get_space_group_info()[0],
                 "lattice": structure.lattice.as_dict(),
                 "hkls": pattern.hkls,
-                "score": round(final_score, 3),
+                "score": round(match_score, 3),
                 "confidence_level": confidence,
                 "database": struct.get('database', 'Unknown'),
-                "nano_relevance": struct.get('nano_relevance', 'medium'),
-                "nano_score": round(struct.get('nano_score', 0), 2),
+                "material_family": material_family,
+                "peak_quality": peak_quality,
+                "n_peaks_matched": len(exp_d),
                 "structure": structure,
-                "peak_profiles": peak_profiles[:5] if peak_profiles else [],
-                "estimated_size_nm": np.mean([p['size_nm'] for p in peak_profiles]) if peak_profiles else None
             })
             
         except Exception as e:
+            # Silently continue on individual structure errors
             continue
     
+    progress_bar.empty()
+    
     # --------------------------------------------------------
-    # STEP 6: CONSENSUS RANKING AND DEDUPLICATION
+    # STEP 5: RESULTS PROCESSING
     # --------------------------------------------------------
-    # Group by formula and crystal system
-    grouped_results = {}
+    if not results:
+        st.warning("No phases identified with sufficient confidence")
+        return []
+    
+    # Remove duplicates (same formula and space group)
+    unique_results = []
+    seen = set()
+    
     for result in results:
-        key = (result["phase"], result["crystal_system"], result["space_group"])
-        if key not in grouped_results or result["score"] > grouped_results[key]["score"]:
-            grouped_results[key] = result
+        key = (result["phase"], result["space_group"])
+        if key not in seen:
+            seen.add(key)
+            unique_results.append(result)
     
-    final_results = sorted(
-        grouped_results.values(),
-        key=lambda x: (x["score"], x.get("nano_score", 0)),
-        reverse=True
-    )
+    # Sort by score
+    final_results = sorted(unique_results, key=lambda x: x["score"], reverse=True)
     
     # --------------------------------------------------------
-    # STEP 7: SCIENTIFIC VALIDATION REPORT
+    # STEP 6: SCIENTIFIC REPORT
     # --------------------------------------------------------
-    st.success(f"✅ Identified {len(final_results)} potential nanomaterial phases")
+    st.success(f"✅ Identified {len(final_results)} potential phases")
     
-    if final_results:
-        with st.expander("🔬 Nanomaterial Analysis Report", expanded=True):
-            st.markdown("### **Scientific Validation Summary**")
-            
-            # Peak quality assessment
-            avg_fwhm = np.mean([p.get('fwhm_deg', 0) for p in peak_profiles]) if peak_profiles else 0
-            st.markdown(f"- **Average Peak FWHM:** {avg_fwhm:.3f}°")
-            st.markdown(f"- **Peak Count:** {len(exp_peaks_2theta)}")
-            st.markdown(f"- **Estimated Crystallite Size:** {final_results[0].get('estimated_size_nm', 'N/A')} nm")
-            
-            if avg_fwhm > 0.5:
-                st.markdown("⚠️ **Note:** Broad peaks suggest nanocrystalline or strained material")
-            
-            # Database statistics
-            db_counts = {}
-            for r in final_results:
-                db = r.get('database', 'Unknown')
-                db_counts[db] = db_counts.get(db, 0) + 1
-            
-            st.markdown("### **Database Matches**")
-            for db, count in db_counts.items():
-                st.markdown(f"- **{db}:** {count} phase(s)")
+    with st.expander("📊 Scientific Analysis Report", expanded=False):
+        st.markdown(f"### **Material Analysis Summary**")
+        st.markdown(f"- **Estimated family**: {material_family}")
+        st.markdown(f"- **Peaks detected**: {len(exp_peaks_2theta)}")
+        st.markdown(f"- **Peak quality score**: {peak_quality.get('quality_score', 0):.2f}/1.0")
+        st.markdown(f"- **Angular range**: {peak_quality.get('angular_range', 0):.1f}°")
+        st.markdown(f"- **Databases searched**: {len(set(r['database'] for r in final_results))}")
+        
+        # Show top matches
+        if final_results:
+            st.markdown("### **Top Phase Matches**")
+            for i, result in enumerate(final_results[:3]):
+                st.markdown(f"{i+1}. **{result['phase']}** ({result['crystal_system']}) - "
+                          f"Score: {result['score']:.3f} [{result['confidence_level']}]")
     
     return final_results
-
