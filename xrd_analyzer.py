@@ -21,6 +21,8 @@ from scientific_integration import (
     calculate_phase_fractions,
     map_peaks_to_phases
 )
+from xrd_peak_physics import InstrumentProfile, PhysicalPeakValidator
+
 # Replace the phase identification import with:
 try:
     from xrd_phase_identifier_nano import identify_phases_universal
@@ -208,7 +210,7 @@ def detect_peaks(two_theta, intensity, min_distance=10, threshold=0.1):
                                      thres=threshold, 
                                      min_dist=min_distance)
     
-    peaks = []
+    validated_peaks = []
     for idx in peak_indices:
         # Peak position
         theta_peak = two_theta[idx]
@@ -264,7 +266,7 @@ def detect_peaks(two_theta, intensity, min_distance=10, threshold=0.1):
         right_half = intensity_peak - intensity[idx:peak_end].min() if idx < peak_end - 1 else intensity_peak
         asymmetry = left_half / right_half if right_half > 0 else 1.0
         
-        peaks.append({
+        validated_peaks.append({
             'index': idx,
             'position': float(theta_peak),
             'intensity': float(intensity_peak),
@@ -275,8 +277,27 @@ def detect_peaks(two_theta, intensity, min_distance=10, threshold=0.1):
             'theta_left': float(theta_left),
             'theta_right': float(theta_right)
         })
+    # -----------------------------------
+    # Physical peak validation (NEW)
+    # -----------------------------------
+    instrument = InstrumentProfile(wavelength=wavelength)
     
-    return peaks
+    validator = PhysicalPeakValidator(instrument)
+    
+    validated_peaks = []
+    
+    for idx in peak_indices:
+        peak = validator.validate(
+            idx,
+            two_theta,
+            intensity,
+            background
+        )
+        if peak is not None:
+            validated_peaks.append(peak)
+
+    return validated_peaks
+
 
 # ============================================================================
 # CRYSTALLOGRAPHIC CALCULATIONS
@@ -324,7 +345,7 @@ def scherrer_crystallite_size(fwhm_rad, theta_rad, wavelength=1.5406, K=0.9):
     size_angstrom = K * wavelength / (fwhm_rad * np.cos(theta_rad))
     return size_angstrom / 10  # Convert Å to nm
 
-def williamson_hall_analysis(peaks, wavelength=1.5406):
+def williamson_hall_analysis(validated_peaks, wavelength=1.5406):
     """
     Williamson–Hall analysis for nanocrystalline materials
 
@@ -335,15 +356,15 @@ def williamson_hall_analysis(peaks, wavelength=1.5406):
     from scipy import stats
     import streamlit as st
 
-    st.write("🧪 W-H DEBUG → Peaks received:", len(peaks))
+    st.write("🧪 W-H DEBUG → Peaks received:", len(validated_peaks))
 
-    if not peaks or len(peaks) < 3:
+    if not validated_peaks or len(validated_peaks) < 3:
         st.warning("🧪 W-H DEBUG → Not enough raw peaks")
         return None
 
     # ✅ MINIMAL + PHYSICALLY CORRECT FILTER
     valid_peaks = [
-        p for p in peaks
+        p for p in validated_peaks
         if p.get("fwhm_rad", 0) > 0 and p.get("position", 0) > 0
     ]
 
@@ -388,12 +409,12 @@ def williamson_hall_analysis(peaks, wavelength=1.5406):
 # ============================================================================
 # CRYSTALLINITY INDEX - FIXED VERSION
 # ============================================================================
-def calculate_crystallinity_index(two_theta, intensity, peaks):
+def calculate_crystallinity_index(two_theta, intensity, validated_peaks):
     """
     Crystallinity index based on crystalline peak area / total area
     (Klug & Alexander, 1974)
     """
-    if not peaks:
+    if not validated_peaks:
         return 0.0
 
     total_area = safe_trapz(intensity, two_theta)
@@ -402,7 +423,7 @@ def calculate_crystallinity_index(two_theta, intensity, peaks):
 
     crystalline_area = 0.0
 
-    for p in peaks:
+    for p in validated_peaks:
         left = p["theta_left"]
         right = p["theta_right"]
 
@@ -416,7 +437,7 @@ def calculate_crystallinity_index(two_theta, intensity, peaks):
 # ============================================================================
 # LATTICE PARAMETER REFINEMENT
 # ============================================================================
-def refine_lattice_parameters(peaks, wavelength=1.5406, 
+def refine_lattice_parameters(validated_peaks, wavelength=1.5406, 
                             crystal_system='cubic', initial_guess=4.0):
     """
     Refine lattice parameters from peak positions
@@ -432,11 +453,11 @@ def refine_lattice_parameters(peaks, wavelength=1.5406,
     --------
     Refined lattice parameters
     """
-    if len(peaks) < 3:
+    if len(validated_peaks) < 3:
         return None
     
     # Extract d-spacings
-    d_spacings = [calculate_d_spacing(p['position'], wavelength) for p in peaks]
+    d_spacings = [calculate_d_spacing(p['position'], wavelength) for p in validated_peaks]
     
     def residual(params, d_experimental, indices):
         """Calculate residual between experimental and calculated d-spacings"""
@@ -458,7 +479,7 @@ def refine_lattice_parameters(peaks, wavelength=1.5406,
     if crystal_system == 'cubic' and len(d_spacings) >= 3:
         # Use the peak with highest intensity to estimate lattice parameter
         # For cubic, d = a/√(h²+k²+l²). Assume (111) for first strong peak
-        main_peak_d = d_spacings[np.argmax([p['intensity'] for p in peaks])]
+        main_peak_d = d_spacings[np.argmax([p['intensity'] for p in validated_peaks])]
         a_estimated = main_peak_d * np.sqrt(3)  # For (111) reflection
         
         # Refine using multiple peaks
@@ -552,14 +573,14 @@ class AdvancedXRDAnalyzer:
             validation['confidence_score'] *= 0.5
         
         # Check peak count is reasonable
-        n_peaks = len(xrd_results.get('peaks', []))
+        n_peaks = len(xrd_results.get('validated_peaks', []))
         if n_peaks < 3:
             validation['warnings'].append(f"Few peaks detected: {n_peaks}")
             validation['confidence_score'] *= 0.8
         
         # Check for physically impossible FWHM
-        peaks = xrd_results.get('peaks', [])
-        for peak in peaks:
+        validated_peaks = xrd_results.get('validated_peaks', [])
+        for peak in validated_peaks:
             fwhm = peak.get('fwhm_deg', 0)
             if fwhm < 0.01 or fwhm > 5.0:  # Unphysical values
                 validation['warnings'].append(f"Unphysical FWHM: {fwhm:.4f}° at 2θ={peak.get('position', 0):.2f}°")
@@ -637,11 +658,29 @@ class AdvancedXRDAnalyzer:
         List of analyzed peaks
         """
         # Detect peaks
-        peaks = detect_peaks(two_theta, intensity, threshold=threshold)
+        validated_peaks = detect_peaks(two_theta, intensity, threshold=threshold)
+        # -----------------------------------
+        # Physical peak validation (NEW)
+        # -----------------------------------
+        instrument = InstrumentProfile(wavelength=wavelength)
         
+        validator = PhysicalPeakValidator(instrument)
+        
+        validated_peaks = []
+        
+        for idx in peak_indices:
+            peak = validator.validate(
+                idx,
+                two_theta,
+                intensity,
+                background
+            )
+            if peak is not None:
+                validated_peaks.append(peak)
+
         # Analyze each peak
         analyzed_peaks = []
-        for peak in peaks:
+        for peak in validated_peaks:
             # Calculate d-spacing
             d_spacing = calculate_d_spacing(peak['position'], self.wavelength)
             
@@ -660,7 +699,7 @@ class AdvancedXRDAnalyzer:
         
         return analyzed_peaks
     
-    def calculate_crystallite_statistics(self, peaks):
+    def calculate_crystallite_statistics(self, validated_peaks)
         """
         Calculate statistics from multiple peaks
         
@@ -672,14 +711,14 @@ class AdvancedXRDAnalyzer:
         --------
         Crystallite size statistics
         """
-        if not peaks:
+        if not validated_peaks:
             return {
                 'mean_size': 0.0,
                 'std_size': 0.0,
                 'size_distribution': 'Unknown'
             }
         
-        sizes = [p['crystallite_size'] for p in peaks if p['crystallite_size'] > 0]
+        sizes = [p['crystallite_size'] for p in validated_peaks if p['crystallite_size'] > 0]
         
         if not sizes:
             return {
@@ -705,7 +744,7 @@ class AdvancedXRDAnalyzer:
             'distribution': distribution
         }
     
-    def check_ordered_mesopores(self, two_theta, intensity, peaks):
+    def check_ordered_mesopores(self, two_theta, intensity, validated_peaks):
         """
         Check for ordered mesoporous structure (low-angle peaks)
         
@@ -720,7 +759,7 @@ class AdvancedXRDAnalyzer:
         Ordered mesopore analysis
         """
         # Check for peaks in low-angle region (0.5-10° 2θ)
-        low_angle_peaks = [p for p in peaks if 0.5 <= p['position'] <= 10]
+        low_angle_peaks = [p for p in validated_peaks if 0.5 <= p['position'] <= 10]
         
         if len(low_angle_peaks) >= 2:
             # Check for regular spacing (characteristic of ordered mesopores)
@@ -776,7 +815,7 @@ class AdvancedXRDAnalyzer:
         xrd_results = {
             "phases": [],
             "phase_fractions": [],
-            "peaks": [],
+            "validated_peaks": [],
             "top_peaks": [],
             "crystallinity_index": 0.0,
             "crystallite_size": {
@@ -807,29 +846,29 @@ class AdvancedXRDAnalyzer:
             # -----------------------------
             # PEAK DETECTION (ALL PEAKS)
             # -----------------------------
-            peaks = self.analyze_peaks(two_theta_p, intensity_p)
-            peaks.sort(key=lambda x: x["intensity"], reverse=True)
+            validated_peaks = self.analyze_peaks(two_theta_p, intensity_p)
+            validated_peaks.sort(key=lambda x: x["intensity"], reverse=True)
     
-            xrd_results["peaks"] = peaks
-            xrd_results["top_peaks"] = peaks[:15]
-            xrd_results["n_peaks_total"] = len(peaks)
+            xrd_results["validated_peaks"] = validated_peaks
+            xrd_results["top_peaks"] = validated_peaks[:15]
+            xrd_results["n_peaks_total"] = len(validated_peaks)
             
             # -----------------------------
             # CRYSTALLINITY (✅ FIXED)
             # -----------------------------
             xrd_results["crystallinity_index"] = calculate_crystallinity_index(
-                two_theta_p, intensity_p, peaks
+                two_theta_p, intensity_p, validated_peaks
             )
     
             # -----------------------------
             # CRYSTALLITE SIZE (ALL PEAKS)
             # -----------------------------
-            size_stats = self.calculate_crystallite_statistics(peaks)
+            size_stats = self.calculate_crystallite_statistics(validated_peaks)
             xrd_results["crystallite_size"]["scherrer"] = size_stats["mean_size"]
             xrd_results["crystallite_size"]["distribution"] = size_stats["distribution"]
     
-            if len(peaks) >= 3:
-                wh = williamson_hall_analysis(peaks, self.wavelength)
+            if len(validated_peaks) >= 3:
+                wh = williamson_hall_analysis(validated_peaks, self.wavelength)
                 if wh:
                     xrd_results["williamson_hall"] = wh  # 🔑 REQUIRED FOR PLOTTING
                     xrd_results["crystallite_size"]["williamson_hall"] = wh["crystallite_size"]
@@ -872,11 +911,11 @@ class AdvancedXRDAnalyzer:
                         xrd_results["material_family"] = best.get("material_family", "unknown")
                         
                         # Map peaks to phases
-                        xrd_results["peaks"] = map_peaks_to_phases(peaks, phases)
+                        xrd_results["validated_peaks"] = map_peaks_to_phases(validated_peaks, phases)
                         
                         # Calculate phase fractions
                         xrd_results["phase_fractions"] = calculate_phase_fractions(
-                            xrd_results["peaks"], phases
+                            xrd_results["validated_peaks"], phases
                         )
                         
                 except Exception as phase_error:
@@ -911,6 +950,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
