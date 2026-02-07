@@ -727,6 +727,7 @@ class AdvancedXRDAnalyzer:
         }
     
         try:
+            wh = None
             # -----------------------------
             # PREPROCESS
             # -----------------------------
@@ -816,6 +817,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
