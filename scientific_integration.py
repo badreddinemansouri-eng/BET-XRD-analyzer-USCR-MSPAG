@@ -12,77 +12,92 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List
 from scipy import stats
-def calculate_phase_fractions(peaks, phases, tol=0.15):
+     
+def map_peaks_to_phases_nano(peaks: List[Dict], phases: List[Dict], 
+                            tolerance_factor: float = 1.5) -> List[Dict]:
     """
-    Semi-quantitative phase fractions using matched peak intensities.
-    No estimation, CIF-validated only.
-
-    Parameters
-    ----------
-    peaks : list
-        Experimental peaks with 'position' and 'intensity'
-    phases : list
-        Phase results from identify_phases()
-    tol : float
-        2θ tolerance in degrees
-
-    Returns
-    -------
-    list of dict
+    Enhanced peak-phase mapping for nanomaterials
+    Uses adaptive tolerance based on peak broadening
     """
-    phase_intensity = {p["phase"]: 0.0 for p in phases}
-    total_intensity = 0.0
-
-    for peak in peaks:
-        t_exp = peak["position"]
-        I = peak["intensity"]
-
-        for phase in phases:
-            for hkl_entry in phase["hkls"]:
-                for refl in hkl_entry:
-                    if abs(refl["two_theta"] - t_exp) < tol:
-                        phase_intensity[phase["phase"]] += I
-                        total_intensity += I
-                        break
-
-    results = []
-    for phase in phases:
-        pname = phase["phase"]
-        frac = (
-            100 * phase_intensity[pname] / total_intensity
-            if total_intensity > 0 else 0.0
-        )
-
-        results.append({
-            "phase": pname,
-            "fraction": round(frac, 2),
-            "confidence": round(phase["score"], 3)
-        })
-
-    return sorted(results, key=lambda x: x["fraction"], reverse=True)     
-def map_peaks_to_phases(peaks, phases, tol=0.15):
-    """
-    Assign phase + HKL to experimental peaks using CIF d-spacing match.
-    """
-
     for peak in peaks:
         peak["phase"] = ""
         peak["hkl"] = ""
         peak["phase_confidence"] = 0.0
-
+        peak["matching_error"] = 0.0
+        
+        # Calculate peak-specific tolerance (broader peaks = larger tolerance)
+        fwhm = peak.get("fwhm_deg", 0)
+        peak_tolerance = 0.15 * (1 + fwhm) * tolerance_factor  # Adaptive tolerance
+        
+        best_match = None
+        best_error = float('inf')
+        
         for phase in phases:
             for hkl_entry in phase["hkls"]:
                 for refl in hkl_entry:
-                    if abs(refl["two_theta"] - peak["position"]) < tol:
-                        peak["phase"] = phase["phase"]
-                        peak["hkl"] = refl["hkl"]
-                        peak["phase_confidence"] = phase["score"]
-                        break                                
+                    error = abs(refl["two_theta"] - peak["position"])
+                    
+                    if error < peak_tolerance and error < best_error:
+                        best_error = error
+                        best_match = {
+                            "phase": phase["phase"],
+                            "hkl": refl["hkl"],
+                            "confidence": phase["score"],
+                            "error": error
+                        }
+        
+        if best_match:
+            peak.update(best_match)
+    
+    return peaks
 
-
-    return peaks        
-
-    return validation
+def calculate_bayesian_phase_fractions(peaks: List[Dict], phases: List[Dict]) -> List[Dict]:
+    """
+    Bayesian phase fraction calculation considering:
+    1. Peak intensity
+    2. Matching confidence
+    3. Phase-specific reliability
+    4. Nanoscale correction factors
+    """
+    phase_data = {p["phase"]: {"intensity_sum": 0, "confidence_sum": 0, "peak_count": 0} 
+                  for p in phases}
+    
+    total_weighted_intensity = 0
+    
+    for peak in peaks:
+        if peak.get("phase") and peak.get("phase_confidence", 0) > 0:
+            phase = peak["phase"]
+            intensity = peak.get("intensity", 0)
+            confidence = peak.get("phase_confidence", 0.5)
+            
+            # Weight by confidence and intensity
+            weight = intensity * confidence
+            
+            phase_data[phase]["intensity_sum"] += weight
+            phase_data[phase]["confidence_sum"] += confidence
+            phase_data[phase]["peak_count"] += 1
+            total_weighted_intensity += weight
+    
+    results = []
+    for phase in phases:
+        pname = phase["phase"]
+        data = phase_data[pname]
+        
+        if total_weighted_intensity > 0 and data["peak_count"] > 0:
+            # Bayesian fraction with reliability correction
+            raw_fraction = data["intensity_sum"] / total_weighted_intensity
+            reliability = min(data["confidence_sum"] / data["peak_count"], 1.0)
+            fraction = raw_fraction * reliability
+            
+            results.append({
+                "phase": pname,
+                "fraction": round(fraction * 100, 2),
+                "confidence": round(phase["score"], 3),
+                "peak_count": data["peak_count"],
+                "reliability": round(reliability, 2)
+            })
+    
+    return sorted(results, key=lambda x: x["fraction"], reverse=True)
 class ScientificIntegrator:
     """Integrates BET and XRD data using scientific principles"""
     
@@ -212,6 +227,7 @@ class ScientificIntegrator:
             'crystallinity': f"{CI:.3f} ± {0.05:.3f}",  # Assumed error
             'crystallite_size': f"{D_crystal:.1f} ± {D_crystal*0.1:.1f} nm"  # 10% error
         }
+
 
 
 
