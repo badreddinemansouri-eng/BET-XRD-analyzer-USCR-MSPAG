@@ -22,7 +22,23 @@ from scientific_integration import (
     calculate_phase_fractions,
     map_peaks_to_phases
 )
-
+# Add to existing imports
+try:
+    from xrd_phase_identifier_nano import (
+        identify_nanomaterial_phases,
+        NanoPeakAnalyzer,
+        map_peaks_to_phases_nano,
+        calculate_bayesian_phase_fractions
+    )
+    NANO_ANALYSIS_AVAILABLE = True
+except ImportError:
+    NANO_ANALYSIS_AVAILABLE = False
+    # Keep original imports as fallback
+    from xrd_phase_identifier import identify_phases
+    from scientific_integration import (
+        calculate_phase_fractions,
+        map_peaks_to_phases
+    )
 warnings.filterwarnings('ignore')
 
 # ============================================================================
@@ -873,6 +889,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
