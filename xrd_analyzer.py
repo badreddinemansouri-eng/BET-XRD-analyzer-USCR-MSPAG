@@ -699,7 +699,7 @@ class AdvancedXRDAnalyzer:
         
         return analyzed_peaks
     
-    def calculate_crystallite_statistics(self, validated_peaks)
+    def calculate_crystallite_statistics(self, validated_peaks):
         """
         Calculate statistics from multiple peaks
         
@@ -950,6 +950,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
