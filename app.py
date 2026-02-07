@@ -1578,6 +1578,9 @@ def display_xrd_analysis(results, plotter):
             file_name="xrd_peak_analysis.csv",
             mime="text/csv",
         )
+         # Add this safety check:
+    if "xrd_results" in xrd_res:
+        xrd_res = xrd_res["xrd_results"]  # Unwrap if nested
 @memory_safe_plot            
 def display_3d_xrd_visualization(results, scientific_params):
     """Display 3D XRD visualization with hkl indices"""
@@ -2413,6 +2416,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
