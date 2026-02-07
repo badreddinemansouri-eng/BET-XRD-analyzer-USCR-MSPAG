@@ -50,7 +50,8 @@ import traceback
 warnings.filterwarnings('ignore')
 import json  # <-- ADD THIS LINE
 # Add to imports at the top of the file
-
+# In app.py, add to the imports section at the top:
+from typing import Dict, List, Tuple, Optional, Any
 # ADD THESE IMPORTS - FIX FOR SCIENTIFICINTEGRATOR ERROR
 try:
     from scientific_integration import ScientificIntegrator
@@ -1494,6 +1495,12 @@ def display_xrd_analysis(results, plotter):
     # ============================================================
     xrd_res = results.get("xrd_results", {})
     xrd_raw = results.get("xrd_raw", {})
+     # Add this safety check:
+    if "xrd_results" in xrd_res:
+        xrd_res = xrd_res["xrd_results"]  # Unwrap if nested
+    
+    # Get peaks safely
+    peaks = xrd_res.get("peaks", [])
      # DEBUG: Show what we actually have
     st.write("🧪 DEBUG - XRD_RESULTS TYPE:", type(xrd_res))
     st.write("🧪 DEBUG - XRD_RESULTS KEYS:", list(xrd_res.keys()) if isinstance(xrd_res, dict) else "Not a dict")
@@ -1689,6 +1696,11 @@ def display_xrd_analysis(results, plotter):
          # Add this safety check:
     if "xrd_results" in xrd_res:
         xrd_res = xrd_res["xrd_results"]  # Unwrap if nested
+    # ============================================================
+    # NANOMATERIAL VALIDATION SECTION
+    # ============================================================
+    # Call the nanomaterial validation display
+    display_nanomaterial_validation(xrd_res)
 def display_nanomaterial_validation(xrd_results: Dict):
     """Display nanomaterial-specific validation metrics in the XRD Analysis tab"""
     
@@ -2689,6 +2701,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
