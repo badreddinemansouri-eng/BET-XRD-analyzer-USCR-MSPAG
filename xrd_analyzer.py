@@ -702,7 +702,7 @@ class AdvancedXRDAnalyzer:
         FULL XRD ANALYSIS — DATABASE DRIVEN (COD + OPTIMADE)
         UI-STABLE, JOURNAL-GRADE
         """
-    
+        
         # -----------------------------
         # SAFE DEFAULTS (NEVER BREAK UI)
         # -----------------------------
@@ -722,12 +722,16 @@ class AdvancedXRDAnalyzer:
             "crystal_system": "Unknown",
             "space_group": "Unknown",
             "lattice_parameters": {},
-             # ✅ ADD THIS (UI SAFETY)
             "ordered_mesopores": False,
+            "wavelength": self.wavelength  # ADD THIS
         }
-    
+        
+        # ================================
+        # ADD THIS LINE: Initialize wh variable
+        # ================================
+        wh = None
+        
         try:
-            wh = None
             # -----------------------------
             # PREPROCESS
             # -----------------------------
@@ -742,6 +746,7 @@ class AdvancedXRDAnalyzer:
             xrd_results["peaks"] = peaks
             xrd_results["top_peaks"] = peaks[:15]
             xrd_results["n_peaks_total"] = len(peaks)
+            
             # -----------------------------
             # CRYSTALLINITY (✅ FIXED)
             # -----------------------------
@@ -770,37 +775,44 @@ class AdvancedXRDAnalyzer:
             # PHASE IDENTIFICATION
             # -----------------------------
             if elements:
-                phases = identify_phases(
-                    two_theta_p,
-                    intensity_p,
-                    wavelength=self.wavelength,
-                    elements=elements
-                )
-    
-                xrd_results["phases"] = phases
-    
-                if phases:
-                    best = phases[0]
-                    xrd_results["crystal_system"] = best["crystal_system"]
-                    xrd_results["space_group"] = best["space_group"]
-                    xrd_results["lattice_parameters"] = best["lattice"]
-    
-                    xrd_results["peaks"] = map_peaks_to_phases(peaks, phases)
-    
-                    xrd_results["phase_fractions"] = calculate_phase_fractions(
-                        xrd_results["peaks"], phases
+                try:
+                    phases = identify_phases(
+                        two_theta_p,
+                        intensity_p,
+                        wavelength=self.wavelength,
+                        elements=elements
                     )
-                # ===============================
-                # FORCE PERSISTENCE (CRITICAL)
-                # ===============================
-                if "williamson_hall" in xrd_results:
-                    pass
-                elif wh:
-                    xrd_results["williamson_hall"] = wh
-            assert "xrd_results" not in xrd_results, "Nested xrd_results detected"
+    
+                    xrd_results["phases"] = phases
+    
+                    if phases:
+                        best = phases[0]
+                        xrd_results["crystal_system"] = best["crystal_system"]
+                        xrd_results["space_group"] = best["space_group"]
+                        xrd_results["lattice_parameters"] = best["lattice"]
+    
+                        xrd_results["peaks"] = map_peaks_to_phases(peaks, phases)
+    
+                        xrd_results["phase_fractions"] = calculate_phase_fractions(
+                            xrd_results["peaks"], phases
+                        )
+                except Exception as phase_error:
+                    # Don't fail entire analysis if phase ID fails
+                    xrd_results["phase_error"] = str(phase_error)
+                    print(f"Phase identification warning: {phase_error}")
+            
+            # ===============================
+            # FORCE PERSISTENCE (CRITICAL)
+            # ===============================
+            if "williamson_hall" in xrd_results:
+                pass
+            elif wh:
+                xrd_results["williamson_hall"] = wh
+                
+            # Return successful structure - FIXED
             return {
                 "valid": True,
-                **xrd_results,
+                "xrd_results": xrd_results,  # This is what app.py expects
                 "xrd_raw": {
                     "two_theta": two_theta_p.tolist(),
                     "intensity": intensity_p.tolist()
@@ -808,15 +820,16 @@ class AdvancedXRDAnalyzer:
             }
     
         except Exception as e:
+            # Return error structure - FIXED
             return {
                 "valid": False,
                 "error": str(e),
-                "xrd_results": xrd_results
+                "xrd_results": xrd_results  # Return the empty/default structure
             }
 
 
-
     
+
 
 
 
