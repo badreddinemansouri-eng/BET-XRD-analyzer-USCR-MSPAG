@@ -252,14 +252,16 @@ class NanoPhaseIdentifier:
         
         return nano_relevant
     
+        # In xrd_phase_identifier_nano.py, update the _fetch_cod_nano method:
+        
     def _fetch_cod_nano(self, elements: List[str]) -> List[Dict]:
-        """Fetch COD structures with nanomaterial focus"""
+        """Fetch COD structures with nanomaterial focus - FIXED"""
         try:
             query = {
                 "format": "json",
                 "el": ",".join(elements),
                 "maxresults": 50,
-                "nonalphanumeric": "ignore"  # Include nanostructured phases
+                "nonalphanumeric": "ignore"
             }
             response = requests.get(self.cod_api, params=query, timeout=30)
             
@@ -267,19 +269,40 @@ class NanoPhaseIdentifier:
                 data = response.json()
                 structures = []
                 
-                for entry in data.get('data', []):
-                    formula = entry.get('formula', '')
-                    
-                    # Enhanced metadata for nanomaterials
-                    structures.append({
-                        'database': 'COD',
-                        'cod_id': entry.get('cod_id', ''),
-                        'formula': formula,
-                        'space_group': entry.get('space_group', ''),
-                        'cell_parameters': entry.get('cell_parameters', {}),
-                        'cif_url': f"https://www.crystallography.net/cod/{entry.get('cod_id')}.cif",
-                        'nano_score': self._calculate_nano_score(formula, entry.get('cell_parameters', {}))
-                    })
+                # DEBUG: Show what we're getting
+                st.write(f"🧪 COD API Response type: {type(data)}")
+                
+                # COD API returns a list, not a dict
+                if isinstance(data, list):
+                    entries = data
+                elif isinstance(data, dict) and 'data' in data:
+                    entries = data.get('data', [])
+                else:
+                    entries = []
+                
+                st.write(f"🧪 Number of COD entries found: {len(entries)}")
+                
+                for i, entry in enumerate(entries[:20]):  # Limit to 20 for speed
+                    try:
+                        # Handle different COD response formats
+                        if isinstance(entry, dict):
+                            # Try different possible field names for COD ID
+                            cod_id = entry.get('codid') or entry.get('cod_id') or entry.get('id')
+                            
+                            if cod_id:
+                                # Get formula if available
+                                formula = entry.get('formula') or entry.get('chemical_formula') or ''
+                                
+                                structures.append({
+                                    'database': 'COD',
+                                    'cod_id': str(cod_id),
+                                    'formula': formula,
+                                    'space_group': entry.get('space_group', ''),
+                                    'cif_url': f"https://www.crystallography.net/cod/{cod_id}.cif",
+                                    'nano_score': self._calculate_nano_score(formula, {})
+                                })
+                    except Exception as e:
+                        continue
                 
                 return structures
         except Exception as e:
@@ -498,3 +521,4 @@ def identify_nanomaterial_phases(two_theta: np.ndarray, intensity: np.ndarray,
                 st.markdown(f"- **{db}:** {count} phase(s)")
     
     return final_results
+
