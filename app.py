@@ -1699,8 +1699,107 @@ def display_xrd_analysis(results, plotter):
     # ============================================================
     # NANOMATERIAL VALIDATION SECTION
     # ============================================================
-    # Call the nanomaterial validation display
-    display_nanomaterial_validation(xrd_res)
+     # After all other XRD display code, before the end of the function:
+    display_universal_material_analysis(xrd_res)
+def display_universal_material_analysis(xrd_results: Dict):
+    """Display universal material analysis for ANY sample"""
+    
+    if not xrd_results:
+        return
+    
+    st.markdown("---")
+    st.subheader("🌍 Universal Material Analysis")
+    
+    # Material family
+    material_family = xrd_results.get("material_family", "unknown")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        family_display = material_family.replace('_', ' ').title()
+        st.metric("Material Family", family_display)
+    
+    with col2:
+        peaks_count = len(xrd_results.get("peaks", []))
+        st.metric("Peaks Detected", peaks_count)
+    
+    with col3:
+        ci = xrd_results.get("crystallinity_index", 0)
+        st.metric("Crystallinity", f"{ci:.2f}")
+    
+    with col4:
+        size = xrd_results.get("crystallite_size", {}).get("scherrer", 0)
+        if size > 0:
+            size_category = "Ultra-nano (<5 nm)" if size < 5 else \
+                          "Nano (5-20 nm)" if size < 20 else \
+                          "Sub-micron (20-100 nm)" if size < 100 else "Micron-scale"
+            st.metric("Size Category", size_category)
+    
+    # Scientific interpretation based on material family
+    with st.expander("🔬 Scientific Interpretation", expanded=True):
+        st.markdown("### **Material Characteristics**")
+        
+        # Generic interpretation
+        ci = xrd_results.get("crystallinity_index", 0)
+        size = xrd_results.get("crystallite_size", {}).get("scherrer", 0)
+        peaks = xrd_results.get("peaks", [])
+        
+        if ci < 0.3:
+            st.markdown("✅ **Highly Amorphous/Nanocrystalline**")
+            st.markdown("- Broad, diffuse peaks suggest short-range order")
+            st.markdown("- Typical of sol-gel synthesized materials")
+            st.markdown("- High surface area expected")
+        elif ci < 0.7:
+            st.markdown("🔄 **Partially Crystalline**")
+            st.markdown("- Mixed crystalline/amorphous character")
+            st.markdown("- Common in nanomaterials with surface effects")
+            st.markdown("- May exhibit quantum confinement effects")
+        else:
+            st.markdown("💎 **Highly Crystalline**")
+            st.markdown("- Sharp, well-defined diffraction peaks")
+            st.markdown("- Long-range crystallographic order")
+            st.markdown("- Lower surface area, more bulk-like properties")
+        
+        # Size interpretation
+        if size > 0:
+            st.markdown("### **Size Analysis**")
+            if size < 5:
+                st.markdown(f"🔬 **Ultra-nanocrystalline**: {size:.1f} nm")
+                st.markdown("- Strong quantum confinement effects")
+                st.markdown("- High surface-to-volume ratio")
+                st.markdown("- Potential for enhanced catalytic activity")
+            elif size < 20:
+                st.markdown(f"🔬 **Nanocrystalline**: {size:.1f} nm")
+                st.markdown("- Moderate quantum effects")
+                st.markdown("- Good balance of surface area and stability")
+                st.markdown("- Common in functional nanomaterials")
+            elif size < 100:
+                st.markdown(f"🔬 **Sub-micron**: {size:.1f} nm")
+                st.markdown("- Reduced surface effects")
+                st.markdown("- More bulk-like properties")
+                st.markdown("- Good for structural applications")
+        
+        # Family-specific recommendations
+        family = xrd_results.get("material_family", "").lower()
+        
+        st.markdown("### **Scientific Recommendations**")
+        
+        if "oxide" in family:
+            st.markdown("1. **For oxides**: Consider BET analysis for surface area")
+            st.markdown("2. **Characterization**: Combine with XPS for oxidation states")
+            st.markdown("3. **Applications**: Catalysis, sensors, energy storage")
+        elif "metal" in family and "nanoparticle" in family:
+            st.markdown("1. **For metal NPs**: TEM for size/shape verification")
+            st.markdown("2. **Characterization**: UV-Vis for plasmon resonance")
+            st.markdown("3. **Applications**: Catalysis, plasmonics, medicine")
+        elif "2d" in family or "layered" in family:
+            st.markdown("1. **For 2D materials**: AFM for thickness measurement")
+            st.markdown("2. **Characterization**: Raman spectroscopy for layer count")
+            st.markdown("3. **Applications**: Electronics, optoelectronics, sensors")
+        else:
+            st.markdown("1. **General**: Validate with complementary techniques")
+            st.markdown("2. **Characterization**: Consider SEM/TEM for morphology")
+            st.markdown("3. **Applications**: Depends on material properties")
 def display_nanomaterial_validation(xrd_results: Dict):
     """Display nanomaterial-specific validation metrics in the XRD Analysis tab"""
     
@@ -2701,6 +2800,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
