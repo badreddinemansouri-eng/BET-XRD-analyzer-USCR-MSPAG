@@ -789,6 +789,9 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
         # ====================================================================
         # STEP 3: XRD ANALYSIS - ENHANCED WITH CRYSTALLOGRAPHY ENGINE
         # ====================================================================
+        # ====================================================================
+        # STEP 3: XRD ANALYSIS - UPDATED WITH PROPER ERROR HANDLING
+        # ====================================================================
         if 'xrd_raw' in analysis_results:
             status_text.text("📈 Performing advanced XRD analysis...")
             progress_bar.progress(60)
@@ -815,124 +818,195 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     elements=st.session_state.get("xrd_elements", [])
                 )
                 
-                if not xrd_out.get("valid", False):
-                    raise RuntimeError(xrd_out.get("error", "XRD failed"))
-                
-                xrd_results = xrd_out["xrd_results"]
-                analysis_results["xrd_raw"] = xrd_out["xrd_raw"]
-                
-                # 🔧 GLOBAL NORMALIZATION FIX (ADD THIS)
-                if xrd_out.get("valid") and "xrd_results" in xrd_out:
-                    xrd_results = xrd_out["xrd_results"]
-                else:
-                    xrd_results = {
-                        "peaks": [],
-                        "crystallinity_index": 0.0,
-                        "crystallite_size": {},
-                        "phases": []
+                # ============================================================
+                # PROPER HANDLING OF XRD ANALYSIS RESULTS
+                # ============================================================
+                if not isinstance(xrd_out, dict):
+                    st.error(f"❌ XRD analysis returned invalid type: {type(xrd_out)}")
+                    # Create empty results structure
+                    analysis_results['xrd_results'] = {
+                        'valid': False,
+                        'error': 'Invalid analysis output',
+                        'wavelength': wavelength,
+                        'peaks': [],
+                        'crystallinity_index': 0.0,
+                        'crystallite_size': {'scherrer': 0.0, 'williamson_hall': 0.0, 'distribution': 'Unknown'},
+                        'microstrain': 0.0,
+                        'ordered_mesopores': False,
+                        'phases': [],
+                        'phase_fractions': []
                     }
-                # 🔍 DEBUG — PUT THIS HERE
-
-                # ===============================
-                # NORMALIZE PHASE IDENTIFICATION
-                # ===============================
-                if xrd_results.get("primary_phase"):
-                    primary = xrd_results["primary_phase"]
-                
-                    xrd_results["crystal_system"] = primary.get("crystal_system", "Unknown")
-                    xrd_results["space_group"] = primary.get("space_group", "")
-                    xrd_results["lattice_parameters"] = primary.get("lattice", {})
-                
-                    # Overwrite HKL into peaks (UI expects this)
-                    for p in xrd_results.get("peaks", []):
-                        if "hkl" not in p:
-                            p["hkl"] = ""
-                
+                    analysis_results['xrd_raw'] = analysis_results['xrd_raw']  # Keep existing raw data
                 else:
-                    xrd_results.setdefault("crystal_system", "Unknown")
-                    xrd_results.setdefault("space_group", "")
-                    xrd_results.setdefault("lattice_parameters", {})
-
-                # After performing XRD analysis, add:
-                if 'xrd_results' in analysis_results:
-                    # Try to find missing hkl indices
-                    analysis_results['xrd_results'] = find_missing_hkl_indices(
-                        analysis_results['xrd_results'],
-                        params['crystal']
-                    )
-                # ENHANCE WITH CRYSTALLOGRAPHY ENGINE FOR BETTER HKL INDEXING
-                if (xrd_results.get("peaks") and 
-                    params['crystal']['system'] != 'Unknown' and 
-                    params['crystal']['lattice_params']):
-                    
-                    try:
-                        # Initialize crystallography engine
-                        from crystallography_engine import CrystallographyEngine
-                        ce = CrystallographyEngine()
+                    # Check if analysis was successful
+                    if xrd_out.get("valid", False):
+                        # Success case - extract results properly
+                        xrd_results = xrd_out.get("xrd_results", {})
                         
-                        # Parse lattice parameters
-                        lattice_dict = {}
-                        import re
-                        lattice_str = params['crystal']['lattice_params']
-                        for match in re.finditer(r'([abc])\s*=\s*([\d\.]+)', lattice_str):
-                            lattice_dict[match.group(1)] = float(match.group(2))
+                        # Ensure we have all required fields
+                        if 'wavelength' not in xrd_results:
+                            xrd_results['wavelength'] = wavelength
+                        if 'phases' not in xrd_results:
+                            xrd_results['phases'] = []
+                        if 'phase_fractions' not in xrd_results:
+                            xrd_results['phase_fractions'] = []
+                        if 'crystallite_size' not in xrd_results:
+                            xrd_results['crystallite_size'] = {'scherrer': 0.0, 'williamson_hall': 0.0, 'distribution': 'Unknown'}
                         
-                        # Index peaks using crystallography engine
-                        peak_positions = [p['position'] for p in xrd_results['peaks']]
-                        indexing_result = ce.index_peaks(
-                            peak_positions=peak_positions,
-                            crystal_system=params['crystal']['system'],
-                            lattice_params=lattice_dict,
-                            wavelength=wavelength,
-                            space_group=params['crystal']['space_group']
-                        )
+                        analysis_results['xrd_results'] = xrd_results
                         
-                        # Update peaks with better hkl indexing
-                        indexed_peaks = indexing_result.get('indexed_peaks', [])
-                        for i, peak in enumerate(xrd_results['peaks']):
-                            if i < len(indexed_peaks):
-                                hkl_info = indexed_peaks[i]
-                                peak['hkl'] = f"({hkl_info['h']}{hkl_info['k']}{hkl_info['l']})"
-                                peak['hkl_detail'] = hkl_info
-                                peak['indexing_error'] = hkl_info['error_percent']
+                        if "xrd_raw" in xrd_out:
+                            analysis_results["xrd_raw"] = xrd_out["xrd_raw"]
                         
-                        # Add indexing results to XRD results
-                        xrd_results['indexing'] = indexing_result
-                        xrd_results['indexing_method'] = 'Pawley-like refinement'
+                        # Display success message
+                        st.success("✅ XRD analysis completed successfully")
                         
-                    except Exception as e:
-                        st.warning(f"Crystallography engine: {str(e)}")
-                
-                analysis_results['xrd_results'] = xrd_results
-                assert "xrd_results" not in xrd_results, "❌ Nested xrd_results detected"
-                
-                if xrd_results.get("peaks"):
-                    st.success("✅ XRD analysis completed successfully")
-                    
-                    # Display key results
-                    xrd_res = xrd_results
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    with col1:
-                        st.metric("Crystallinity", f"{xrd_results['crystallinity_index']:.2f}")
-                    with col2:
-                        size = xrd_results["crystallite_size"]["scherrer"]
-                        st.metric("Size", f"{size:.1f} nm" if size else "N/A")
-                    with col3:
-                        st.metric("Peaks", f"{len(xrd_res['peaks'])}")
-                    with col4:
-                        # Show indexing quality if available
-                        if 'indexing' in xrd_res:
-                            fom = xrd_res['indexing']['figures_of_merit']
-                            st.metric("M₂₀", f"{fom.get('M20', 0):.1f}")
+                        # Display key results - SAFE ACCESS
+                        xrd_res = analysis_results['xrd_results']
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            ci = xrd_res.get('crystallinity_index', 0)
+                            st.metric("Crystallinity", f"{ci:.2f}")
+                        
+                        with col2:
+                            size_data = xrd_res.get('crystallite_size', {})
+                            size = size_data.get('scherrer', 0)
+                            st.metric("Size", f"{size:.1f} nm" if size else "N/A")
+                        
+                        with col3:
+                            peaks_count = len(xrd_res.get('peaks', []))
+                            st.metric("Peaks", f"{peaks_count}")
+                        
+                        with col4:
+                            # Show ordered mesopores or indexing quality
+                            if 'indexing' in xrd_res:
+                                fom = xrd_res['indexing'].get('figures_of_merit', {})
+                                m20 = fom.get('M20', 0)
+                                st.metric("M₂₀", f"{m20:.1f}")
+                            else:
+                                ordered = xrd_res.get('ordered_mesopores', False)
+                                st.metric("Ordered", "Yes" if ordered else "No")
+                        
+                        # ENHANCE WITH CRYSTALLOGRAPHY ENGINE FOR BETTER HKL INDEXING
+                        if (xrd_results.get("peaks") and 
+                            params['crystal']['system'] != 'Unknown' and 
+                            params['crystal']['lattice_params']):
+                            
+                            try:
+                                # Initialize crystallography engine
+                                from crystallography_engine import CrystallographyEngine
+                                ce = CrystallographyEngine()
+                                
+                                # Parse lattice parameters
+                                lattice_dict = {}
+                                import re
+                                lattice_str = params['crystal']['lattice_params']
+                                for match in re.finditer(r'([abc])\s*=\s*([\d\.]+)', lattice_str):
+                                    lattice_dict[match.group(1)] = float(match.group(2))
+                                
+                                # Index peaks using crystallography engine
+                                peak_positions = [p['position'] for p in xrd_results['peaks']]
+                                indexing_result = ce.index_peaks(
+                                    peak_positions=peak_positions,
+                                    crystal_system=params['crystal']['system'],
+                                    lattice_params=lattice_dict,
+                                    wavelength=wavelength,
+                                    space_group=params['crystal']['space_group']
+                                )
+                                
+                                # Update peaks with better hkl indexing
+                                indexed_peaks = indexing_result.get('indexed_peaks', [])
+                                for i, peak in enumerate(xrd_results['peaks']):
+                                    if i < len(indexed_peaks):
+                                        hkl_info = indexed_peaks[i]
+                                        peak['hkl'] = f"({hkl_info['h']}{hkl_info['k']}{hkl_info['l']})"
+                                        peak['hkl_detail'] = hkl_info
+                                        peak['indexing_error'] = hkl_info['error_percent']
+                                
+                                # Add indexing results to XRD results
+                                xrd_results['indexing'] = indexing_result
+                                xrd_results['indexing_method'] = 'Pawley-like refinement'
+                                
+                                # Update the stored results
+                                analysis_results['xrd_results'] = xrd_results
+                                
+                            except Exception as e:
+                                st.warning(f"Crystallography engine: {str(e)}")
+                        
+                    else:
+                        # Error case - but we might have partial results
+                        error_msg = xrd_out.get('error', 'XRD analysis failed')
+                        
+                        # Check if we have partial results
+                        partial_results = xrd_out.get('xrd_results', {})
+                        
+                        if partial_results and isinstance(partial_results, dict):
+                            # We have some results despite the error
+                            analysis_results['xrd_results'] = partial_results
+                            
+                            # Ensure required fields
+                            if 'wavelength' not in partial_results:
+                                partial_results['wavelength'] = wavelength
+                            if 'phases' not in partial_results:
+                                partial_results['phases'] = []
+                            if 'phase_fractions' not in partial_results:
+                                partial_results['phase_fractions'] = []
+                            
+                            # Show warning with partial results
+                            st.warning(f"⚠️ XRD analysis completed with warnings: {error_msg}")
+                            
+                            # Show what data we have
+                            if partial_results.get('peaks'):
+                                n_peaks = len(partial_results['peaks'])
+                                st.info(f"✅ Partial data available: {n_peaks} peaks found")
                         else:
-                            st.metric("Ordered", "Yes" if xrd_res['ordered_mesopores'] else "No")
+                            # Complete failure - create empty structure
+                            analysis_results['xrd_results'] = {
+                                'valid': False,
+                                'error': error_msg,
+                                'wavelength': wavelength,
+                                'peaks': [],
+                                'crystallinity_index': 0.0,
+                                'crystallite_size': {'scherrer': 0.0, 'williamson_hall': 0.0, 'distribution': 'Unknown'},
+                                'microstrain': 0.0,
+                                'ordered_mesopores': False,
+                                'phases': [],
+                                'phase_fractions': []
+                            }
+                            st.error(f"❌ XRD analysis error: {error_msg}")
+                        
+                        # Keep the raw data we already have
+                        if "xrd_raw" in xrd_out:
+                            analysis_results["xrd_raw"] = xrd_out["xrd_raw"]
                 
-                else:
-                    st.warning(f"⚠️ XRD analysis completed with warnings: {xrd_results.get('error', 'Unknown error')}")
-                    
+                # ============================================================
+                # POST-PROCESSING: ENSURE PROPER STRUCTURE
+                # ============================================================
+                xrd_final = analysis_results.get('xrd_results', {})
+                
+                # Ensure we have a valid wavelength
+                if 'wavelength' not in xrd_final:
+                    xrd_final['wavelength'] = wavelength
+                
+                # Ensure phases list exists
+                if 'phases' not in xrd_final:
+                    xrd_final['phases'] = []
+                
+                # Debug output to verify structure
+                st.write("🧪 DEBUG - XRD_RESULTS TYPE:", type(xrd_final))
+                st.write("🧪 DEBUG - XRD_RESULTS HAS PEAKS:", 'peaks' in xrd_final)
+                if 'peaks' in xrd_final:
+                    st.write("🧪 DEBUG - NUMBER OF PEAKS:", len(xrd_final['peaks']))
+                
+                # Update the stored results
+                analysis_results['xrd_results'] = xrd_final
+                
             except Exception as e:
                 st.error(f"❌ XRD analysis error: {str(e)}")
+                
+                # Create minimal valid structure even on complete failure
                 analysis_results['xrd_results'] = {
                     'valid': False,
                     'error': str(e),
@@ -941,9 +1015,16 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     'crystallinity_index': 0.0,
                     'crystallite_size': {'scherrer': 0.0, 'williamson_hall': 0.0, 'distribution': 'Unknown'},
                     'microstrain': 0.0,
-                    'ordered_mesopores': False
+                    'ordered_mesopores': False,
+                    'phases': [],
+                    'phase_fractions': []
                 }
-        
+                
+                # Show detailed error for debugging
+                with st.expander("Detailed error information", expanded=False):
+                    st.code(str(e))
+                    import traceback
+                    st.code(traceback.format_exc())
         # ====================================================================
         # STEP 4: MORPHOLOGY FUSION (if we have any valid results)
         # ====================================================================
@@ -1394,6 +1475,9 @@ def display_xrd_analysis(results, plotter):
     # ============================================================
     xrd_res = results.get("xrd_results", {})
     xrd_raw = results.get("xrd_raw", {})
+     # DEBUG: Show what we actually have
+    st.write("🧪 DEBUG - XRD_RESULTS TYPE:", type(xrd_res))
+    st.write("🧪 DEBUG - XRD_RESULTS KEYS:", list(xrd_res.keys()) if isinstance(xrd_res, dict) else "Not a dict")
     # ==========================================================
     # (2) WHY NO PHASE DETECTED — DIAGNOSTIC PANEL
     # ==========================================================
@@ -2416,6 +2500,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
