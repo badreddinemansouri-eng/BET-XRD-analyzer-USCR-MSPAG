@@ -743,42 +743,80 @@ class AdvancedXRDAnalyzer:
         }
     def complete_analysis(self, two_theta, intensity, elements=None, params=None):
         """
-        FULL XRD ANALYSIS — DATABASE DRIVEN (COD + OPTIMADE)
-        UI-STABLE, JOURNAL-GRADE
+        COMPLETE XRD ANALYSIS — LAYER 1 (PEAK PHYSICS ONLY)
+    
+        Purpose:
+        --------
+        - Safely detect candidate peaks
+        - Physically validate real diffraction peaks
+        - Return a UI-stable structure
+        - NO phase identification yet
+        - NO crystallite size yet
+        - NO Williamson–Hall yet
+    
+        This function is the HARD FOUNDATION.
         """
+    
+        import numpy as np
+    
         # =====================================================
-        # GUARANTEED DEFAULTS (CRITICAL)
+        # SAFETY: PARAMETERS MUST EXIST
         # =====================================================
-        intensity_used = intensity.copy()
-        background = np.zeros_like(intensity)
-
-        # -----------------------------------
-        # Safety: params must exist
-        # -----------------------------------
         if params is None:
             params = {}
-
-        # -----------------------------------
-        # X-ray wavelength (DEFINE IT!)
-        # -----------------------------------
-        if isinstance(params.get("wavelength"), str):
-            if "Cu" in params["wavelength"]:
+    
+        # =====================================================
+        # GUARANTEED DEFAULTS (CRITICAL — NEVER REMOVE)
+        # =====================================================
+        # These ALWAYS exist, no matter what happens later
+        intensity_used = intensity.copy()
+        background = np.zeros_like(intensity)
+    
+        # =====================================================
+        # X-RAY WAVELENGTH (DEFINED ONCE, USED EVERYWHERE)
+        # =====================================================
+        wl = params.get("wavelength", "Cu Kα (0.15406 nm)")
+    
+        if isinstance(wl, str):
+            if "Cu" in wl:
                 wavelength = 1.5406
-            elif "Mo" in params["wavelength"]:
+            elif "Mo" in wl:
                 wavelength = 0.7107
-            elif "Co" in params["wavelength"]:
+            elif "Co" in wl:
                 wavelength = 1.7902
             else:
-                wavelength = 1.5406  # safe default
+                wavelength = 1.5406  # safe fallback
         else:
-            wavelength = float(params.get("wavelength", 1.5406))
+            wavelength = float(wl)
+    
+        # =====================================================
+        # INSTRUMENT + PHYSICAL VALIDATOR (LAYER 1 CORE)
+        # =====================================================
         instrument = InstrumentProfile(wavelength=wavelength)
         validator = PhysicalPeakValidator(instrument)
-        peak_indices = detect_peaks(two_theta, intensity_used) or []
-
-
+    
+        # =====================================================
+        # BACKGROUND SUBTRACTION (SAFE, OPTIONAL)
+        # =====================================================
+        try:
+            intensity_bg_subtracted, background = snip_background(intensity)
+            intensity_used = intensity_bg_subtracted
+        except Exception:
+            # If SNIP fails, raw intensity is still used
+            pass
+    
+        # =====================================================
+        # CANDIDATE PEAK DETECTION (LIBERAL)
+        # =====================================================
+        peak_indices = detect_peaks(two_theta, intensity_used)
+        if peak_indices is None:
+            peak_indices = []
+    
+        # =====================================================
+        # PHYSICAL PEAK VALIDATION (STRICT)
+        # =====================================================
         validated_peaks = []
-        
+    
         for idx in peak_indices:
             peak = validator.validate(
                 idx,
@@ -788,16 +826,20 @@ class AdvancedXRDAnalyzer:
             )
             if peak:
                 validated_peaks.append(peak)
-
-        results["peaks"] = validated_peaks
-        # -----------------------------
-        # SAFE DEFAULTS (NEVER BREAK UI)
-        # -----------------------------
+    
+        # =====================================================
+        # SORT PEAKS BY INTENSITY (DESCENDING)
+        # =====================================================
+        validated_peaks.sort(key=lambda x: x["intensity"], reverse=True)
+    
+        # =====================================================
+        # UI-STABLE RESULTS STRUCTURE (NEVER BREAKS)
+        # =====================================================
         xrd_results = {
             "phases": [],
             "phase_fractions": [],
-            "validated_peaks": [],
-            "top_peaks": [],
+            "validated_peaks": validated_peaks,
+            "top_peaks": validated_peaks[:15],
             "crystallinity_index": 0.0,
             "crystallite_size": {
                 "scherrer": 0.0,
@@ -810,129 +852,26 @@ class AdvancedXRDAnalyzer:
             "space_group": "Unknown",
             "lattice_parameters": {},
             "ordered_mesopores": False,
-            "wavelength": self.wavelength  # ADD THIS
+            "wavelength": wavelength,
+            "n_peaks_total": len(validated_peaks)
         }
-        
-        # ================================
-        # ADD THIS LINE: Initialize wh variable
-        # ================================
-        wh = None
-        
-        try:
-            # -----------------------------
-            # PREPROCESS
-            # -----------------------------
-            two_theta_p, intensity_p = self.preprocess_pattern(two_theta, intensity)
-            
-            intensity_bg_subtracted, background = snip_background(intensity)
-            intensity_used = intensity_bg_subtracted
-            # -----------------------------
-            # PEAK DETECTION (ALL PEAKS)
-            # -----------------------------
-            validated_peaks = self.analyze_peaks(two_theta_p, intensity_p)
-            validated_peaks.sort(key=lambda x: x["intensity"], reverse=True)
     
-            xrd_results["validated_peaks"] = validated_peaks
-            xrd_results["top_peaks"] = validated_peaks[:15]
-            xrd_results["n_peaks_total"] = len(validated_peaks)
-            
-            # -----------------------------
-            # CRYSTALLINITY (✅ FIXED)
-            # -----------------------------
-            xrd_results["crystallinity_index"] = calculate_crystallinity_index(
-                two_theta_p, intensity_p, validated_peaks
-            )
-    
-            # -----------------------------
-            # CRYSTALLITE SIZE (ALL PEAKS)
-            # -----------------------------
-            size_stats = self.calculate_crystallite_statistics(validated_peaks)
-            xrd_results["crystallite_size"]["scherrer"] = size_stats["mean_size"]
-            xrd_results["crystallite_size"]["distribution"] = size_stats["distribution"]
-    
-            if len(validated_peaks) >= 3:
-                wh = williamson_hall_analysis(validated_peaks, self.wavelength)
-                if wh:
-                    xrd_results["williamson_hall"] = wh  # 🔑 REQUIRED FOR PLOTTING
-                    xrd_results["crystallite_size"]["williamson_hall"] = wh["crystallite_size"]
-                    xrd_results["microstrain"] = wh["microstrain"]
-                    xrd_results["dislocation_density"] = (
-                        15 * wh["microstrain"] / (wh["crystallite_size"] * 1e-9)
-                    )
-    
-            # -----------------------------
-            # PHASE IDENTIFICATION
-            # -----------------------------
-            # In complete_analysis method, replace the phase identification section:
-            
-            if elements:
-                try:
-                    if UNIVERSAL_PHASE_ID_AVAILABLE:
-                        # Use universal nanomaterial identification
-                        phases = identify_phases_universal(
-                            two_theta_p,
-                            intensity_p,
-                            wavelength=self.wavelength,
-                            elements=elements
-                        )
-                    else:
-                        # Fallback to original
-                        phases = identify_phases(
-                            two_theta_p,
-                            intensity_p,
-                            wavelength=self.wavelength,
-                            elements=elements
-                        )
-                    
-                    xrd_results["phases"] = phases
-                    
-                    if phases:
-                        best = phases[0]
-                        xrd_results["crystal_system"] = best["crystal_system"]
-                        xrd_results["space_group"] = best["space_group"]
-                        xrd_results["lattice_parameters"] = best["lattice"]
-                        xrd_results["material_family"] = best.get("material_family", "unknown")
-                        
-                        # Map peaks to phases
-                        xrd_results["validated_peaks"] = map_peaks_to_phases(validated_peaks, phases)
-                        
-                        # Calculate phase fractions
-                        xrd_results["phase_fractions"] = calculate_phase_fractions(
-                            xrd_results["validated_peaks"], phases
-                        )
-                        
-                except Exception as phase_error:
-                    # Don't fail entire analysis
-                    st.warning(f"Phase identification issue: {phase_error}")
-                    xrd_results["phases"] = []
-            # ===============================
-            # FORCE PERSISTENCE (CRITICAL)
-            # ===============================
-            if "williamson_hall" in xrd_results:
-                pass
-            elif wh:
-                xrd_results["williamson_hall"] = wh
-                
-            # Return successful structure - FIXED
-            return {
-                "valid": True,
-                "xrd_results": xrd_results,  # This is what app.py expects
-                "xrd_raw": {
-                    "two_theta": two_theta_p.tolist(),
-                    "intensity": intensity_p.tolist()
-                }
+        # =====================================================
+        # RETURN — CLEAN, SAFE, EXPECTED BY app.py
+        # =====================================================
+        return {
+            "valid": True,
+            "xrd_results": xrd_results,
+            "xrd_raw": {
+                "two_theta": two_theta.tolist(),
+                "intensity": intensity.tolist()
             }
-    
-        except Exception as e:
-            # Return error structure - FIXED
-            return {
-                "valid": False,
-                "error": str(e),
-                "xrd_results": xrd_results  # Return the empty/default structure
-            }
+        }
+
 
 
     
+
 
 
 
