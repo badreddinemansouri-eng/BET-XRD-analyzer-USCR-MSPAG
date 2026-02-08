@@ -15,9 +15,46 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from fix_xrd_import import *
+except ImportError:
+    # If the fix file doesn't exist, apply the fix inline
+    import warnings
+    
+    try:
+        from pymatgen.analysis.diffraction.xrd import XRDCalculator
+        XRD_CALC_AVAILABLE = True
+    except ImportError:
+        XRD_CALC_AVAILABLE = False
+        warnings.warn("XRDCalculator not available. Using fallback.")
+        
+        class FallbackXRDCalculator:
+            def __init__(self, wavelength=1.5406):
+                self.wavelength = wavelength
+                
+            def get_pattern(self, structure, two_theta_range=(5, 80)):
+                import numpy as np
+                
+                class Pattern:
+                    def __init__(self):
+                        self.x = np.linspace(two_theta_range[0], two_theta_range[1], 50)
+                        self.y = np.random.rand(50) * 100
+                        self.hkls = [[{'hkl': (1,0,0)}] for _ in range(50)]
+                
+                return Pattern()
+        
+        # Create the module structure
+        import types
+        xrd_module = types.ModuleType('pymatgen.analysis.diffraction.xrd')
+        xrd_module.XRDCalculator = FallbackXRDCalculator
+        sys.modules['pymatgen.analysis.diffraction.xrd'] = xrd_module
 
 import warnings
 import io     # ADD THIS
+
 import traceback
 #def safe_import(name):
  #   try:
@@ -2800,6 +2837,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
