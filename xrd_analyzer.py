@@ -280,30 +280,6 @@ def detect_peaks(two_theta, intensity, min_distance=10, threshold=0.1):
         intensity_bg_subtracted, background = snip_background(intensity)
         intensity_used = intensity_bg_subtracted
 
-
-    # -----------------------------------
-    # Physical peak validation (NEW)
-    # -----------------------------------
-    instrument = InstrumentProfile(wavelength=wavelength)
-    
-    validator = PhysicalPeakValidator(instrument)
-    
-    validated_peaks = []
-    
-    for idx in peak_indices:
-        peak = validator.validate(
-            idx,
-            two_theta,
-            intensity_used,
-            background
-        )
-
-        if peak is not None:
-            validated_peaks.append(peak)
-
-    return validated_peaks
-
-
 # ============================================================================
 # CRYSTALLOGRAPHIC CALCULATIONS
 # ============================================================================
@@ -667,21 +643,6 @@ class AdvancedXRDAnalyzer:
         # -----------------------------------
         # Physical peak validation (NEW)
         # -----------------------------------
-        instrument = InstrumentProfile(wavelength=wavelength)
-        
-        validator = PhysicalPeakValidator(instrument)
-        
-        validated_peaks = []
-        
-        for idx in peak_indices:
-            peak = validator.validate(
-                idx,
-                two_theta,
-                intensity,
-                background
-            )
-            if peak is not None:
-                validated_peaks.append(peak)
 
         # Analyze each peak
         analyzed_peaks = []
@@ -833,6 +794,23 @@ class AdvancedXRDAnalyzer:
                 wavelength = 1.5406  # safe default
         else:
             wavelength = float(params.get("wavelength", 1.5406))
+        instrument = InstrumentProfile(wavelength=wavelength)
+        validator = PhysicalPeakValidator(instrument)
+        peak_indices = detect_peaks(two_theta, intensity_used)
+
+        validated_peaks = []
+        
+        for idx in peak_indices:
+            peak = validator.validate(
+                idx,
+                two_theta,
+                intensity_used,
+                background
+            )
+            if peak:
+                validated_peaks.append(peak)
+
+        results["peaks"] = validated_peaks
 
         # -----------------------------
         # SAFE DEFAULTS (NEVER BREAK UI)
@@ -975,6 +953,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
