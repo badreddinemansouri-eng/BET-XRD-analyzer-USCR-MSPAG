@@ -277,6 +277,10 @@ def detect_peaks(two_theta, intensity, min_distance=10, threshold=0.1):
             'theta_left': float(theta_left),
             'theta_right': float(theta_right)
         })
+     intensity_bg_subtracted, background = snip_background(intensity)
+     intensity_used = intensity_bg_subtracted
+
+
     # -----------------------------------
     # Physical peak validation (NEW)
     # -----------------------------------
@@ -290,9 +294,10 @@ def detect_peaks(two_theta, intensity, min_distance=10, threshold=0.1):
         peak = validator.validate(
             idx,
             two_theta,
-            intensity,
+            intensity_used,
             background
         )
+
         if peak is not None:
             validated_peaks.append(peak)
 
@@ -808,7 +813,21 @@ class AdvancedXRDAnalyzer:
         FULL XRD ANALYSIS — DATABASE DRIVEN (COD + OPTIMADE)
         UI-STABLE, JOURNAL-GRADE
         """
-        
+        # -----------------------------------
+        # X-ray wavelength (DEFINE IT!)
+        # -----------------------------------
+        if isinstance(params.get("wavelength"), str):
+            if "Cu" in params["wavelength"]:
+                wavelength = 1.5406
+            elif "Mo" in params["wavelength"]:
+                wavelength = 0.7107
+            elif "Co" in params["wavelength"]:
+                wavelength = 1.7902
+            else:
+                wavelength = 1.5406  # safe default
+        else:
+            wavelength = float(params.get("wavelength", 1.5406))
+
         # -----------------------------
         # SAFE DEFAULTS (NEVER BREAK UI)
         # -----------------------------
@@ -950,6 +969,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
