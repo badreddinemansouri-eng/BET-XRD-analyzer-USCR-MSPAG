@@ -280,7 +280,7 @@ def detect_peaks(two_theta, intensity, min_distance_deg=1.0, min_prominence=0.03
         if fwhm_deg < 0.03 or fwhm_deg > 3.0:  # Physical range for nanocrystalline materials
             continue
             
-        # Calculate integrated intensity (area under peak)
+        # Calculate integrated intensity (area under peak) - USING safe_trapz
         peak_start = max(0, int(idx - fwhm_points * 2))
         peak_end = min(len(intensity_smooth), int(idx + fwhm_points * 2))
         
@@ -288,7 +288,7 @@ def detect_peaks(two_theta, intensity, min_distance_deg=1.0, min_prominence=0.03
         y_segment = intensity_smooth[peak_start:peak_end]
         
         if len(x_segment) >= 2:
-            peak_area = np.trapz(y_segment, x_segment)
+            peak_area = safe_trapz(y_segment, x_segment)
         else:
             peak_area = 0
         
@@ -502,8 +502,8 @@ def calculate_crystallinity_index(two_theta, intensity, peaks):
     # First, separate background using SNIP
     intensity_corr, background = snip_background(intensity)
     
-    # Total area under the corrected pattern
-    total_area = np.trapz(intensity_corr, two_theta)
+    # Total area under the corrected pattern - USING safe_trapz
+    total_area = safe_trapz(intensity_corr, two_theta)
     
     if total_area <= 0:
         return 0.0
@@ -513,7 +513,7 @@ def calculate_crystallinity_index(two_theta, intensity, peaks):
     signal_mask = intensity_corr > (background + 2 * np.std(background))
     
     if np.any(signal_mask):
-        crystalline_area = np.trapz(intensity_corr[signal_mask], two_theta[signal_mask])
+        crystalline_area = safe_trapz(intensity_corr[signal_mask], two_theta[signal_mask])
     else:
         # Fallback: integrate peak regions only
         crystalline_area = 0.0
@@ -525,7 +525,7 @@ def calculate_crystallinity_index(two_theta, intensity, peaks):
             
             mask = (two_theta >= peak_start) & (two_theta <= peak_end)
             if np.any(mask):
-                crystalline_area += np.trapz(intensity_corr[mask], two_theta[mask])
+                crystalline_area += safe_trapz(intensity_corr[mask], two_theta[mask])
     
     # Ensure CI is between 0 and 1
     ci = crystalline_area / total_area
