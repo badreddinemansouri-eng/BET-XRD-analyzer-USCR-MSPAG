@@ -772,6 +772,12 @@ class AdvancedXRDAnalyzer:
         FULL XRD ANALYSIS — DATABASE DRIVEN (COD + OPTIMADE)
         UI-STABLE, JOURNAL-GRADE
         """
+        # =====================================================
+        # GUARANTEED DEFAULTS (CRITICAL)
+        # =====================================================
+        intensity_used = intensity.copy()
+        background = np.zeros_like(intensity)
+
         # -----------------------------------
         # Safety: params must exist
         # -----------------------------------
@@ -809,8 +815,6 @@ class AdvancedXRDAnalyzer:
                 validated_peaks.append(peak)
 
         results["peaks"] = validated_peaks
-        intensity_bg_subtracted, background = snip_background(intensity)
-        intensity_used = intensity_bg_subtracted
         # -----------------------------
         # SAFE DEFAULTS (NEVER BREAK UI)
         # -----------------------------
@@ -844,7 +848,9 @@ class AdvancedXRDAnalyzer:
             # PREPROCESS
             # -----------------------------
             two_theta_p, intensity_p = self.preprocess_pattern(two_theta, intensity)
-    
+            
+            intensity_bg_subtracted, background = snip_background(intensity)
+            intensity_used = intensity_bg_subtracted
             # -----------------------------
             # PEAK DETECTION (ALL PEAKS)
             # -----------------------------
@@ -952,6 +958,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
