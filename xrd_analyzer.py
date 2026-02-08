@@ -277,8 +277,6 @@ def detect_peaks(two_theta, intensity, min_distance=10, threshold=0.1):
             'theta_left': float(theta_left),
             'theta_right': float(theta_right)
         })
-        intensity_bg_subtracted, background = snip_background(intensity)
-        intensity_used = intensity_bg_subtracted
 
 # ============================================================================
 # CRYSTALLOGRAPHIC CALCULATIONS
@@ -811,7 +809,8 @@ class AdvancedXRDAnalyzer:
                 validated_peaks.append(peak)
 
         results["peaks"] = validated_peaks
-
+        intensity_bg_subtracted, background = snip_background(intensity)
+        intensity_used = intensity_bg_subtracted
         # -----------------------------
         # SAFE DEFAULTS (NEVER BREAK UI)
         # -----------------------------
@@ -953,6 +952,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
