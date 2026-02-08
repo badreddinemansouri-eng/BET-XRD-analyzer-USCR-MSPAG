@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List
 from scipy import stats
+
 def calculate_phase_fractions(peaks, phases, tol=0.15):
     """
     Semi-quantitative phase fractions using matched peak intensities.
@@ -60,6 +61,7 @@ def calculate_phase_fractions(peaks, phases, tol=0.15):
         })
 
     return sorted(results, key=lambda x: x["fraction"], reverse=True)     
+
 def map_peaks_to_phases(peaks, phases, tol=0.15):
     """
     Assign phase + HKL to experimental peaks using CIF d-spacing match.
@@ -82,10 +84,9 @@ def map_peaks_to_phases(peaks, phases, tol=0.15):
 
     return peaks        
 
-    return validation
      
 def map_peaks_to_phases_nano(peaks: List[Dict], phases: List[Dict], 
-                            tolerance_factor: float = 1.5) -> List[Dict]:
+                            tolerance_factor: float = 2.0) -> List[Dict]:  # INCREASED from 1.5
     """
     Enhanced peak-phase mapping for nanomaterials
     Uses adaptive tolerance based on peak broadening
@@ -169,6 +170,7 @@ def calculate_bayesian_phase_fractions(peaks: List[Dict], phases: List[Dict]) ->
             })
     
     return sorted(results, key=lambda x: x["fraction"], reverse=True)
+
 class ScientificIntegrator:
     """Integrates BET and XRD data using scientific principles"""
     
@@ -210,7 +212,8 @@ class ScientificIntegrator:
             if xrd_results:
                 CI = xrd_results.get('crystallinity_index', 0)
                 D_crystal = xrd_results.get('crystallite_size', {}).get('scherrer', 0)
-                xrd_results["phases"] = results.get("xrd_phases", [])
+                # FIXED: Use correct key for phases
+                phases = xrd_results.get("phases", [])
             else:
                 CI = 0
                 D_crystal = 0
@@ -299,8 +302,38 @@ class ScientificIntegrator:
             'crystallite_size': f"{D_crystal:.1f} ± {D_crystal*0.1:.1f} nm"  # 10% error
         }
 
-         # MISSING return statement!
-        return validation  # <-- MUST ADD THIS LINE
+        # CRITICAL FIX: Added missing return statement
+        return validation
 
-
-
+    # Added missing methods (stubs for completeness)
+    def _calculate_porosity(self, S_BET, V_pore, D_crystal):
+        """Calculate porosity from BET and XRD data"""
+        # Simplified porosity calculation
+        if S_BET > 0 and V_pore > 0:
+            # Rough estimate assuming cylindrical pores
+            return min(V_pore * S_BET * 0.001, 0.95)
+        return 0.0
+    
+    def _classify_material(self, S_BET, CI, porosity, D_crystal):
+        """Classify material based on properties"""
+        if S_BET > 1000:
+            return {'type': 'High surface area material', 'confidence': 0.8}
+        elif D_crystal < 20:
+            return {'type': 'Nanocrystalline', 'confidence': 0.7}
+        else:
+            return {'type': 'Bulk crystalline', 'confidence': 0.6}
+    
+    def _calculate_structure_properties(self, S_BET, V_pore, D_crystal, CI, classification):
+        """Calculate structure-property relationships"""
+        return {
+            'surface_to_volume_ratio': S_BET / V_pore if V_pore > 0 else 0,
+            'crystallinity_porosity_ratio': CI / porosity if porosity > 0 else 0,
+        }
+    
+    def _analyze_correlations(self, bet_results, xrd_results):
+        """Analyze correlations between BET and XRD data"""
+        return {'correlation_available': False, 'message': 'Correlation analysis requires multiple samples'}
+    
+    def _generate_recommendations(self, integration):
+        """Generate scientific recommendations"""
+        return ['Further characterization recommended for validation']
