@@ -817,8 +817,10 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                 xrd_out = xrd_analyzer.complete_analysis(
                     two_theta=analysis_results['xrd_raw']['two_theta'],
                     intensity=analysis_results['xrd_raw']['intensity'],
-                    elements=st.session_state.get("xrd_elements", [])
+                    elements=st.session_state.get("xrd_elements", []),
+                    params=st.session_state['scientific_params']['xrd']
                 )
+
                 
                 # ============================================================
                 # PROPER HANDLING OF XRD ANALYSIS RESULTS
@@ -2800,6 +2802,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
