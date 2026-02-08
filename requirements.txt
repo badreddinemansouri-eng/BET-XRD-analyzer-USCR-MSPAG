@@ -1,8 +1,5 @@
---no-binary numpy
-numpy==1.26.4
-setuptools==69.0.3
-wheel==0.43.0
 streamlit>=1.28
+numpy>=1.26
 pandas>=2.2
 scipy>=1.11
 matplotlib>=3.7
@@ -11,14 +8,21 @@ openpyxl>=3.1
 peakutils>=1.3
 xlrd>=2.0.1
 pymatgen>=2023.10.3
-pymatgen-analysis-diffraction>=2023.7.25
 spglib>=2.3.0
 monty>=2023.9.25
+# Networking & CIF databases (CRITICAL)
 requests>=2.31
 pyyaml>=6.0
+
+# Optional but strongly recommended
 networkx>=3.2
 tqdm>=4.66
-scikit-learn>=1.3.0
-joblib>=1.3.0
-cerberus>=1.3.4
-aiohttp>=3.9.0
+# CRITICAL - XRD analysis
+scikit-learn>=1.3.0        # For regression, clustering in advanced analysis
+pymatgen-analysis-diffraction>=2023.7.25  # XRD simulation - THIS IS ESSENTIAL!
+
+# CRITICAL - Data validation
+cerberus>=1.3.4            # Schema validation for scientific data
+
+# IMPORTANT - Performance
+joblib>=1.3.0              # Parallel processing for database searches
