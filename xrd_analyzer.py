@@ -189,94 +189,68 @@ def snip_background(intensity, iterations=100, reduction_factor=0.8):
 # ============================================================================
 def detect_peaks(two_theta, intensity, min_distance=10, threshold=0.1):
     """
-    Detect peaks in XRD pattern with scientific validation
-    
-    Parameters:
-    -----------
-    two_theta : Array of 2θ values
-    intensity : Array of intensity values
-    min_distance : Minimum angular distance between peaks (points)
-    threshold : Minimum relative intensity threshold
-    
-    Returns:
-    --------
-    List of peak dictionaries
+    Liberal candidate peak detection for XRD patterns.
+
+    This function ONLY detects candidate peak indices.
+    Physical validation is done later.
+
+    Parameters
+    ----------
+    two_theta : np.ndarray
+        2θ values (degrees)
+    intensity : np.ndarray
+        Intensity values
+    min_distance : int
+        Minimum distance between peaks (data points)
+    threshold : float
+        Relative intensity threshold (0–1)
+
+    Returns
+    -------
+    list
+        List of peak indices (can be empty, never None)
     """
-    # Normalize intensity
-    intensity_norm = (intensity - intensity.min()) / (intensity.max() - intensity.min())
-    
-    # Find peak indices
-    peak_indices = peakutils.indexes(intensity_norm, 
-                                     thres=threshold, 
-                                     min_dist=min_distance)
-    
-    validated_peaks = []
-    for idx in peak_indices:
-        # Peak position
-        theta_peak = two_theta[idx]
-        intensity_peak = intensity[idx]
-        
-        # Calculate FWHM using interpolation
-        half_max = intensity_peak / 2
-        
-        # Find left half-max point
-        left_idx = idx
-        while left_idx > 0 and intensity[left_idx] > half_max:
-            left_idx -= 1
-        
-        # Interpolate left side
-        if left_idx < idx and left_idx >= 0:
-            theta_left = np.interp(half_max, 
-                                 [intensity[left_idx], intensity[left_idx + 1]],
-                                 [two_theta[left_idx], two_theta[left_idx + 1]])
-        else:
-            theta_left = two_theta[idx]
-        
-        # Find right half-max point
-        right_idx = idx
-        while right_idx < len(intensity) - 1 and intensity[right_idx] > half_max:
-            right_idx += 1
-        
-        # Interpolate right side
-        if right_idx > idx and right_idx < len(intensity):
-            theta_right = np.interp(half_max,
-                                  [intensity[right_idx - 1], intensity[right_idx]],
-                                  [two_theta[right_idx - 1], two_theta[right_idx]])
-        else:
-            theta_right = two_theta[idx]
-        
-        # FWHM in degrees
-        fwhm_deg = theta_right - theta_left
-        
-        # Integrated intensity (area under peak)
-        peak_start = max(0, idx - int(min_distance/2))
-        peak_end = min(len(intensity), idx + int(min_distance/2))
-        
-        # Use manual trapezoidal integration for peak area
-        x_segment = two_theta[peak_start:peak_end]
-        y_segment = intensity[peak_start:peak_end]
-        if len(x_segment) >= 2:
-            peak_area = np.sum(0.5 * (y_segment[1:] + y_segment[:-1]) * 
-                             (x_segment[1:] - x_segment[:-1]))
-        else:
-            peak_area = 0
-        
-        # Peak asymmetry
-        left_half = intensity_peak - intensity[peak_start:idx].min() if peak_start < idx else intensity_peak
-        right_half = intensity_peak - intensity[idx:peak_end].min() if idx < peak_end - 1 else intensity_peak
-        asymmetry = left_half / right_half if right_half > 0 else 1.0
-        
-        validated_peaks.append({
-            'index': idx,
-            'position': float(theta_peak),
-            'intensity': float(intensity_peak),
-            'fwhm_deg': float(fwhm_deg),
-            'fwhm_rad': float(np.deg2rad(fwhm_deg)),
-            'area': float(peak_area),
-            'asymmetry': float(asymmetry),
-            'theta_left': float(theta_left),
-            'theta_right': float(theta_right)
-        })
+
+    import numpy as np
+    import peakutils
+
+    # -------------------------------
+    # Basic safety checks
+    # -------------------------------
+    if intensity is None or two_theta is None:
+        return []
+
+    if len(intensity) < 10 or len(two_theta) < 10:
+        return []
+
+    # -------------------------------
+    # Normalize intensity safely
+    # -------------------------------
+    imin = np.min(intensity)
+    imax = np.max(intensity)
+
+    if imax - imin <= 0:
+        return []
+
+    intensity_norm = (intensity - imin) / (imax - imin)
+
+    # -------------------------------
+    # Peak detection (LIBERAL)
+    # -------------------------------
+    try:
+        peak_indices = peakutils.indexes(
+            intensity_norm,
+            thres=threshold,
+            min_dist=min_distance
+        )
+    except Exception:
+        return []
+
+    # -------------------------------
+    # ALWAYS return a list
+    # -------------------------------
+    return list(peak_indices)
+
 
 # ============================================================================
 # CRYSTALLOGRAPHIC CALCULATIONS
@@ -800,7 +774,8 @@ class AdvancedXRDAnalyzer:
             wavelength = float(params.get("wavelength", 1.5406))
         instrument = InstrumentProfile(wavelength=wavelength)
         validator = PhysicalPeakValidator(instrument)
-        peak_indices = detect_peaks(two_theta, intensity_used)
+        peak_indices = detect_peaks(two_theta, intensity_used) or []
+
 
         validated_peaks = []
         
@@ -958,6 +933,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
