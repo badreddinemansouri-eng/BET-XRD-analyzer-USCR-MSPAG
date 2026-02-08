@@ -127,19 +127,6 @@ if 'scientific_data' not in st.session_state:
         'fusion_results': None,
         'analysis_valid': False
     }
-# =========================================
-# Initialize scientific parameters (SAFE)
-# =========================================
-if 'scientific_params' not in st.session_state:
-    st.session_state['scientific_params'] = {
-        'xrd': {
-            'wavelength': "Cu Kα (0.15406 nm)",
-            'background_subtraction': True,
-            'peak_threshold': 0.1,
-            'smoothing': "Savitzky-Golay"
-        },
-        'bet': {}
-    }
 
 # ============================================================================
 # SIDEBAR - SCIENTIFIC CONTROLS
@@ -210,8 +197,7 @@ def create_sidebar():
                 index=0
             )
         }
-        st.session_state['scientific_params']['xrd'] = xrd_params
-
+        
         st.markdown("---")
         st.subheader("Crystal Structure")
         
@@ -831,10 +817,8 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                 xrd_out = xrd_analyzer.complete_analysis(
                     two_theta=analysis_results['xrd_raw']['two_theta'],
                     intensity=analysis_results['xrd_raw']['intensity'],
-                    elements=st.session_state.get("xrd_elements", []),
-                    params=st.session_state['scientific_params']['xrd']
+                    elements=st.session_state.get("xrd_elements", [])
                 )
-
                 
                 # ============================================================
                 # PROPER HANDLING OF XRD ANALYSIS RESULTS
@@ -2816,8 +2800,6 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
-
-
 
 
 
