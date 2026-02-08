@@ -278,7 +278,7 @@ def detect_peaks(two_theta, intensity, min_distance=10, threshold=0.1):
             'theta_right': float(theta_right)
         })
         intensity_bg_subtracted, background = snip_background(intensity)
-     intensity_used = intensity_bg_subtracted
+        intensity_used = intensity_bg_subtracted
 
 
     # -----------------------------------
@@ -969,6 +969,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
