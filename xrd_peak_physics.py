@@ -28,8 +28,15 @@ def lorentzian(x, a, x0, gamma):
     return a * gamma**2 / ((x - x0)**2 + gamma**2)
 
 
+def pseudo_voigt(x, a, x0, sigma, eta):
+    """Pseudo-Voigt function for nanocrystalline materials"""
+    gaussian_part = np.exp(-(x - x0)**2 / (2 * sigma**2))
+    lorentzian_part = sigma**2 / ((x - x0)**2 + sigma**2)
+    return a * (eta * lorentzian_part + (1 - eta) * gaussian_part)
+
+
 # -------------------------------
-# Physical peak validator
+# Physical peak validator (NANOMATERIAL-OPTIMIZED)
 # -------------------------------
 class PhysicalPeakValidator:
     def __init__(self, instrument: InstrumentProfile):
@@ -39,12 +46,17 @@ class PhysicalPeakValidator:
         """
         Returns a peak dictionary if VALID
         Returns None if NOT physical
+        
+        NANOMATERIAL-OPTIMIZED CHANGES:
+        1. Larger window for broad peaks (10 → 25 points)
+        2. Lower SNR threshold (3 → 2)
+        3. Lower R² threshold (0.85 → 0.65)
+        4. Added pseudo-Voigt shape option
         """
-
         # ---------------------------
-        # Local window around peak
+        # Local window around peak (LARGER for nanomaterials)
         # ---------------------------
-        window = 10
+        window = 25  # INCREASED from 10 for broad nanocrystalline peaks
         left = max(0, idx - window)
         right = min(len(two_theta), idx + window)
 
@@ -58,9 +70,9 @@ class PhysicalPeakValidator:
         noise = np.std(y)
 
         # ---------------------------
-        # Rule 1: Signal-to-noise
+        # Rule 1: Signal-to-noise (RELAXED for nanomaterials)
         # ---------------------------
-        if noise <= 0 or peak_height / noise < 3:
+        if noise <= 0 or peak_height / noise < 2:  # CHANGED from 3 to 2
             return None
 
         # ---------------------------
@@ -81,12 +93,13 @@ class PhysicalPeakValidator:
             return None
 
         # ---------------------------
-        # Rule 2: Peak shape fit
+        # Rule 2: Peak shape fit (RELAXED for nanomaterials)
         # ---------------------------
         try:
             popt_g, _ = curve_fit(
                 gaussian, x, y,
-                p0=[peak_height, two_theta[idx], fwhm]
+                p0=[peak_height, two_theta[idx], fwhm],
+                maxfev=1000
             )
             fit_g = gaussian(x, *popt_g)
             r2_g = 1 - np.sum((y - fit_g)**2) / np.sum((y - y.mean())**2)
@@ -96,17 +109,42 @@ class PhysicalPeakValidator:
         try:
             popt_l, _ = curve_fit(
                 lorentzian, x, y,
-                p0=[peak_height, two_theta[idx], fwhm]
+                p0=[peak_height, two_theta[idx], fwhm],
+                maxfev=1000
             )
             fit_l = lorentzian(x, *popt_l)
             r2_l = 1 - np.sum((y - fit_l)**2) / np.sum((y - y.mean())**2)
         except:
             r2_l = 0
 
-        if max(r2_g, r2_l) < 0.85:
+        # Try pseudo-Voigt for nanocrystalline materials
+        try:
+            popt_pv, _ = curve_fit(
+                pseudo_voigt, x, y,
+                p0=[peak_height, two_theta[idx], fwhm/2.3548, 0.5],
+                bounds=([0, x[0], 0.01, 0], [peak_height*2, x[-1], fwhm*2, 1]),
+                maxfev=2000
+            )
+            fit_pv = pseudo_voigt(x, *popt_pv)
+            r2_pv = 1 - np.sum((y - fit_pv)**2) / np.sum((y - y.mean())**2)
+        except:
+            r2_pv = 0
+
+        # Determine best fit
+        fit_scores = {
+            'gaussian': r2_g,
+            'lorentzian': r2_l,
+            'pseudo_voigt': r2_pv
+        }
+        
+        best_fit = max(fit_scores, key=fit_scores.get)
+        best_r2 = fit_scores[best_fit]
+
+        # RELAXED threshold for nanomaterials
+        if best_r2 < 0.65:  # CHANGED from 0.85 to 0.65
             return None
 
-        shape = "gaussian" if r2_g >= r2_l else "lorentzian"
+        shape = best_fit
 
         # ---------------------------
         # VALID PEAK
@@ -116,5 +154,6 @@ class PhysicalPeakValidator:
             "intensity": float(peak_height),
             "fwhm_deg": float(fwhm),
             "snr": float(peak_height / noise),
-            "shape": shape
+            "shape": shape,
+            "fit_quality": float(best_r2)
         }
