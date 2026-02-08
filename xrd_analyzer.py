@@ -808,11 +808,17 @@ class AdvancedXRDAnalyzer:
             'pore_size_estimate': 0.0,
             'structure': 'Disordered'
         }
-    def complete_analysis(self, two_theta, intensity, elements=None, params):
+    def complete_analysis(self, two_theta, intensity, elements=None, params=None):
         """
         FULL XRD ANALYSIS — DATABASE DRIVEN (COD + OPTIMADE)
         UI-STABLE, JOURNAL-GRADE
         """
+        # -----------------------------------
+        # Safety: params must exist
+        # -----------------------------------
+        if params is None:
+            params = {}
+
         # -----------------------------------
         # X-ray wavelength (DEFINE IT!)
         # -----------------------------------
@@ -969,6 +975,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
