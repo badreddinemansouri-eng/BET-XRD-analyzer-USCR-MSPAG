@@ -1,20 +1,56 @@
-streamlit>=1.28
-numpy>=1.26
+# ============================================================================
+# CORE SCIENTIFIC COMPUTATION
+# ============================================================================
+numpy>=1.24,<2.0           # Fixed: Avoids np.trapz issue in NumPy 2.0
 pandas>=2.2
 scipy>=1.11
-matplotlib>=3.7
-plotly>=5.18
-openpyxl>=3.1
-peakutils>=1.3
-xlrd>=2.0.1
+
+# ============================================================================
+# XRD ANALYSIS & CRYSTALLOGRAPHY (CRITICAL)
+# ============================================================================
 pymatgen>=2023.10.3
+pymatgen-analysis-diffraction>=2023.7.25  # ADDED: Essential for XRD simulation
 spglib>=2.3.0
 monty>=2023.9.25
-# Networking & CIF databases (CRITICAL)
+
+# ============================================================================
+# DATA VALIDATION & SCHEMA
+# ============================================================================
+cerberus>=1.3.4            # ADDED: For scientific data validation
+
+# ============================================================================
+# MACHINE LEARNING & OPTIMIZATION
+# ============================================================================
+scikit-learn>=1.3.0        # ADDED: For regression, clustering in analysis
+
+# ============================================================================
+# STREAMLIT & VISUALIZATION
+# ============================================================================
+streamlit>=1.28
+matplotlib>=3.7
+plotly>=5.18
+
+# ============================================================================
+# DATA IMPORT/EXPORT
+# ============================================================================
+openpyxl>=3.1              # For .xlsx files
+xlrd>=2.0.1                # For legacy .xls files
+pyyaml>=6.0                # For configuration files
+
+# ============================================================================
+# NETWORKING & DATABASES
+# ============================================================================
 requests>=2.31
-pyyaml>=6.0
+aiohttp>=3.9.0             # ADDED: Async requests for database queries
 
-# Optional but strongly recommended
-networkx>=3.2
-tqdm>=4.66
+# ============================================================================
+# PERFORMANCE & PARALLEL PROCESSING
+# ============================================================================
+joblib>=1.3.0              # ADDED: Parallel processing for database searches
+tqdm>=4.66                 # Progress bars for long operations
 
+# ============================================================================
+# OPTIONAL BUT RECOMMENDED
+# ============================================================================
+networkx>=3.2              # For phase graph analysis
+peakutils>=1.3             # Alternative peak finding (optional)
