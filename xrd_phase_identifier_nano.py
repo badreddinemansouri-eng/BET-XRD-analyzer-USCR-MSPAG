@@ -425,8 +425,8 @@ class UniversalPatternMatcher:
             d_exp = exp_d[i]
             intensity_exp = exp_intensity[i]
             
-            # Adaptive tolerance for nanocrystalline materials
-            base_tolerance = params['base_tolerance']
+            # Adaptive tolerance for nanocrystalline materials - INCREASED
+            base_tolerance = params['base_tolerance'] * 1.5  # INCREASED tolerance
             
             # Broader tolerance for weaker peaks
             intensity_factor = intensity_exp / np.max(exp_intensity)
@@ -434,7 +434,7 @@ class UniversalPatternMatcher:
             
             # For nanomaterials, use even broader tolerance
             if material_family in ['metal_nanoparticles', 'carbon_allotropes']:
-                peak_tolerance *= 1.3
+                peak_tolerance *= 1.5  # INCREASED from 1.3
             
             # Find closest simulated peak using d-spacing
             d_errors = np.abs(sim_d - d_exp) / d_exp
@@ -471,7 +471,7 @@ class UniversalPatternMatcher:
         coverage = len(match_scores) / n_exp_peaks
         
         # For nanomaterials, require good coverage
-        if coverage < 0.6:  # Less than 60% coverage
+        if coverage < 0.5:  # RELAXED from 0.6 to 0.5 for nanocrystalline
             return 0.0
         
         coverage_factor = 0.4 + 0.6 * coverage  # Strong penalty for poor coverage
@@ -480,29 +480,29 @@ class UniversalPatternMatcher:
         
         # Boost score for nanomaterials with few peaks
         if material_family in ['metal_nanoparticles', 'carbon_allotropes'] and n_exp_peaks <= 4:
-            final_score *= 1.1  # Small boost
+            final_score *= 1.2  # Increased boost
         
         return min(final_score, 1.0)
     
     @staticmethod
     def _get_family_params(family: str) -> Dict:
         """Get matching parameters for specific material family"""
-        # Default parameters
+        # Default parameters with INCREASED tolerance for nanomaterials
         params = {
-            'base_tolerance': 0.04,  # Default 4% tolerance for nanomaterials
+            'base_tolerance': 0.05,  # INCREASED from 0.04 for nanomaterials
             'intensity_weight': 0.3,
             'coverage_weight': 0.7,
         }
         
         # Family-specific adjustments for nanomaterials
         family_adjustments = {
-            'metal_nanoparticles': {'base_tolerance': 0.05, 'intensity_weight': 0.2},
-            'metal_oxides': {'base_tolerance': 0.035, 'intensity_weight': 0.35},
-            'metal_chalcogenides': {'base_tolerance': 0.04, 'intensity_weight': 0.3},
-            'perovskites': {'base_tolerance': 0.03, 'intensity_weight': 0.4},
-            'spinels': {'base_tolerance': 0.035, 'intensity_weight': 0.35},
-            'carbon_allotropes': {'base_tolerance': 0.06, 'intensity_weight': 0.1},
-            'unknown': {'base_tolerance': 0.04, 'intensity_weight': 0.3},
+            'metal_nanoparticles': {'base_tolerance': 0.06, 'intensity_weight': 0.2},  # INCREASED
+            'metal_oxides': {'base_tolerance': 0.04, 'intensity_weight': 0.35},  # INCREASED
+            'metal_chalcogenides': {'base_tolerance': 0.05, 'intensity_weight': 0.3},  # INCREASED
+            'perovskites': {'base_tolerance': 0.04, 'intensity_weight': 0.4},  # INCREASED
+            'spinels': {'base_tolerance': 0.04, 'intensity_weight': 0.35},  # INCREASED
+            'carbon_allotropes': {'base_tolerance': 0.07, 'intensity_weight': 0.1},  # INCREASED
+            'unknown': {'base_tolerance': 0.05, 'intensity_weight': 0.3},  # INCREASED
         }
         
         if family in family_adjustments:
@@ -625,16 +625,16 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                 material_family
             )
             
-            # Adjusted thresholds for nanomaterials
-            if match_score < 0.25:  # 25% match threshold for nanocrystalline
+            # ADJUSTED thresholds for nanomaterials (LOWERED)
+            if match_score < 0.20:  # LOWERED from 0.25 for nanocrystalline
                 continue
             
             # Determine confidence level (adjusted for nanomaterials)
-            if match_score >= 0.65:
+            if match_score >= 0.60:  # LOWERED from 0.65
                 confidence = "confirmed"
-            elif match_score >= 0.45:
+            elif match_score >= 0.40:  # LOWERED from 0.45
                 confidence = "probable"
-            elif match_score >= 0.25:
+            elif match_score >= 0.20:  # LOWERED from 0.25
                 confidence = "possible"
             else:
                 continue
