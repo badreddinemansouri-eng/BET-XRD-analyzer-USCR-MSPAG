@@ -19,10 +19,11 @@ networkx>=3.2
 tqdm>=4.66
 # CRITICAL - XRD analysis
 scikit-learn>=1.3.0        # For regression, clustering in advanced analysis
-pymatgen-analysis-diffraction>=2023.7.25  # XRD simulation - THIS IS ESSENTIAL!
+pymatgen-analysis-diffraction>=2023.10.3  # XRD simulation - THIS IS ESSENTIAL!
 
 # CRITICAL - Data validation
 cerberus>=1.3.4            # Schema validation for scientific data
 
 # IMPORTANT - Performance
 joblib>=1.3.0              # Parallel processing for database searches
+
