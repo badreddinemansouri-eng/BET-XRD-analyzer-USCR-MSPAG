@@ -808,7 +808,7 @@ class AdvancedXRDAnalyzer:
             'pore_size_estimate': 0.0,
             'structure': 'Disordered'
         }
-    def complete_analysis(self, two_theta, intensity, elements=None):
+    def complete_analysis(self, two_theta, intensity, elements=None, params):
         """
         FULL XRD ANALYSIS — DATABASE DRIVEN (COD + OPTIMADE)
         UI-STABLE, JOURNAL-GRADE
@@ -969,6 +969,7 @@ class AdvancedXRDAnalyzer:
 
 
     
+
 
 
 
