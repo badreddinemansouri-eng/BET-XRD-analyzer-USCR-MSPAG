@@ -287,7 +287,7 @@ def create_sidebar():
         
         # Fallback safety
         if not selected_elements:
-            st.stop()
+            st.sidebar.warning("No elements selected → phase identification disabled")
 
         st.session_state["xrd_elements"] = selected_elements
 
@@ -2801,6 +2801,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
