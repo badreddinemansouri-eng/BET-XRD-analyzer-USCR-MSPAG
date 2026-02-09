@@ -6,20 +6,19 @@ streamlit-option-menu==0.3.6
 streamlit-extras==0.2.7
 
 # ============================================================================
-# CORE SCIENTIFIC COMPUTATION (TESTED WITH PYTHON 3.11)
+# CORE SCIENTIFIC COMPUTATION
 # ============================================================================
-numpy==1.24.4
-pandas==2.1.4
-scipy==1.11.4
+numpy==1.26.4
+pandas==2.2.0
+scipy==1.13.0
 matplotlib==3.8.2
 plotly==5.18.0
 seaborn==0.13.0
 
 # ============================================================================
-# XRD & CRYSTALLOGRAPHY FULL STACK (PROFESSIONAL GRADE)
+# XRD & CRYSTALLOGRAPHY (PYTHON 3.11 COMPATIBLE)
 # ============================================================================
 pymatgen==2024.10.29
-pymatgen-analysis==2024.10.29  # CRITICAL: Contains XRDCalculator
 spglib==2.4.0
 monty==2024.9.25
 
@@ -31,7 +30,7 @@ lmfit==1.3.0
 scikit-image==0.22.0
 
 # ============================================================================
-# MACHINE LEARNING FOR XRD ANALYSIS
+# MACHINE LEARNING
 # ============================================================================
 scikit-learn==1.4.0
 joblib==1.3.2
@@ -45,7 +44,7 @@ xlrd==2.0.1
 pyyaml==6.0.1
 
 # ============================================================================
-# NETWORKING & DATABASE CONNECTIONS
+# NETWORKING & WEB REQUESTS
 # ============================================================================
 requests==2.31.0
 aiohttp==3.9.3
@@ -63,4 +62,4 @@ python-dotenv==1.0.0
 # ============================================================================
 # OPTIMIZATION & PERFORMANCE
 # ============================================================================
-numba==0.59.0  # JIT acceleration for XRD calculations
+numba==0.59.0
