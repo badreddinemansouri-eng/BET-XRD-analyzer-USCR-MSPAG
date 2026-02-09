@@ -44,30 +44,72 @@ def match_score(exp_peaks_2theta, sim_peaks_2theta, wavelength, tol=0.02):
 
     return score / len(exp_d)
 
+def match_score_with_tolerance(exp_peaks_2theta, sim_peaks_2theta, wavelength, size_nm=None):
+    """
+    CRITICAL FIX: Physics-based tolerance for nanocrystalline materials
+    
+    Scherrer size -> d-spacing tolerance mapping:
+    < 5 nm: 10% tolerance (Δd/d ≈ 0.10)
+    5-10 nm: 6% tolerance (Δd/d ≈ 0.06)
+    > 10 nm: 3% tolerance (Δd/d ≈ 0.03)
+    """
+    if size_nm is None:
+        tol = 0.02  # Default
+    elif size_nm < 5:
+        tol = 0.10  # Ultra-nanocrystalline
+    elif size_nm < 10:
+        tol = 0.06  # Nanocrystalline
+    else:
+        tol = 0.03  # Sub-micron to micron
+    
+    return match_score(exp_peaks_2theta, sim_peaks_2theta, wavelength, tol=tol)
+
 
 # ------------------------------------------------------------
 # COD FETCH
 # ------------------------------------------------------------
 def fetch_cod_cifs(elements, max_results=30):
+    """
+    CRITICAL FIX: Add oxide constraints when oxygen is present
+    """
     query = {
         "format": "json",
         "el": ",".join(elements),
         "maxresults": max_results
     }
-    r = requests.get(COD_API, params=query, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    
+    # Add oxide constraint for better filtering
+    if "O" in elements:
+        query["formula"] = "*O*"
+        # Optional: Filter for published structures only
+        query["status"] = "published"
+    
+    try:
+        r = requests.get(COD_API, params=query, timeout=30)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        print(f"COD fetch error: {e}")
+        return []
 
 
 # ------------------------------------------------------------
 # OPTIMADE FETCH (MULTI PROVIDER)
 # ------------------------------------------------------------
 def fetch_optimade_structures(elements, max_results=30):
+    """
+    CRITICAL FIX: Correct OPTIMADE filter syntax
+    
+    WRONG: 'elements HAS ALL "O,Ti"'
+    CORRECT: 'elements HAS ALL "O" AND elements HAS ALL "Ti"'
+    """
     structures = []
-
-    formula_filter = ",".join(elements)
+    
+    # Build correct filter syntax
+    filters = " AND ".join([f'elements HAS ALL "{el}"' for el in elements])
+    
     params = {
-        "filter": f'elements HAS ALL "{formula_filter}"',
+        "filter": filters,
         "page_limit": max_results
     }
 
@@ -78,7 +120,8 @@ def fetch_optimade_structures(elements, max_results=30):
                 continue
             data = r.json().get("data", [])
             structures.extend(data)
-        except Exception:
+        except Exception as e:
+            print(f"OPTIMADE fetch error from {endpoint}: {e}")
             continue
 
     return structures
@@ -98,7 +141,7 @@ def simulate_pattern_from_cif(cif_text, wavelength):
 # ------------------------------------------------------------
 # MAIN IDENTIFICATION ENGINE
 # ------------------------------------------------------------
-def identify_phases(two_theta, intensity, wavelength, elements):
+def identify_phases(two_theta, intensity, wavelength, elements, size_nm=None):
     """
     FULL phase identification using ONLY FREE databases
     (COD + OPTIMADE providers)
@@ -109,6 +152,7 @@ def identify_phases(two_theta, intensity, wavelength, elements):
     intensity : np.ndarray
     wavelength : float
     elements : list[str]   ← USER SELECTED ELEMENTS
+    size_nm : float        ← OPTIONAL: Crystallite size for tolerance adjustment
 
     Returns
     -------
@@ -125,9 +169,11 @@ def identify_phases(two_theta, intensity, wavelength, elements):
     threshold = 0.30 * np.max(intensity)
     exp_peaks = two_theta[intensity >= threshold]
     
-    # Debug output - FIXED: Use exp_peaks instead of undefined 'peaks'
+    # Debug output
     st.write("🧪 PHASE DEBUG → Elements:", elements)
     st.write("🧪 PHASE DEBUG → Experimental peaks found:", len(exp_peaks))
+    if size_nm:
+        st.write(f"🧪 PHASE DEBUG → Using size-based tolerance: {size_nm:.1f} nm")
     
     results = []
     
@@ -136,6 +182,7 @@ def identify_phases(two_theta, intensity, wavelength, elements):
     # ============================================================
     try:
         cod_entries = fetch_cod_cifs(elements, max_results=40)
+        st.write(f"🧪 PHASE DEBUG → COD entries found: {len(cod_entries)}")
 
         for entry in cod_entries:
             try:
@@ -147,9 +194,19 @@ def identify_phases(two_theta, intensity, wavelength, elements):
                     cif_text, wavelength
                 )
 
-                score = match_score(exp_peaks, pattern.x, wavelength)
+                # Use size-based tolerance if available
+                if size_nm:
+                    score = match_score_with_tolerance(exp_peaks, pattern.x, wavelength, size_nm)
+                else:
+                    score = match_score(exp_peaks, pattern.x, wavelength)
 
-                if score < 0.65:
+                # CRITICAL FIX: Lower threshold for nanocrystalline materials
+                if size_nm and size_nm < 10:
+                    threshold_score = 0.55  # Lower for nanomaterials
+                else:
+                    threshold_score = 0.65
+
+                if score < threshold_score:
                     continue
 
                 confidence = (
@@ -169,17 +226,18 @@ def identify_phases(two_theta, intensity, wavelength, elements):
                     "structure": structure,
                 })
 
-            except Exception:
+            except Exception as e:
                 continue
 
-    except Exception:
-        pass
+    except Exception as e:
+        st.write(f"🧪 PHASE DEBUG → COD error: {str(e)[:100]}")
 
     # ============================================================
     # 2️⃣ OPTIMADE (Materials Project, OQMD, Materials Cloud)
     # ============================================================
     try:
         optimade_structures = fetch_optimade_structures(elements, max_results=40)
+        st.write(f"🧪 PHASE DEBUG → OPTIMADE structures found: {len(optimade_structures)}")
 
         for entry in optimade_structures:
             try:
@@ -219,9 +277,19 @@ def identify_phases(two_theta, intensity, wavelength, elements):
                     cif_text, wavelength
                 )
 
-                score = match_score(exp_peaks, pattern.x, wavelength)
+                # Use size-based tolerance if available
+                if size_nm:
+                    score = match_score_with_tolerance(exp_peaks, pattern.x, wavelength, size_nm)
+                else:
+                    score = match_score(exp_peaks, pattern.x, wavelength)
 
-                if score < 0.65:
+                # CRITICAL FIX: Lower threshold for nanocrystalline materials
+                if size_nm and size_nm < 10:
+                    threshold_score = 0.55  # Lower for nanomaterials
+                else:
+                    threshold_score = 0.65
+
+                if score < threshold_score:
                     continue
 
                 confidence = (
@@ -241,11 +309,11 @@ def identify_phases(two_theta, intensity, wavelength, elements):
                     "structure": structure,
                 })
 
-            except Exception:
+            except Exception as e:
                 continue
 
-    except Exception:
-        pass
+    except Exception as e:
+        st.write(f"🧪 PHASE DEBUG → OPTIMADE error: {str(e)[:100]}")
 
     # ============================================================
     # FINAL FILTER & SORT
@@ -263,8 +331,5 @@ def identify_phases(two_theta, intensity, wavelength, elements):
         reverse=True
     )
 
+    st.write(f"🧪 PHASE DEBUG → Final unique results: {len(final_results)}")
     return final_results
-    
-
-
-
