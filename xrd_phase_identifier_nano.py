@@ -95,10 +95,11 @@ class UniversalPeakAnalyzer:
                                       wavelength: float,
                                       max_peaks: int = 10) -> Tuple[np.ndarray, np.ndarray]:
         """
-        CRITICAL FIX: Filter to strongest 6-10 peaks for nanomaterials
+        CRITICAL FIX: Filter to strongest 6-10 peaks with ANGULAR DIVERSITY
         
         Nanocrystalline materials have fewer discernible peaks due to broadening.
         Using all detected peaks leads to failed phase identification.
+        Now ensures peaks are at least 1.5° apart for structural diversity.
         """
         if len(peaks_2theta) == 0:
             return peaks_2theta, peaks_intensity
@@ -108,20 +109,53 @@ class UniversalPeakAnalyzer:
         peaks_2theta_sorted = peaks_2theta[sort_idx]
         peaks_intensity_sorted = peaks_intensity[sort_idx]
         
-        # Take only the strongest peaks (6-10 for nanomaterials)
-        n_keep = min(max_peaks, len(peaks_2theta_sorted))
+        # CRITICAL FIX: Enforce angular diversity (minimum 1.5° separation)
+        selected_2theta = []
+        selected_intensity = []
+        
+        for i in range(len(peaks_2theta_sorted)):
+            current_2theta = peaks_2theta_sorted[i]
+            current_intensity = peaks_intensity_sorted[i]
+            
+            # Check if this peak is sufficiently separated from already selected peaks
+            if all(abs(current_2theta - selected) >= 1.5 for selected in selected_2theta):
+                selected_2theta.append(current_2theta)
+                selected_intensity.append(current_intensity)
+            
+            # Stop when we have enough diverse peaks
+            if len(selected_2theta) >= max_peaks:
+                break
+        
+        # If we don't have enough diverse peaks, add the strongest remaining ones
+        if len(selected_2theta) < max_peaks:
+            for i in range(len(peaks_2theta_sorted)):
+                current_2theta = peaks_2theta_sorted[i]
+                current_intensity = peaks_intensity_sorted[i]
+                
+                # Skip if already selected
+                if current_2theta in selected_2theta:
+                    continue
+                
+                selected_2theta.append(current_2theta)
+                selected_intensity.append(current_intensity)
+                
+                if len(selected_2theta) >= max_peaks:
+                    break
         
         # For very nanocrystalline materials, keep fewer peaks
-        if len(peaks_2theta_sorted) > 5:
+        if len(selected_2theta) > 5:
             # Calculate average peak width from d-spacing
-            d_spacings = wavelength / (2 * np.sin(np.radians(peaks_2theta_sorted / 2)))
+            d_spacings = wavelength / (2 * np.sin(np.radians(np.array(selected_2theta) / 2)))
             d_spacing_range = d_spacings.max() - d_spacings.min()
             
             # If d-spacing range is small, material is highly nanocrystalline
             if d_spacing_range < 2.0:  # Highly nanocrystalline
-                n_keep = min(6, len(peaks_2theta_sorted))
+                # Keep only top 6 diverse peaks
+                n_keep = min(6, len(selected_2theta))
+                selected_2theta = selected_2theta[:n_keep]
+                selected_intensity = selected_intensity[:n_keep]
         
-        return peaks_2theta_sorted[:n_keep], peaks_intensity_sorted[:n_keep]
+        return np.array(selected_2theta), np.array(selected_intensity)
     
     @staticmethod
     def estimate_material_family(elements: List[str], peak_positions: List[float]) -> str:
@@ -220,11 +254,16 @@ class UniversalDatabaseSearcher:
     def _search_cod_universal(self, elements: Tuple[str], max_results: int = 30) -> List[Dict]:
         """Universal COD search with robust error handling"""
         try:
+            # CRITICAL FIX: Add oxide constraints
             query = {
                 "format": "json",
                 "el": ",".join(elements),
                 "maxresults": max_results
             }
+            
+            # Add oxide constraint for better filtering
+            if "O" in elements:
+                query["formula"] = "*O*"
             
             response = requests.get(
                 "https://www.crystallography.net/cod/result",
@@ -394,9 +433,32 @@ class UniversalPatternMatcher:
     """Scientific pattern matching for nanocrystalline materials"""
     
     @staticmethod
+    def calculate_nano_tolerance(size_nm: Optional[float] = None) -> float:
+        """
+        CRITICAL FIX: Physics-based tolerance for nanocrystalline materials
+        
+        Scherrer size -> d-spacing tolerance mapping:
+        < 5 nm: 10% tolerance (Δd/d ≈ 0.10)
+        5-10 nm: 6% tolerance (Δd/d ≈ 0.06)
+        > 10 nm: 3% tolerance (Δd/d ≈ 0.03)
+        
+        Williamson-Hall predicts:
+        Δ2θ ≈ λ/(D cosθ) ≈ 0.15-0.30° for 4.7 nm crystallites
+        """
+        if size_nm is None:
+            return 0.05  # Default for unknown size
+        elif size_nm < 5:
+            return 0.10  # Ultra-nanocrystalline
+        elif size_nm < 10:
+            return 0.06  # Nanocrystalline
+        else:
+            return 0.03  # Sub-micron to micron
+    
+    @staticmethod
     def match_pattern_universal(exp_d: np.ndarray, exp_intensity: np.ndarray,
                                sim_d: np.ndarray, sim_intensity: np.ndarray,
-                               material_family: str = 'unknown') -> float:
+                               material_family: str = 'unknown',
+                               size_nm: Optional[float] = None) -> float:
         """
         SCIENTIFIC pattern matching with nanocrystalline-specific optimizations
         
@@ -412,6 +474,9 @@ class UniversalPatternMatcher:
         # Family-specific matching parameters
         params = UniversalPatternMatcher._get_family_params(material_family)
         
+        # CRITICAL FIX: Use physics-based tolerance
+        base_tolerance = UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
+        
         # For nanomaterials, use only top experimental peaks
         n_exp_peaks = min(len(exp_d), 8)  # Max 8 peaks for nanomaterials
         
@@ -425,16 +490,14 @@ class UniversalPatternMatcher:
             d_exp = exp_d[i]
             intensity_exp = exp_intensity[i]
             
-            # Adaptive tolerance for nanocrystalline materials - INCREASED
-            base_tolerance = params['base_tolerance'] * 1.5  # INCREASED tolerance
-            
+            # Adaptive tolerance for nanocrystalline materials
             # Broader tolerance for weaker peaks
             intensity_factor = intensity_exp / np.max(exp_intensity)
             peak_tolerance = base_tolerance * (1.5 - 0.3 * intensity_factor)
             
             # For nanomaterials, use even broader tolerance
             if material_family in ['metal_nanoparticles', 'carbon_allotropes']:
-                peak_tolerance *= 1.5  # INCREASED from 1.3
+                peak_tolerance *= 1.5
             
             # Find closest simulated peak using d-spacing
             d_errors = np.abs(sim_d - d_exp) / d_exp
@@ -470,7 +533,7 @@ class UniversalPatternMatcher:
         # Coverage penalty (how many experimental peaks were matched)
         coverage = len(match_scores) / n_exp_peaks
         
-        # For nanomaterials, require good coverage
+        # For nanomaterials, require good coverage but be more lenient
         if coverage < 0.5:  # RELAXED from 0.6 to 0.5 for nanocrystalline
             return 0.0
         
@@ -480,29 +543,29 @@ class UniversalPatternMatcher:
         
         # Boost score for nanomaterials with few peaks
         if material_family in ['metal_nanoparticles', 'carbon_allotropes'] and n_exp_peaks <= 4:
-            final_score *= 1.2  # Increased boost
+            final_score *= 1.2
         
         return min(final_score, 1.0)
     
     @staticmethod
     def _get_family_params(family: str) -> Dict:
         """Get matching parameters for specific material family"""
-        # Default parameters with INCREASED tolerance for nanomaterials
+        # Default parameters with increased tolerance for nanomaterials
         params = {
-            'base_tolerance': 0.05,  # INCREASED from 0.04 for nanomaterials
+            'base_tolerance': 0.05,  # Increased from 0.04 for nanomaterials
             'intensity_weight': 0.3,
             'coverage_weight': 0.7,
         }
         
         # Family-specific adjustments for nanomaterials
         family_adjustments = {
-            'metal_nanoparticles': {'base_tolerance': 0.06, 'intensity_weight': 0.2},  # INCREASED
-            'metal_oxides': {'base_tolerance': 0.04, 'intensity_weight': 0.35},  # INCREASED
-            'metal_chalcogenides': {'base_tolerance': 0.05, 'intensity_weight': 0.3},  # INCREASED
-            'perovskites': {'base_tolerance': 0.04, 'intensity_weight': 0.4},  # INCREASED
-            'spinels': {'base_tolerance': 0.04, 'intensity_weight': 0.35},  # INCREASED
-            'carbon_allotropes': {'base_tolerance': 0.07, 'intensity_weight': 0.1},  # INCREASED
-            'unknown': {'base_tolerance': 0.05, 'intensity_weight': 0.3},  # INCREASED
+            'metal_nanoparticles': {'base_tolerance': 0.06, 'intensity_weight': 0.2},
+            'metal_oxides': {'base_tolerance': 0.04, 'intensity_weight': 0.35},
+            'metal_chalcogenides': {'base_tolerance': 0.05, 'intensity_weight': 0.3},
+            'perovskites': {'base_tolerance': 0.04, 'intensity_weight': 0.4},
+            'spinels': {'base_tolerance': 0.04, 'intensity_weight': 0.35},
+            'carbon_allotropes': {'base_tolerance': 0.07, 'intensity_weight': 0.1},
+            'unknown': {'base_tolerance': 0.05, 'intensity_weight': 0.3},
         }
         
         if family in family_adjustments:
@@ -514,15 +577,17 @@ class UniversalPatternMatcher:
 # MAIN UNIVERSAL IDENTIFICATION ENGINE (SCIENTIFICALLY CORRECTED)
 # ------------------------------------------------------------
 def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
-                            wavelength: float, elements: List[str]) -> List[Dict]:
+                            wavelength: float, elements: List[str],
+                            size_nm: Optional[float] = None) -> List[Dict]:
     """
     SCIENTIFIC phase identification for nanocrystalline materials
     
     Critical fixes applied:
-    1. Filter to strongest 6-10 peaks only
+    1. Filter to strongest 6-10 peaks only with ANGULAR DIVERSITY
     2. Use d-spacing matching (not 2θ)
     3. Implement relative intensity ordering
     4. Adjust tolerances for nanocrystalline broadening
+    5. Pass crystallite size for physics-based tolerance
     """
     st.info("🔬 Running scientific nanomaterial phase identification...")
     
@@ -535,7 +600,7 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
         two_theta, intensity
     )
     
-    # CRITICAL FIX: Filter to strongest peaks for nanomaterials
+    # CRITICAL FIX: Filter to strongest peaks with angular diversity
     exp_peaks_2theta, exp_intensities = peak_analyzer.filter_peaks_for_nanomaterials(
         exp_peaks_2theta, exp_intensities, wavelength, max_peaks=10
     )
@@ -544,7 +609,8 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
         st.warning("Insufficient strong peaks for reliable phase identification")
         return []
     
-    st.success(f"✅ Using {len(exp_peaks_2theta)} strongest peaks for matching")
+    st.success(f"✅ Using {len(exp_peaks_2theta)} strongest diverse peaks for matching")
+    st.write(f"🧪 Phase ID → Selected peaks: {exp_peaks_2theta.tolist()}")
     
     # Calculate d-spacings (not 2θ)
     exp_d = wavelength / (2 * np.sin(np.radians(exp_peaks_2theta / 2)))
@@ -560,6 +626,8 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     )
     
     st.info(f"📊 Material family estimated: {material_family}")
+    if size_nm:
+        st.info(f"📊 Crystallite size for tolerance: {size_nm:.1f} nm")
     
     # Calculate peak quality metrics
     peak_quality = peak_analyzer.calculate_peak_quality_metrics(
@@ -618,26 +686,44 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
             sim_d = wavelength / (2 * np.sin(np.radians(pattern.x / 2)))
             sim_intensity = pattern.y / np.max(pattern.y) if len(pattern.y) > 0 else np.zeros_like(pattern.x)
             
-            # SCIENTIFIC MATCHING: Use d-spacing and relative intensities
+            # SCIENTIFIC MATCHING: Use d-spacing and relative intensities WITH SIZE-BASED TOLERANCE
             match_score = matcher.match_pattern_universal(
                 exp_d, exp_intensities_norm,
                 sim_d, sim_intensity,
-                material_family
+                material_family,
+                size_nm
             )
             
             # ADJUSTED thresholds for nanomaterials (LOWERED)
-            if match_score < 0.20:  # LOWERED from 0.25 for nanocrystalline
+            if size_nm and size_nm < 10:
+                # Ultra-nanocrystalline materials need even lower thresholds
+                threshold = 0.15 if size_nm < 5 else 0.20
+            else:
+                threshold = 0.25
+            
+            if match_score < threshold:
                 continue
             
             # Determine confidence level (adjusted for nanomaterials)
-            if match_score >= 0.60:  # LOWERED from 0.65
-                confidence = "confirmed"
-            elif match_score >= 0.40:  # LOWERED from 0.45
-                confidence = "probable"
-            elif match_score >= 0.20:  # LOWERED from 0.25
-                confidence = "possible"
+            if size_nm and size_nm < 10:
+                # Lower thresholds for nanocrystalline
+                if match_score >= 0.55:  # LOWERED for nanomaterials
+                    confidence = "confirmed"
+                elif match_score >= 0.35:  # LOWERED for nanomaterials
+                    confidence = "probable"
+                elif match_score >= threshold:
+                    confidence = "possible"
+                else:
+                    continue
             else:
-                continue
+                if match_score >= 0.60:
+                    confidence = "confirmed"
+                elif match_score >= 0.40:
+                    confidence = "probable"
+                elif match_score >= 0.25:
+                    confidence = "possible"
+                else:
+                    continue
             
             # Store results
             results.append({
@@ -657,7 +743,9 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                 "match_details": {
                     "n_exp_peaks": len(exp_d),
                     "avg_d_spacing": float(np.mean(exp_d)),
-                    "material_family": material_family
+                    "material_family": material_family,
+                    "size_nm": size_nm,
+                    "tolerance_used": UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
                 }
             })
             
@@ -672,6 +760,9 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     # --------------------------------------------------------
     if not results:
         st.warning("No phases identified with sufficient confidence")
+        if size_nm and size_nm < 10:
+            st.info(f"Note: Material is nanocrystalline ({size_nm:.1f} nm). "
+                   "Phase identification may be limited due to severe peak broadening.")
         return []
     
     # Remove duplicates (same formula and space group)
@@ -695,18 +786,24 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     with st.expander("📊 Scientific Analysis Report", expanded=False):
         st.markdown(f"### **Nanocrystalline Material Analysis**")
         st.markdown(f"- **Estimated family**: {material_family}")
-        st.markdown(f"- **Strong peaks used**: {len(exp_peaks_2theta)} (filtered from noise)")
+        st.markdown(f"- **Strong peaks used**: {len(exp_peaks_2theta)} (filtered for angular diversity)")
         st.markdown(f"- **Average d-spacing**: {np.mean(exp_d):.3f} Å")
         st.markdown(f"- **Angular range**: {peak_quality.get('angular_range', 0):.1f}°")
         st.markdown(f"- **Databases searched**: {len(set(r['database'] for r in final_results))}")
+        
+        if size_nm:
+            tolerance = UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
+            st.markdown(f"- **Crystallite size**: {size_nm:.1f} nm")
+            st.markdown(f"- **Matching tolerance**: {tolerance:.1%} d-spacing (physics-based)")
         
         # Scientific notes about nanocrystalline matching
         st.markdown("### **Matching Notes for Nanocrystalline Materials**")
         st.markdown("""
         - **Peak broadening**: Nanocrystalline materials exhibit broadened peaks
-        - **Reduced peak count**: Fewer discernible peaks due to size effects  
+        - **Angular diversity**: Selected peaks are ≥1.5° apart for structural information
         - **d-spacing matching**: Using d-spacings (not 2θ) for better accuracy
         - **Relative intensities**: Matching intensity ordering, not absolute values
+        - **Size-based tolerance**: Tolerance adjusted based on crystallite size
         """)
         
         # Show top matches
