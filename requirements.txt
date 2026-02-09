@@ -16,11 +16,11 @@ plotly==5.18.0
 seaborn==0.13.0
 
 # ============================================================================
-# XRD & CRYSTALLOGRAPHY (PYTHON 3.11 COMPATIBLE)
+# XRD & CRYSTALLOGRAPHY (COMPATIBLE VERSIONS)
 # ============================================================================
 pymatgen==2024.10.29
-spglib==2.4.0
-monty==2024.9.25
+spglib==2.5.0  # Changed from 2.4.0 to 2.5.0
+monty==2025.3.3  # Changed from 2024.9.25 to 2025.3.3
 
 # ============================================================================
 # PEAK ANALYSIS & SIGNAL PROCESSING
