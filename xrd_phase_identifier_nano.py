@@ -588,6 +588,7 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     3. Implement relative intensity ordering
     4. Adjust tolerances for nanocrystalline broadening
     5. Pass crystallite size for physics-based tolerance
+    6. ADDED: Phase identification diagnostics for transparency
     """
     st.info("🔬 Running scientific nanomaterial phase identification...")
     
@@ -756,32 +757,73 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     progress_bar.empty()
     
     # --------------------------------------------------------
-    # STEP 5: RESULTS PROCESSING
+    # STEP 5: RESULTS PROCESSING WITH DIAGNOSTICS
     # --------------------------------------------------------
     if not results:
-        st.warning("No phases identified with sufficient confidence")
+        # Create diagnostic object explaining why no phase found
+        diagnostic = {
+            "experimental_structural_peaks": len(exp_peaks_2theta),
+            "peak_quality_score": peak_quality.get('quality_score', 0),
+            "nanocrystalline_indicator": "strong" if size_nm and size_nm < 10 else "moderate/weak",
+            "database_coverage": {
+                "cod_structures_searched": len([s for s in database_structures if s['database'] == 'COD']),
+                "total_structures": len(database_structures)
+            },
+            "matching_issues": []
+        }
+        
+        # Add specific matching issues
         if size_nm and size_nm < 10:
-            st.info(f"Note: Material is nanocrystalline ({size_nm:.1f} nm). "
-                   "Phase identification may be limited due to severe peak broadening.")
-        return []
+            diagnostic["matching_issues"].append("Peak broadening exceeds database tolerance for nanocrystalline materials")
+        
+        if peak_quality.get('angular_range', 0) < 20:
+            diagnostic["matching_issues"].append("Insufficient angular diversity in peaks")
+        
+        if peak_quality.get('quality_score', 0) < 0.3:
+            diagnostic["matching_issues"].append("Material may be amorphous or poorly crystalline")
+        
+        # Return diagnostic even when no phases
+        results = [{
+            "phase": "UNIDENTIFIED",
+            "diagnostic": diagnostic,
+            "recommendation": "Consider: 1) Longer XRD acquisition 2) Higher resolution 3) TEM for direct imaging",
+            "material_family": material_family
+        }]
     
     # Remove duplicates (same formula and space group)
     unique_results = []
     seen = set()
     
     for result in results:
-        key = (result["phase"], result["space_group"])
+        key = (result["phase"], result.get("space_group", ""))
         if key not in seen:
             seen.add(key)
             unique_results.append(result)
     
     # Sort by score
-    final_results = sorted(unique_results, key=lambda x: x["score"], reverse=True)
+    final_results = sorted(unique_results, key=lambda x: x.get("score", 0), reverse=True)
     
     # --------------------------------------------------------
-    # STEP 6: SCIENTIFIC REPORT
+    # STEP 6: ADD DIAGNOSTICS TO ALL RESULTS
     # --------------------------------------------------------
-    st.success(f"✅ Identified {len(final_results)} potential phases")
+    for result in final_results:
+        if result.get("phase") != "UNIDENTIFIED":
+            result["phase_diagnostics"] = {
+                "experimental_peaks_used": len(exp_peaks_2theta),
+                "matched_peaks": result.get("n_peaks_matched", 0),
+                "match_score": result.get("score", 0),
+                "nanocrystalline_tolerance_applied": UniversalPatternMatcher.calculate_nano_tolerance(size_nm),
+                "database_reliability": "CIF-validated" if result.get("database") == "COD" else "Theoretical/computational",
+                "database_limitations": "COD contains only crystalline structures; amorphous/nanocrystalline patterns not included"
+            }
+    
+    # --------------------------------------------------------
+    # STEP 7: SCIENTIFIC REPORT
+    # --------------------------------------------------------
+    if final_results[0].get("phase") != "UNIDENTIFIED":
+        st.success(f"✅ Identified {len(final_results)} potential phases")
+    else:
+        st.warning("⚠️ No crystalline phase identified with sufficient confidence")
     
     with st.expander("📊 Scientific Analysis Report", expanded=False):
         st.markdown(f"### **Nanocrystalline Material Analysis**")
@@ -789,7 +831,7 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
         st.markdown(f"- **Strong peaks used**: {len(exp_peaks_2theta)} (filtered for angular diversity)")
         st.markdown(f"- **Average d-spacing**: {np.mean(exp_d):.3f} Å")
         st.markdown(f"- **Angular range**: {peak_quality.get('angular_range', 0):.1f}°")
-        st.markdown(f"- **Databases searched**: {len(set(r['database'] for r in final_results))}")
+        st.markdown(f"- **Databases searched**: {len(set(r['database'] for r in final_results if 'database' in r))}")
         
         if size_nm:
             tolerance = UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
@@ -806,8 +848,17 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
         - **Size-based tolerance**: Tolerance adjusted based on crystallite size
         """)
         
+        # Database limitations disclosure
+        st.markdown("### **Database Limitations**")
+        st.markdown("""
+        - **COD**: Experimental CIFs only (no amorphous/nanocrystalline patterns)
+        - **Materials Project**: DFT-optimized structures (may differ from experiment)
+        - **Coverage**: ~1.5M known crystalline phases vs. estimated 10⁸ possible compositions
+        - **Nanomaterials**: Severe peak broadening reduces match probability
+        """)
+        
         # Show top matches
-        if final_results:
+        if final_results and final_results[0].get("phase") != "UNIDENTIFIED":
             st.markdown("### **Top Phase Matches**")
             for i, result in enumerate(final_results[:3]):
                 st.markdown(f"{i+1}. **{result['phase']}** ({result['crystal_system']}) - "
