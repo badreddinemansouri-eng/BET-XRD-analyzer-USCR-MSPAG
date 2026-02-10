@@ -52,6 +52,7 @@ class PhysicalPeakValidator:
         2. Lower SNR threshold (3 → 2)
         3. Lower R² threshold (0.85 → 0.65)
         4. Added pseudo-Voigt shape option
+        5. ADDED PHYSICS-BASED NOISE REJECTION
         """
         # ---------------------------
         # Local window around peak (LARGER for nanomaterials)
@@ -76,12 +77,29 @@ class PhysicalPeakValidator:
             return None
 
         # ---------------------------
+        # SCIENTIFIC NOISE REJECTION (CRITICAL)
+        # A physical Bragg peak must carry significant integrated intensity
+        # Reference: Cullity & Stock, Elements of X-ray Diffraction
+        # ---------------------------
+        peak_area = np.trapz(y[y > 0], x[y > 0])
+        total_local_area = np.trapz(np.abs(y), x)
+
+        # Reject noise oscillations (area too small)
+        if total_local_area <= 0:
+            return None
+
+        if peak_area / total_local_area < 0.05:
+            return None
+
+        # ---------------------------
         # Estimate FWHM
         # ---------------------------
         half_max = peak_height / 2
         above = np.where(y >= half_max)[0]
 
-        if len(above) < 2:
+        # ANGULAR COHERENCE CHECK
+        # Physical diffraction peaks must span multiple contiguous points
+        if len(above) < 4:
             return None
 
         fwhm = x[above[-1]] - x[above[0]]
@@ -155,5 +173,6 @@ class PhysicalPeakValidator:
             "fwhm_deg": float(fwhm),
             "snr": float(peak_height / noise),
             "shape": shape,
-            "fit_quality": float(best_r2)
+            "fit_quality": float(best_r2),
+            "area": float(peak_area)  # Added for crystallinity calculation
         }
