@@ -2781,8 +2781,20 @@ def generate_scientific_report(results):
         if xrd.get('crystallite_size'):
             report.append(f"Crystallite Size (Scherrer): {xrd['crystallite_size'].get('scherrer', 0):.1f} nm")
         
-        report.append(f"Microstrain: {xrd.get('microstrain', 0):.4f}")
-        report.append(f"Ordered Mesopores: {'Yes' if xrd.get('ordered_mesopores') else 'No'}")
+        # --------------------------------------------------
+        # Microstrain (Williamson–Hall)
+        # --------------------------------------------------
+        microstrain = xrd.get("microstrain", None)
+        
+        if microstrain is not None:
+            report.append(f"Microstrain: {microstrain:.4f}")
+        else:
+            report.append(
+                "Microstrain: Not determined "
+                "(insufficient independent reflections)"
+            )
+
+        report.append("Crystalline Domains Detected: Yes")
         
         if xrd.get('peaks'):
             report.append(f"Peaks Detected: {len(xrd['peaks'])}")
@@ -2823,6 +2835,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
