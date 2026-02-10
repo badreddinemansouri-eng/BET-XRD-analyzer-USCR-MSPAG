@@ -467,394 +467,177 @@ class PublicationPlotter:
     
     def create_xrd_figure(self, xrd_raw: Dict, xrd_results: Dict) -> plt.Figure:
         """
-        Create comprehensive XRD analysis figure
-        
-        Parameters:
-        -----------
-        xrd_raw : Raw XRD data dictionary
-        xrd_results : XRD analysis results
-        
-        Returns:
-        --------
-        matplotlib Figure object
+        Create scientifically consistent XRD analysis figure
+        (Nanomaterial-safe, reviewer-grade)
         """
+    
         # ===============================
-        # FIX 1: UNWRAP XRD RESULTS
+        # SAFE UNWRAP
         # ===============================
         if "xrd_results" in xrd_results:
             xrd_results = xrd_results["xrd_results"]
-
-        # Create figure with subplots
+    
         fig = plt.figure(figsize=(12, 10))
         gs = gridspec.GridSpec(3, 2, figure=fig, hspace=0.35, wspace=0.25)
-        
-        # Colors
+    
         primary_color = self.colors['primary'][0]
-        secondary_color = self.colors['primary'][1]
-        
-        # Extract data
+    
         two_theta = np.array(xrd_raw['two_theta'])
         intensity = np.array(xrd_raw['intensity'])
-        # ✅ ALWAYS DEFINE PEAKS (GLOBAL FOR THIS FIGURE)
-        peaks = xrd_results.get("top_peaks") or xrd_results.get("peaks", [])
-        # ====================================================================
-        # SUBPLOT A: XRD pattern with intensive peaks only
-        # ====================================================================
+    
+        # ============================================================
+        # STRICT PEAK SEMANTICS
+        # ============================================================
+        raw_peaks = xrd_results.get("raw_peaks", [])
+        structural_peaks = xrd_results.get("structural_peaks", [])
+    
+        n_raw = len(raw_peaks)
+        n_structural = len(structural_peaks)
+    
+        # UI subset (display only)
+        display_peaks = sorted(
+            structural_peaks,
+            key=lambda p: p["intensity"],
+            reverse=True
+        )[:8]
+    
+        # ============================================================
+        # (A) XRD PATTERN
+        # ============================================================
         ax1 = fig.add_subplot(gs[0, :])
-        
-        # Plot XRD pattern
-        ax1.plot(two_theta, intensity, '-', color=primary_color, 
-                linewidth=1.5, label='XRD Pattern')
-        
-        # Get top peaks (most intensive) for display
-        if 'top_peaks' in xrd_results:
-            peaks = xrd_results['top_peaks']  # Already sorted by intensity
-        else:
-            peaks = xrd_results.get('peaks', [])
-            # Sort by intensity and take top 15
-            peaks.sort(key=lambda x: x['intensity'], reverse=True)
-            peaks = peaks[:15]
-        
-        if peaks:
-            peak_positions = [p['position'] for p in peaks]
-            peak_intensities = [p['intensity'] for p in peaks]
-            
-            # Mark only intensive peaks (top 10-15)
-            ax1.scatter(peak_positions, peak_intensities, 
-                       color='red', s=30, zorder=5, label='Major peaks')
-            
-            # Add peak labels for most intensive peaks only (first 8)
-            for i, peak in enumerate(peaks[:8]):  # Label first 8 intensive peaks
-                # Get Miller indices if available
-                hkl_text = ''
-                if 'hkl' in peak and peak['hkl']:
-                    hkl_text = f"\n{peak['hkl']}"
-                
-                label = f"{peak['position']:.2f}°{hkl_text}"
-                
-                # Position label above peak with arrow
-                ax1.annotate(label,
-                           xy=(peak['position'], peak['intensity']),
-                           xytext=(peak['position'], peak['intensity'] * 1.1),
-                           ha='center', va='bottom',
-                           fontsize=self.font_size-2,
-                           arrowprops=dict(arrowstyle='->', 
-                                         color='black', 
-                                         lw=0.5,
-                                         alpha=0.7))
-        
-        # Add crystallinity info
-        crystallinity = xrd_results.get('crystallinity_index', 0)
-        ax1.text(0.02, 0.98, f'Crystallinity Index: {crystallinity:.2f}',
-                transform=ax1.transAxes, fontsize=self.font_size,
-                verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-        
-        # Add wavelength info
-        wavelength = xrd_results.get('wavelength', 1.5406)
-        ax1.text(0.98, 0.98, f'λ = {wavelength:.4f} Å',
-                transform=ax1.transAxes, fontsize=self.font_size,
-                verticalalignment='top', horizontalalignment='right',
-                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
-        
-        # Add number of peaks info
-        n_peaks_total = xrd_results.get('n_peaks_total', len(peaks))
-        n_peaks_shown = len(peaks) if peaks else 0
-        ax1.text(0.02, 0.92, f'Peaks: {n_peaks_shown}/{n_peaks_total} shown',
-                transform=ax1.transAxes, fontsize=self.font_size-1,
-                verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8))
-        
-        ax1.set_xlabel('2θ (degrees)')
-        ax1.set_ylabel('Intensity (a.u.)')
-        ax1.set_title('(A) XRD Pattern - Major Peaks Only', pad=10)
-        ax1.legend(loc='upper right', frameon=True)
-        ax1.grid(True, alpha=0.3)
-        ax1.set_xlim(two_theta.min(), two_theta.max())
-        
-        # ====================================================================
-        # SUBPLOT B: Williamson-Hall plot
-        # ====================================================================
+        ax1.plot(two_theta, intensity, '-', color=primary_color, lw=1.5)
+    
+        if display_peaks:
+            ax1.scatter(
+                [p["position"] for p in display_peaks],
+                [p["intensity"] for p in display_peaks],
+                color="red", s=35, zorder=5, label="Structural Bragg peaks"
+            )
+    
+            for p in display_peaks:
+                ax1.annotate(
+                    f"{p['position']:.2f}°",
+                    xy=(p["position"], p["intensity"]),
+                    xytext=(p["position"], p["intensity"] * 1.1),
+                    ha="center", fontsize=self.font_size - 2,
+                    arrowprops=dict(arrowstyle="->", lw=0.5)
+                )
+    
+        # Annotation — explicit and honest
+        ax1.text(
+            0.02, 0.95,
+            f"Structural Bragg peaks: {n_structural}\n"
+            f"Detected local maxima: {n_raw}",
+            transform=ax1.transAxes,
+            fontsize=self.font_size - 1,
+            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8)
+        )
+    
+        ci = xrd_results.get("crystallinity_index", 0)
+        ax1.text(
+            0.98, 0.95, f"Crystallinity Index: {ci:.2f}",
+            transform=ax1.transAxes, ha="right",
+            fontsize=self.font_size,
+            bbox=dict(boxstyle="round", facecolor="lightblue", alpha=0.8)
+        )
+    
+        ax1.set_xlabel("2θ (degrees)")
+        ax1.set_ylabel("Intensity (a.u.)")
+        ax1.set_title("(A) XRD Pattern – Structural Peaks Only")
+        ax1.grid(alpha=0.3)
+        ax1.legend()
+    
+        # ============================================================
+        # (B) WILLIAMSON–HALL
+        # ============================================================
         ax2 = fig.add_subplot(gs[1, 0])
-        
         wh = xrd_results.get("williamson_hall")
-        
-        if isinstance(wh, dict) and "x_data" in wh and len(wh["x_data"]) >= 3:
-            
-            wh = xrd_results['williamson_hall']
-            
-            # Plot data points
-            ax2.scatter(wh['x_data'], wh['y_data'], 
-                       color=primary_color, s=40, zorder=5, label='Peaks')
-            
-            # Plot regression line
-            x_fit = np.linspace(min(wh['x_data']), max(wh['x_data']), 100)
-            y_fit = wh['slope'] * x_fit + wh['intercept']
-            ax2.plot(x_fit, y_fit, '--', color='red', 
-                    linewidth=2, label='Linear fit')
-            
-            # Add results
-            results_text = (f"Size: {wh['crystallite_size']:.1f} nm\n"
-                          f"Strain: {wh['microstrain']:.4f}\n"
-                          f"R²: {wh['r_squared']:.4f}")
-            ax2.text(0.05, 0.95, results_text, transform=ax2.transAxes,
-                    fontsize=self.font_size-1, verticalalignment='top',
-                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-            
-            ax2.set_xlabel('4 sinθ')
-            ax2.set_ylabel('β cosθ (rad)')
-            ax2.set_title('(B) Williamson-Hall Plot', pad=10)
-            ax2.legend(loc='best', frameon=True)
-            ax2.grid(True, alpha=0.3)
-        
+    
+        if isinstance(wh, dict) and len(wh.get("x_data", [])) >= 3:
+            ax2.scatter(wh["x_data"], wh["y_data"], s=40)
+            xfit = np.linspace(min(wh["x_data"]), max(wh["x_data"]), 100)
+            ax2.plot(xfit, wh["slope"] * xfit + wh["intercept"], "--r")
+            ax2.set_title("(B) Williamson–Hall Plot")
+            ax2.grid(alpha=0.3)
         else:
             ax2.text(
-                0.5, 0.3,
-                f"Detected peaks: {len(peaks)}",
-                transform=ax2.transAxes,
-                ha="center",
-                fontsize=9,
-                color="gray"
+                0.5, 0.5,
+                "Williamson–Hall not valid\n(insufficient independent peaks)",
+                ha="center", va="center"
             )
-            ax2.text(0.5, 0.5, 'Insufficient peaks\nfor Williamson-Hall analysis',
-                    transform=ax2.transAxes, ha='center', va='center',
-                    fontsize=self.font_size)
-            ax2.set_title('(B) Williamson-Hall Plot', pad=10)
             ax2.set_xticks([])
             ax2.set_yticks([])
-        
-        # ====================================================================
-        # SUBPLOT C: Crystallite size distribution
-        # ====================================================================
+    
+        # ============================================================
+        # (C) SIZE DISTRIBUTION (STRUCTURAL ONLY)
+        # ============================================================
         ax3 = fig.add_subplot(gs[1, 1])
-        
-        if peaks:
-            # Extract crystallite sizes from major peaks
-            sizes = [
-                p["crystallite_size"]
-                for p in peaks
-                if "crystallite_size" in p and p["crystallite_size"] > 0
-            ]
-            
-            if sizes:
-                # Create histogram
-                n_bins = min(10, len(sizes))
-                if n_bins >= 3:
-                    ax3.hist(sizes, bins=n_bins, color=primary_color, 
-                            alpha=0.7, edgecolor='black', linewidth=0.5)
-                    
-                    # Add statistics
-                    mean_size = np.mean(sizes)
-                    std_size = np.std(sizes)
-                    
-                    ax3.axvline(mean_size, color='red', linestyle='--', 
-                              linewidth=2, label=f'Mean: {mean_size:.1f} nm')
-                    
-                    stats_text = (f'Mean: {mean_size:.1f} nm\n'
-                                f'Std: {std_size:.1f} nm\n'
-                                f'n = {len(sizes)}')
-                    ax3.text(0.95, 0.95, stats_text, transform=ax3.transAxes,
-                            fontsize=self.font_size-1, verticalalignment='top',
-                            horizontalalignment='right',
-                            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-                    
-                    ax3.set_xlabel('Crystallite Size (nm)')
-                    ax3.set_ylabel('Frequency')
-                    ax3.set_title('(C) Crystallite Size Distribution (Major Peaks)', pad=10)
-                    ax3.legend(loc='upper left', frameon=True)
-                    ax3.grid(True, alpha=0.3, axis='y')
-                else:
-                    ax3.text(0.5, 0.5, 'Insufficient data\nfor size distribution',
-                            transform=ax3.transAxes, ha='center', va='center',
-                            fontsize=self.font_size)
-                    ax3.set_title('(C) Crystallite Size Distribution', pad=10)
-                    ax3.set_xticks([])
-                    ax3.set_yticks([])
-            else:
-                ax3.text(0.5, 0.5, 'No crystallite size data',
-                        transform=ax3.transAxes, ha='center', va='center',
-                        fontsize=self.font_size)
-                ax3.set_title('(C) Crystallite Size Distribution', pad=10)
-                ax3.set_xticks([])
-                ax3.set_yticks([])
+        sizes = [p["crystallite_size"] for p in structural_peaks if p.get("crystallite_size", 0) > 0]
+    
+        if len(sizes) >= 3:
+            ax3.hist(sizes, bins=min(10, len(sizes)), alpha=0.7)
+            ax3.set_title("(C) Crystallite Size Distribution")
+            ax3.set_xlabel("Size (nm)")
+            ax3.set_ylabel("Frequency")
+            ax3.grid(alpha=0.3, axis="y")
         else:
-            ax3.text(0.5, 0.5, 'No peaks detected',
-                    transform=ax3.transAxes, ha='center', va='center',
-                    fontsize=self.font_size)
-            ax3.set_title('(C) Crystallite Size Distribution', pad=10)
+            ax3.text(0.5, 0.5, "Insufficient data for size distribution",
+                     ha="center", va="center")
             ax3.set_xticks([])
             ax3.set_yticks([])
-        
-        # ====================================================================
-        # SUBPLOT D: Peak analysis table - Show top 6 most intensive peaks
-        # ====================================================================
+    
+        # ============================================================
+        # (D) PEAK TABLE (STRUCTURAL)
+        # ============================================================
         ax4 = fig.add_subplot(gs[2, 0])
-        ax4.axis('tight')
-        ax4.axis('off')
-        
-        # Create peak table (top 6 most intensive peaks)
-        if peaks:
-            table_data = []
-            headers = ['Peak #', '2θ (°)', 'd (Å)', 'FWHM (°)', 'Size (nm)', 'hkl']
-            
-            for i, peak in enumerate(peaks[:6]):  # Show top 6 intensive peaks
-                # Get hkl if available
-                hkl_value = peak.get('hkl', '')
-                if not hkl_value:
-                    hkl_value = peak.get('hkl_detail', {}).get('hkl', '')
-                
-                row = [
-                    i+1,
-                    f"{peak['position']:.2f}",
-                    f"{peak.get('d_spacing', 0):.3f}",
-                    f"{peak['fwhm_deg']:.3f}",
-                    f"{peak.get('crystallite_size', 0):.1f}",
-                    hkl_value
-                ]
-                table_data.append(row)
-            
-            # Add note if there are more peaks
-            n_peaks_shown = min(6, len(peaks))
-            if len(peaks) > 6:
-                table_data.append(['...', '...', '...', '...', '...', '...'])
-                table_data.append(['', f'Total: {len(peaks)} peaks', '', '', '', ''])
-            
-            # Adjust column widths
-            col_widths = [0.1, 0.15, 0.15, 0.15, 0.15, 0.15]
-            
-            table = ax4.table(cellText=table_data,
-                            colLabels=headers,
-                            colWidths=col_widths,
-                            cellLoc='center',
-                            loc='center')
-            
-            # Style table
+        ax4.axis("off")
+    
+        if display_peaks:
+            table_data = [[
+                i + 1,
+                f"{p['position']:.2f}",
+                f"{p.get('d_spacing', 0):.3f}",
+                f"{p['fwhm_deg']:.3f}",
+                f"{p.get('crystallite_size', 0):.1f}",
+                p.get("hkl", "")
+            ] for i, p in enumerate(display_peaks)]
+    
+            table = ax4.table(
+                cellText=table_data,
+                colLabels=["#", "2θ (°)", "d (Å)", "FWHM (°)", "Size (nm)", "HKL"],
+                loc="center", cellLoc="center"
+            )
             table.auto_set_font_size(False)
             table.set_fontsize(self.font_size - 1)
             table.scale(1, 1.2)
-            
-            # Style header
-            for (row, col), cell in table.get_celld().items():
-                if row == 0:  # Header row
-                    cell.set_text_props(weight='bold')
-                    cell.set_facecolor(self.colors['primary'][1])
-                    cell.set_text_props(color='white')
-                else:
-                    if row % 2 == 0:
-                        cell.set_facecolor('#F5F5F5')
-                    else:
-                        cell.set_facecolor('#FFFFFF')
-            
-            ax4.set_title(f'(D) Top {n_peaks_shown} Most Intensive Peaks', pad=10)
-        
-        else:
-            ax4.text(0.5, 0.5, 'No peaks detected',
-                    transform=ax4.transAxes, ha='center', va='center',
-                    fontsize=self.font_size)
-            ax4.set_title('(D) Peak Analysis', pad=10)
-        
-        # ====================================================================
-        # SUBPLOT E: XRD analysis summary
-        # ====================================================================
-        # ====================================================================
-        # SUBPLOT E: XRD analysis summary
-        # ====================================================================
+            ax4.set_title("(D) Structural Bragg Peaks")
+    
+        # ============================================================
+        # (E) SUMMARY (NO MESOPORES!)
+        # ============================================================
         ax5 = fig.add_subplot(gs[2, 1])
-        ax5.axis('tight')
-        ax5.axis('off')
-        
-        summary_data = []
-        
-        # ===============================
-        # PHASE IDENTIFICATION SUMMARY
-        # ===============================
-        phases = xrd_results.get("phases", [])
-        
-        phase_text = "None detected"
-        if phases:
-            phase_text = "\n".join([
-                f"{p['phase']} ({p['crystal_system']}, {p['space_group']}) "
-                f"[score={p['score']:.2f}]"
-                for p in phases[:3]
-            ])
-        
-        summary_data.append(['Identified Phases', phase_text])
-        
-        # Crystallinity
-        crystallinity = xrd_results.get('crystallinity_index', 0)
-        summary_data.append(['Crystallinity Index', f'{crystallinity:.2f}'])
-        
-        # Crystallite size (Scherrer)
-        size_scherrer = xrd_results.get('crystallite_size', {}).get('scherrer', 0)
-        summary_data.append(['Crystallite Size (Scherrer)', f'{size_scherrer:.1f} nm'])
-        
-        # Crystallite size (Williamson-Hall)
-        size_wh = xrd_results.get('crystallite_size', {}).get('williamson_hall', 0)
-        if size_wh > 0:
-            summary_data.append(['Crystallite Size (W-H)', f'{size_wh:.1f} nm'])
-        
-        # Microstrain
-        # --------------------------------------------------
-        # Microstrain (Williamson–Hall)
-        # --------------------------------------------------
-        microstrain = xrd_results.get('microstrain', None)
-        
-        if microstrain is not None:
-            if microstrain > 0:
-                summary_data.append(['Microstrain', f'{microstrain:.4f}'])
-        else:
-            summary_data.append([
-                'Microstrain',
-                'Not determined (insufficient independent reflections)'
-            ])
-
-        
-        # Number of peaks
-        n_peaks = xrd_results.get('n_peaks_total', len(peaks))
-        summary_data.append(['Total Peaks Detected', f'{n_peaks}'])
-        
-        # Ordered mesopores
-        ordered = xrd_results.get('ordered_mesopores', False)
-        summary_data.append(['Ordered Mesopores', 'Yes' if ordered else 'No'])
-        
-        # Crystal system
-        crystal_system = xrd_results.get('crystal_system', 'Unknown')
-        summary_data.append(['Crystal System', crystal_system])
-        
-        # Lattice parameters
-        lattice = xrd_results.get('lattice_parameters', {})
-        lattice_text = ", ".join([f"{k}={v:.3f}" for k, v in lattice.items()]) if lattice else "N/A"
-        summary_data.append(['Lattice Parameters (Å)', lattice_text])
-        
+        ax5.axis("off")
+    
+        summary = [
+            ["Structural Bragg Peaks", str(n_structural)],
+            ["Detected Local Maxima", str(n_raw)],
+            ["Crystallinity Index", f"{ci:.2f}"],
+            ["Scherrer Size", f"{xrd_results.get('crystallite_size', {}).get('scherrer', 0):.1f} nm"]
+        ]
+    
         table = ax5.table(
-            cellText=summary_data,
-            colLabels=['Parameter', 'Value'],
-            colWidths=[0.5, 0.5],
-            cellLoc='left',
-            loc='center'
+            cellText=summary,
+            colLabels=["Parameter", "Value"],
+            loc="center"
         )
-        
         table.auto_set_font_size(False)
         table.set_fontsize(self.font_size - 1)
         table.scale(1, 1.2)
-        
-        for (row, col), cell in table.get_celld().items():
-            if row == 0:
-                cell.set_text_props(weight='bold')
-                cell.set_facecolor(self.colors['primary'][2])
-                cell.set_text_props(color='white')
-            else:
-                cell.set_facecolor('#F5F5F5' if row % 2 == 0 else '#FFFFFF')
-        
-        ax5.set_title('(E) XRD Analysis Summary', pad=10)
-        
-        # ====================================================================
-        # FINAL TOUCHES
-        # ====================================================================
-        plt.suptitle('X-ray Diffraction Analysis - Major Peaks Only', 
-                    fontsize=self.font_size + 4, y=0.98)
-        
+        ax5.set_title("(E) XRD Analysis Summary")
+    
+        plt.suptitle("X-ray Diffraction Analysis (Nanomaterial-Validated)", fontsize=self.font_size + 4)
         return fig
+
     def create_phase_fraction_plot(self, phase_fractions):
         """
         Bar chart of phase fractions (CIF-validated only)
@@ -1109,6 +892,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
