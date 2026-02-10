@@ -1487,507 +1487,183 @@ def display_bet_analysis(results, plotter):
             st.write(f"**Closure Pressure:** {hyst['closure_pressure']:.3f} P/P₀")
 @memory_safe_plot
 def display_xrd_analysis(results, plotter):
-    """Display detailed XRD analysis (STABLE VERSION)"""
+    """Display detailed XRD analysis (SCIENTIFICALLY CORRECT VERSION)"""
 
     st.subheader("Advanced XRD Analysis")
 
     # ============================================================
-    # SAFE EXTRACTION
+    # SAFE EXTRACTION (NO UNWRAPPING BUGS)
     # ============================================================
     xrd_res = results.get("xrd_results", {})
     xrd_raw = results.get("xrd_raw", {})
-     # Add this safety check:
-    if "xrd_results" in xrd_res:
-        xrd_res = xrd_res["xrd_results"]  # Unwrap if nested
-    
-    # Get peaks safely
-    peaks = xrd_res.get("peaks", [])
-     # DEBUG: Show what we actually have
-    st.write("🧪 DEBUG - XRD_RESULTS TYPE:", type(xrd_res))
-    st.write("🧪 DEBUG - XRD_RESULTS KEYS:", list(xrd_res.keys()) if isinstance(xrd_res, dict) else "Not a dict")
-    # ==========================================================
-    # (2) WHY NO PHASE DETECTED — DIAGNOSTIC PANEL
-    # ==========================================================
+
+    if not isinstance(xrd_res, dict):
+        st.error("Invalid XRD results structure.")
+        return
+
+    # ------------------------------------------------------------
+    # STRICT PEAK SEMANTICS
+    # ------------------------------------------------------------
+    raw_peaks = xrd_res.get("raw_peaks", [])
+    structural_peaks = xrd_res.get("structural_peaks", [])
+
+    n_detected = len(raw_peaks)
+    n_structural = len(structural_peaks)
+
+    st.markdown("### 📊 Peak Statistics")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Detected local maxima", n_detected)
+    with col2:
+        st.metric("Structural Bragg peaks", n_structural)
+
+    # ============================================================
+    # WHY NO PHASE IDENTIFIED
+    # ============================================================
     if not xrd_res.get("phases"):
         with st.expander("❓ Why were no crystalline phases identified?", expanded=True):
-    
             st.markdown("""
-    **This is NOT a software error.**  
-    Phase identification is based strictly on **experimental peak matching**
-    against **CIF-validated structures** (COD + OPTIMADE).
-    
-    Possible scientific reasons:
-    """)
-    
+**This is NOT a software error.**  
+Phase identification is based strictly on **Bragg peak matching**
+against **CIF-validated crystal structures** (COD + OPTIMADE).
+""")
+
             reasons = []
-    
-            # 1. Peak broadening (nano / amorphous)
-            if xrd_res.get("crystallite_size", {}).get("scherrer", 0) < 10:
-                reasons.append("• Peaks are strongly broadened → nanocrystalline or partially amorphous material")
-    
-            # 2. Too few peaks
-            if len(xrd_res.get("peaks", [])) < 5:
-                reasons.append("• Too few resolved diffraction peaks for reliable indexing")
-    
-            # 3. Element constraints
-            elements = st.session_state.get("xrd_elements", [])
-            if not elements:
-                reasons.append("• No elements were selected in the sidebar → database search disabled")
-    
-            # 4. Database limitation (truthful)
-            reasons.append("• No CIF structure in free databases matches the experimental peak positions within tolerance")
-    
+
+            size = xrd_res.get("crystallite_size", {}).get("scherrer", None)
+            if size is not None and size < 10:
+                reasons.append("• Strong peak broadening → nanocrystalline or partially amorphous material")
+
+            if n_structural < 5:
+                reasons.append("• Too few resolved Bragg reflections for reliable indexing")
+
+            if not st.session_state.get("xrd_elements", []):
+                reasons.append("• No elements selected → phase search disabled")
+
+            reasons.append("• No CIF structure matches experimental peaks within nanocrystalline tolerance")
+
             for r in reasons:
                 st.markdown(r)
-    
+
             st.markdown("""
-    ### What you can try
-    - Select **all possible elements** present (dopants included)
-    - Use **raw, unsmoothed XRD data**
-    - Increase crystallinity (annealing) if experimentally possible
-    - Combine with **Raman / FTIR** for phase confirmation
-    """)
+### What you can try
+- Select **all possible elements** (including dopants)
+- Use **unsmoothed raw XRD data**
+- Increase crystallinity (annealing) if possible
+- Combine with **Raman / FTIR**
+""")
+
     # ============================================================
-    # PHASE IDENTIFICATION TABLE
+    # PHASE TABLE
     # ============================================================
     phases = xrd_res.get("phases", [])
-
     if phases:
-        st.subheader("🔬 Identified Phases (CIF-Validated)")
-
-        phase_df = pd.DataFrame([
-            {
-                "Phase": p["phase"],
-                "Crystal system": p["crystal_system"],
-                "Space group": p["space_group"],
-                "Confidence level": p.get("confidence_level", ""),
-                "Score": round(p["score"], 3),
-            }
-            for p in phases
-        ])
-
-        st.dataframe(phase_df, use_container_width=True)
+        df = pd.DataFrame([{
+            "Phase": p["phase"],
+            "Crystal system": p["crystal_system"],
+            "Space group": p["space_group"],
+            "Score": round(p["score"], 3),
+            "Confidence": p.get("confidence_level", "")
+        } for p in phases])
+        st.dataframe(df, use_container_width=True)
     else:
         st.info("No crystalline phase identified with sufficient confidence.")
-    # ============================================================
-    # NANOMATERIAL VALIDATION SECTION
-    # ============================================================
-    # Call the nanomaterial validation display
-    display_nanomaterial_validation(xrd_res)
 
     # ============================================================
-    # PHASE FRACTIONS
-    # ============================================================
-    fractions = xrd_res.get("phase_fractions", [])
-
-    if fractions:
-        st.subheader("📊 Phase Fractions (Intensity-Weighted)")
-
-        frac_df = pd.DataFrame(fractions)
-        st.dataframe(frac_df, use_container_width=True)
-
-        fig, ax = plt.subplots()
-        ax.pie(
-            frac_df["fraction"],
-            labels=[
-                f'{row["phase"]} ({row["fraction"]:.1f}%)'
-                for _, row in frac_df.iterrows()
-            ],
-            autopct="%1.1f%%",
-            startangle=90,
-        )
-        ax.axis("equal")
-        st.pyplot(fig)
-    st.write("🧪 FINAL XRD_RESULTS KEYS:", xrd_res.keys())
-    st.write(
-        "🧪 HAS W-H:",
-        "williamson_hall" in xrd_res,
-        type(xrd_res.get("williamson_hall"))
-    )
-
-    # ============================================================
-    # XRD PATTERN + PEAK INDEXING
+    # XRD PATTERN (STRUCTURAL PEAKS ONLY)
     # ============================================================
     if xrd_raw and xrd_res:
         fig = plotter.create_xrd_figure(xrd_raw, xrd_res)
         st.pyplot(fig)
 
     # ============================================================
-    # PEAK TABLE (ALL PEAKS, NOT ONLY MAJOR)
+    # PEAK TABLE (STRUCTURAL ONLY)
     # ============================================================
-    peaks = xrd_res.get("peaks", [])
+    if structural_peaks:
+        st.subheader("📌 Structural Bragg Peak Analysis")
 
-    if peaks:
-        st.subheader("📌 Peak Analysis with HKL & Phase Assignment")
-
-        n_total = len(peaks)
-        n_show = st.slider(
-            "Number of peaks to display",
-            1,
-            n_total,
-            min(20, n_total),
+        peaks_sorted = sorted(
+            structural_peaks,
+            key=lambda p: p["intensity"],
+            reverse=True
         )
 
-        peaks_sorted = sorted(peaks, key=lambda x: x["intensity"], reverse=True)
-
-        table = []
-        for i, p in enumerate(peaks_sorted[:n_show]):
-            table.append({
-                "Rank": i + 1,
-                "2θ (°)": round(p["position"], 3),
-                "d (Å)": round(p.get("d_spacing", 0), 4),
-                "Intensity": round(p["intensity"], 1),
-                "FWHM (°)": round(p["fwhm_deg"], 4),
-                "Size (nm)": round(p.get("crystallite_size", 0), 2),
-                "Phase": p.get("phase", ""),
-                "HKL": p.get("hkl", ""),
-                "Confidence": round(p.get("phase_confidence", 0), 3),
-            })
+        table = [{
+            "2θ (°)": round(p["position"], 3),
+            "d (Å)": round(p.get("d_spacing", 0), 4),
+            "Intensity": round(p["intensity"], 1),
+            "FWHM (°)": round(p["fwhm_deg"], 4),
+            "Size (nm)": round(p.get("crystallite_size", 0), 2),
+            "HKL": p.get("hkl", ""),
+            "Phase": p.get("phase", ""),
+        } for p in peaks_sorted]
 
         st.dataframe(pd.DataFrame(table), use_container_width=True)
 
     # ============================================================
-    # CRYSTALLITE SIZE ANALYSIS
+    # CRYSTALLITE SIZE / STRAIN
     # ============================================================
-    with st.expander("🔬 Crystallite Size Analysis", expanded=False):
+    with st.expander("🔬 Crystallite Size & Strain Analysis"):
         size = xrd_res.get("crystallite_size", {})
+        st.write(f"**Scherrer size:** {size.get('scherrer', 0):.2f} nm")
 
-        st.write(f"**Scherrer:** {size.get('scherrer', 0):.2f} nm")
-
-        wh = size.get("williamson_hall", 0)
-        if wh > 0:
-            st.write(f"**Williamson–Hall:** {wh:.2f} nm")
-        else:
-            st.write("**Williamson–Hall:** Not available")
-
-        st.write(f"**Distribution:** {size.get('distribution', 'N/A')}")
-
-        # --------------------------------------------------
-        # Microstrain (Williamson–Hall)
-        # --------------------------------------------------
         microstrain = xrd_res.get("microstrain", None)
-        
         if microstrain is not None:
-            if microstrain > 0:
-                st.write(f"**Microstrain:** {microstrain:.3e}")
+            st.write(f"**Microstrain:** {microstrain:.3e}")
         else:
-            st.write(
-                "**Microstrain:** Not determined "
-                "(insufficient independent reflections)"
-            )
+            st.write("**Microstrain:** Not determined (Williamson–Hall invalid)")
 
-
-        # --------------------------------------------------
-        # Dislocation Density
-        # --------------------------------------------------
         rho = xrd_res.get("dislocation_density", None)
-        
         if rho is not None:
-            if rho > 0:
-                st.write(f"**Dislocation Density:** {rho:.2e} m⁻²")
+            st.write(f"**Dislocation density:** {rho:.2e} m⁻²")
         else:
-            st.write(
-                "**Dislocation Density:** Not determined "
-                "(Williamson–Hall invalid)"
-            )
-
+            st.write("**Dislocation density:** Not determined")
 
     # ============================================================
-    # CSV EXPORT (ALL PEAKS)
+    # UNIVERSAL & NANO ANALYSIS
     # ============================================================
-    if peaks:
-        all_peaks_df = pd.DataFrame([
-            {
-                "2theta_deg": p["position"],
-                "d_spacing_A": p.get("d_spacing", 0),
-                "intensity": p["intensity"],
-                "fwhm_deg": p["fwhm_deg"],
-                "crystallite_size_nm": p.get("crystallite_size", 0),
-                "phase": p.get("phase", ""),
-                "hkl": p.get("hkl", ""),
-                "confidence": p.get("phase_confidence", 0),
-            }
-            for p in peaks
-        ])
-
-        st.download_button(
-            "📥 Download Full XRD Peak Data (CSV)",
-            all_peaks_df.to_csv(index=False),
-            file_name="xrd_peak_analysis.csv",
-            mime="text/csv",
-        )
-         # Add this safety check:
-    if "xrd_results" in xrd_res:
-        xrd_res = xrd_res["xrd_results"]  # Unwrap if nested
-    # ============================================================
-    # NANOMATERIAL VALIDATION SECTION
-    # ============================================================
-     # After all other XRD display code, before the end of the function:
     display_universal_material_analysis(xrd_res)
+    display_nanomaterial_validation(xrd_res)
+
 def display_universal_material_analysis(xrd_results: Dict):
-    """Display universal material analysis for ANY sample"""
-    
     if not xrd_results:
         return
-    
+
+    structural_peaks = xrd_results.get("structural_peaks", [])
+    ci = xrd_results.get("crystallinity_index", 0)
+    size = xrd_results.get("crystallite_size", {}).get("scherrer", 0)
+
     st.markdown("---")
     st.subheader("🌍 Universal Material Analysis")
-    
-    # Material family
-    material_family = xrd_results.get("material_family", "unknown")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        family_display = material_family.replace('_', ' ').title()
-        st.metric("Material Family", family_display)
-    
-    with col2:
-        peaks_count = len(xrd_results.get("peaks", []))
-        st.metric("Peaks Detected", peaks_count)
-    
-    with col3:
-        ci = xrd_results.get("crystallinity_index", 0)
-        st.metric("Crystallinity", f"{ci:.2f}")
-    
-    with col4:
-        size = xrd_results.get("crystallite_size", {}).get("scherrer", 0)
-        if size > 0:
-            size_category = "Ultra-nano (<5 nm)" if size < 5 else \
-                          "Nano (5-20 nm)" if size < 20 else \
-                          "Sub-micron (20-100 nm)" if size < 100 else "Micron-scale"
-            st.metric("Size Category", size_category)
-    
-    # Scientific interpretation based on material family
-    with st.expander("🔬 Scientific Interpretation", expanded=True):
-        st.markdown("### **Material Characteristics**")
-        
-        # Generic interpretation
-        ci = xrd_results.get("crystallinity_index", 0)
-        size = xrd_results.get("crystallite_size", {}).get("scherrer", 0)
-        peaks = xrd_results.get("peaks", [])
-        
-        if ci < 0.3:
-            st.markdown("✅ **Highly Amorphous/Nanocrystalline**")
-            st.markdown("- Broad, diffuse peaks suggest short-range order")
-            st.markdown("- Typical of sol-gel synthesized materials")
-            st.markdown("- High surface area expected")
-        elif ci < 0.7:
-            st.markdown("🔄 **Partially Crystalline**")
-            st.markdown("- Mixed crystalline/amorphous character")
-            st.markdown("- Common in nanomaterials with surface effects")
-            st.markdown("- May exhibit quantum confinement effects")
-        else:
-            st.markdown("💎 **Highly Crystalline**")
-            st.markdown("- Sharp, well-defined diffraction peaks")
-            st.markdown("- Long-range crystallographic order")
-            st.markdown("- Lower surface area, more bulk-like properties")
-        
-        # Size interpretation
-        if size > 0:
-            st.markdown("### **Size Analysis**")
-            if size < 5:
-                st.markdown(f"🔬 **Ultra-nanocrystalline**: {size:.1f} nm")
-                st.markdown("- Strong quantum confinement effects")
-                st.markdown("- High surface-to-volume ratio")
-                st.markdown("- Potential for enhanced catalytic activity")
-            elif size < 20:
-                st.markdown(f"🔬 **Nanocrystalline**: {size:.1f} nm")
-                st.markdown("- Moderate quantum effects")
-                st.markdown("- Good balance of surface area and stability")
-                st.markdown("- Common in functional nanomaterials")
-            elif size < 100:
-                st.markdown(f"🔬 **Sub-micron**: {size:.1f} nm")
-                st.markdown("- Reduced surface effects")
-                st.markdown("- More bulk-like properties")
-                st.markdown("- Good for structural applications")
-        
-        # Family-specific recommendations
-        family = xrd_results.get("material_family", "").lower()
-        
-        st.markdown("### **Scientific Recommendations**")
-        
-        if "oxide" in family:
-            st.markdown("1. **For oxides**: Consider BET analysis for surface area")
-            st.markdown("2. **Characterization**: Combine with XPS for oxidation states")
-            st.markdown("3. **Applications**: Catalysis, sensors, energy storage")
-        elif "metal" in family and "nanoparticle" in family:
-            st.markdown("1. **For metal NPs**: TEM for size/shape verification")
-            st.markdown("2. **Characterization**: UV-Vis for plasmon resonance")
-            st.markdown("3. **Applications**: Catalysis, plasmonics, medicine")
-        elif "2d" in family or "layered" in family:
-            st.markdown("1. **For 2D materials**: AFM for thickness measurement")
-            st.markdown("2. **Characterization**: Raman spectroscopy for layer count")
-            st.markdown("3. **Applications**: Electronics, optoelectronics, sensors")
-        else:
-            st.markdown("1. **General**: Validate with complementary techniques")
-            st.markdown("2. **Characterization**: Consider SEM/TEM for morphology")
-            st.markdown("3. **Applications**: Depends on material properties")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Structural Peaks", len(structural_peaks))
+    col2.metric("Crystallinity", f"{ci:.2f}")
+    col3.metric("Crystallite Size", f"{size:.1f} nm" if size else "N/A")
+
 def display_nanomaterial_validation(xrd_results: Dict):
-    """Display nanomaterial-specific validation metrics in the XRD Analysis tab"""
-    
-    if "nanomaterial_analysis" not in xrd_results:
+    if not xrd_results:
         return
-    
-    nano_data = xrd_results["nanomaterial_analysis"]
-    
-    # Create a new section in the XRD Analysis tab
+
+    peaks = xrd_results.get("structural_peaks", [])
+    if not peaks:
+        return
+
+    fwhms = [p["fwhm_deg"] for p in peaks if p.get("fwhm_deg", 0) > 0]
+    avg_fwhm = np.mean(fwhms) if fwhms else 0
+
     st.markdown("---")
-    st.subheader("🔬 Nanomaterial Characterization")
-    
-    # Key metrics in columns
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        size = nano_data.get("estimated_size_nm")
-        if size:
-            st.metric("Estimated Size", f"{size:.1f} nm", 
-                     help="Estimated crystallite size from peak profile analysis")
-        else:
-            st.metric("Size Range", "Nanoscale", 
-                     help="Broad peaks indicate nanocrystalline material")
-    
-    with col2:
-        factor = nano_data.get("peak_broadening_factor", 1.0)
-        st.metric("Broadening Factor", f"{factor:.2f}x",
-                 help="Peak broadening relative to bulk material")
-    
-    with col3:
-        confidence = nano_data.get("confidence_level", "medium")
-        st.metric("Confidence", confidence.title(),
-                 help="Confidence level in nanomaterial identification")
-    
-    with col4:
-        nano_score = nano_data.get("nano_score", 0)
-        st.metric("Nano Score", f"{nano_score:.2f}/1.0",
-                 help="Likelihood of nanomaterial formation (0-1)")
-    
-    # Scientific assessment expander
-    with st.expander("📊 Detailed Nanomaterial Analysis", expanded=True):
-        st.markdown("### **Scientific Assessment**")
-        
-        peaks = xrd_results.get("peaks", [])
-        if peaks:
-            # Calculate peak statistics
-            fwhms = [p.get("fwhm_deg", 0) for p in peaks if p.get("fwhm_deg", 0) > 0]
-            if fwhms:
-                avg_fwhm = np.mean(fwhms)
-                max_fwhm = max(fwhms)
-                min_fwhm = min(fwhms)
-                
-                st.markdown("#### **Peak Broadening Analysis**")
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("Average FWHM", f"{avg_fwhm:.3f}°")
-                with col2:
-                    st.metric("Max FWHM", f"{max_fwhm:.3f}°")
-                with col3:
-                    st.metric("Min FWHM", f"{min_fwhm:.3f}°")
-                
-                # Scientific interpretation
-                st.markdown("#### **Interpretation**")
-                if avg_fwhm > 0.5:
-                    st.success("✅ **Strong Nanocrystalline Character**")
-                    st.markdown("""
-                    - **High peak broadening** (FWHM > 0.5°) indicates significant nanocrystallinity
-                    - **Size-induced broadening** dominates strain effects
-                    - **Typical size**: < 10 nm crystallites
-                    - **Implications**: High surface area, potential quantum confinement
-                    """)
-                elif avg_fwhm > 0.3:
-                    st.info("🔄 **Moderate Nanocrystalline Character**")
-                    st.markdown("""
-                    - **Moderate peak broadening** (FWHM 0.3-0.5°) suggests nanocrystalline domains
-                    - **Mixed contributions** from size and strain
-                    - **Typical size**: 10-20 nm crystallites
-                    - **Implications**: Enhanced surface reactivity, intermediate properties
-                    """)
-                else:
-                    st.warning("⚠️ **Limited Nanocrystalline Character**")
-                    st.markdown("""
-                    - **Limited peak broadening** (FWHM < 0.3°) suggests larger crystallites
-                    - **May be partially crystalline** with amorphous components
-                    - **Typical size**: > 20 nm crystallites
-                    - **Implications**: More bulk-like properties, lower surface area
-                    """)
-        
-        # Phase-specific nanomaterial information
-        phases = xrd_results.get("phases", [])
-        if phases:
-            st.markdown("#### **Nanomaterial Phase Analysis**")
-            
-            # Count nanomaterial-relevant phases
-            nano_phases = [p for p in phases if p.get("nano_relevance") == "high"]
-            medium_phases = [p for p in phases if p.get("nano_relevance") == "medium"]
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.metric("High-Relevance Phases", len(nano_phases),
-                         help="Phases commonly forming nanostructures")
-            
-            with col2:
-                st.metric("Medium-Relevance Phases", len(medium_phases),
-                         help="Phases occasionally forming nanostructures")
-            
-            # List high-relevance phases
-            if nano_phases:
-                st.markdown("**Common Nanomaterial Phases Detected:**")
-                for phase in nano_phases[:3]:  # Show top 3
-                    st.markdown(f"- **{phase['phase']}** ({phase['crystal_system']}, {phase['space_group']})")
-            
-            # Database reliability
-            st.markdown("#### **Database Reliability**")
-            db_counts = {}
-            for phase in phases:
-                db = phase.get("database", "Unknown")
-                db_counts[db] = db_counts.get(db, 0) + 1
-            
-            for db, count in db_counts.items():
-                if "COD" in db:
-                    st.success(f"✅ **{db}**: {count} phase(s) - High reliability for nanomaterials")
-                elif "MP" in db or "Materials" in db:
-                    st.info(f"ℹ️ **{db}**: {count} phase(s) - Good reliability with experimental validation")
-                else:
-                    st.warning(f"⚠️ **{db}**: {count} phase(s) - Limited nanomaterial-specific data")
-        
-        # Recommendations for nanomaterials
-        st.markdown("#### **Scientific Recommendations**")
-        st.markdown("""
-        1. **For publication**: Include Williamson-Hall plot showing size-strain separation
-        2. **For characterization**: Combine with TEM for direct size verification
-        3. **For synthesis**: Report precursor concentrations and annealing temperatures
-        4. **For reproducibility**: Document all XRD acquisition parameters
-        5. **For phase purity**: Consider Rietveld refinement for quantitative analysis
-        """)
-        
-        # Quality metrics table
-        st.markdown("#### **Quality Metrics**")
-        quality_data = []
-        
-        if "phases" in xrd_results and xrd_results["phases"]:
-            quality_data.append(["Phase Identification", "✅ Complete", "All major phases identified"])
-        
-        if "williamson_hall" in xrd_results:
-            quality_data.append(["Size-Strain Analysis", "✅ Complete", "Williamson-Hall analysis successful"])
-        
-        if peaks and len(peaks) >= 5:
-            quality_data.append(["Peak Detection", "✅ Good", f"{len(peaks)} peaks detected"])
-        elif peaks and len(peaks) >= 3:
-            quality_data.append(["Peak Detection", "⚠️ Limited", f"Only {len(peaks)} peaks detected"])
-        
-        if xrd_results.get("crystallinity_index", 0) > 0.7:
-            quality_data.append(["Crystallinity", "✅ High", f"CI = {xrd_results['crystallinity_index']:.2f}"])
-        elif xrd_results.get("crystallinity_index", 0) > 0.3:
-            quality_data.append(["Crystallinity", "⚠️ Moderate", f"CI = {xrd_results['crystallinity_index']:.2f}"])
-        else:
-            quality_data.append(["Crystallinity", "❌ Low", f"CI = {xrd_results['crystallinity_index']:.2f}"])
-        
-        # Display quality table
-        import pandas as pd
-        quality_df = pd.DataFrame(quality_data, columns=["Metric", "Status", "Details"])
-        st.dataframe(quality_df, use_container_width=True, hide_index=True)
+    st.subheader("🔬 Nanomaterial Validation")
+
+    st.metric("Average FWHM", f"{avg_fwhm:.3f}°")
+
+    if avg_fwhm > 0.5:
+        st.success("Strong nanocrystalline character")
+    elif avg_fwhm > 0.3:
+        st.info("Moderate nanocrystalline character")
+    else:
+        st.warning("Weak or bulk-like crystallinity")
+
 @memory_safe_plot            
 def display_3d_xrd_visualization(results, scientific_params):
     """Display 3D XRD visualization with hkl indices"""
@@ -2835,6 +2511,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
