@@ -794,9 +794,20 @@ class PublicationPlotter:
             summary_data.append(['Crystallite Size (W-H)', f'{size_wh:.1f} nm'])
         
         # Microstrain
-        microstrain = xrd_results.get('microstrain', 0)
-        if microstrain > 0:
-            summary_data.append(['Microstrain', f'{microstrain:.4f}'])
+        # --------------------------------------------------
+        # Microstrain (Williamson–Hall)
+        # --------------------------------------------------
+        microstrain = xrd_results.get('microstrain', None)
+        
+        if microstrain is not None:
+            if microstrain > 0:
+                summary_data.append(['Microstrain', f'{microstrain:.4f}'])
+        else:
+            summary_data.append([
+                'Microstrain',
+                'Not determined (insufficient independent reflections)'
+            ])
+
         
         # Number of peaks
         n_peaks = xrd_results.get('n_peaks_total', len(peaks))
@@ -1098,6 +1109,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
