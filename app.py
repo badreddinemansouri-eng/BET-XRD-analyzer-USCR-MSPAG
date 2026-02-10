@@ -1662,13 +1662,35 @@ def display_xrd_analysis(results, plotter):
 
         st.write(f"**Distribution:** {size.get('distribution', 'N/A')}")
 
-        microstrain = xrd_res.get("microstrain", 0)
-        if microstrain > 0:
-            st.write(f"**Microstrain:** {microstrain:.3e}")
+        # --------------------------------------------------
+        # Microstrain (Williamson–Hall)
+        # --------------------------------------------------
+        microstrain = xrd_res.get("microstrain", None)
+        
+        if microstrain is not None:
+            if microstrain > 0:
+                st.write(f"**Microstrain:** {microstrain:.3e}")
+        else:
+            st.write(
+                "**Microstrain:** Not determined "
+                "(insufficient independent reflections)"
+            )
 
-        rho = xrd_res.get("dislocation_density", 0)
-        if rho > 0:
-            st.write(f"**Dislocation density:** {rho:.3e} m⁻²")
+
+        # --------------------------------------------------
+        # Dislocation Density
+        # --------------------------------------------------
+        rho = xrd_res.get("dislocation_density", None)
+        
+        if rho is not None:
+            if rho > 0:
+                st.write(f"**Dislocation Density:** {rho:.2e} m⁻²")
+        else:
+            st.write(
+                "**Dislocation Density:** Not determined "
+                "(Williamson–Hall invalid)"
+            )
+
 
     # ============================================================
     # CSV EXPORT (ALL PEAKS)
@@ -2801,6 +2823,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
