@@ -562,7 +562,10 @@ def calculate_crystallinity_index(two_theta, intensity, peaks):
         return 0.0
     
     # Crystalline area: sum of integrated peak areas
-    crystalline_area = sum(p['area'] for p in peaks if 'area' in p)
+    structural_peaks = xrd_results["structural_peaks"]
+
+    crystalline_area = sum(p["area"] for p in structural_peaks)
+
     
     # Ensure CI is between 0 and 1 with physical limit
     ci = crystalline_area / total_area
@@ -1277,3 +1280,4 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
