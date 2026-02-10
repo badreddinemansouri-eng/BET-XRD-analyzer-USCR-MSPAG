@@ -88,8 +88,10 @@ class PhysicalPeakValidator:
         if total_local_area <= 0:
             return None
 
-        if peak_area / total_local_area < 0.05:
+        # Nanocrystalline-safe threshold
+        if peak_area / total_local_area < 0.015:
             return None
+
 
         # ---------------------------
         # Estimate FWHM
