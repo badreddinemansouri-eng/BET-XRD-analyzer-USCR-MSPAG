@@ -1106,7 +1106,7 @@ class AdvancedXRDAnalyzer:
             # PHASE ID: RAW PEAK DETECTION (NO PROCESSING)
             # -----------------------------
             raw_peaks = detect_peaks_raw(two_theta_raw, intensity_raw)
-            xrd_results["raw_peaks"] = raw_peaks[:15]  # Store raw peaks for reference
+            xrd_results["raw_peaks"] = raw_peaks  # Store raw peaks for reference
             
             # -----------------------------
             # SCIENTIFIC CRYSTALLINITY INDEX (PATCHED)
@@ -1342,3 +1342,4 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
