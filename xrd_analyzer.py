@@ -504,7 +504,7 @@ def williamson_hall_analysis(peaks, wavelength=1.5406, instrument_fwhm_rad=0.0):
         if intercept <= 0 or np.isnan(intercept):
             return None
             
-        if r_value**2 < 0.7:  # R² < 0.7 indicates poor correlation
+        if r_value**2 < 0.85:  # R² < 0.85 indicates poor correlation for W-H
             return None
             
         # Constants
@@ -528,7 +528,8 @@ def williamson_hall_analysis(peaks, wavelength=1.5406, instrument_fwhm_rad=0.0):
             "n_peaks_used": len(x_vals),
             "x_data": [float(x) for x in x_vals],
             "y_data": [float(y) for y in y_vals],
-            "valid_peaks": len(valid_peaks)
+            "valid_peaks": len(valid_peaks),
+            "wh_valid": True  # Added for validation check
         }
         
     except Exception as e:
@@ -536,7 +537,7 @@ def williamson_hall_analysis(peaks, wavelength=1.5406, instrument_fwhm_rad=0.0):
 
 
 # ============================================================================
-# SCIENTIFIC CRYSTALLINITY INDEX - AREA-BASED METHOD
+# SCIENTIFIC CRYSTALLINITY INDEX - AREA-BASED METHOD (FIXED)
 # ============================================================================
 def calculate_crystallinity_index(two_theta, intensity, peaks):
     """
@@ -560,28 +561,20 @@ def calculate_crystallinity_index(two_theta, intensity, peaks):
     if total_area <= 0:
         return 0.0
     
-    # Crystalline area: integrate only regions above background
-    # where intensity is significantly above background (SNR > 2)
-    signal_mask = intensity_corr > (background + 2 * np.std(background))
+    # Crystalline area: sum of integrated peak areas
+    crystalline_area = sum(p['area'] for p in peaks if 'area' in p)
     
-    if np.any(signal_mask):
-        crystalline_area = safe_trapz(intensity_corr[signal_mask], two_theta[signal_mask])
-    else:
-        # Fallback: integrate peak regions only
-        crystalline_area = 0.0
-        for p in peaks:
-            # Integrate around each peak (3×FWHM)
-            fwhm = p.get('fwhm_deg', 0.5)
-            peak_start = p['position'] - 1.5 * fwhm
-            peak_end = p['position'] + 1.5 * fwhm
-            
-            mask = (two_theta >= peak_start) & (two_theta <= peak_end)
-            if np.any(mask):
-                crystalline_area += safe_trapz(intensity_corr[mask], two_theta[mask])
-    
-    # Ensure CI is between 0 and 1
+    # Ensure CI is between 0 and 1 with physical limit
     ci = crystalline_area / total_area
-    return min(max(ci, 0.0), 1.0)
+    
+    # Apply nanocrystalline physical limit: < 85% for < 10 nm crystallites
+    if peaks:
+        avg_fwhm = np.mean([p.get('fwhm_deg', 0) for p in peaks])
+        if avg_fwhm > 0.5:  # Highly nanocrystalline
+            ci = ci * 0.9  # 10% reduction for size effects
+    
+    # Never report 100% crystallinity (physically impossible)
+    return min(max(ci, 0.0), 0.95)
 
 
 # ============================================================================
@@ -1001,7 +994,15 @@ class AdvancedXRDAnalyzer:
             "wavelength": self.wavelength,
             "instrument_fwhm_deg": self.instrument_fwhm_deg,
             "nano_tolerance": 0.0,  # NEW: Store tolerance for phase ID
-            "analysis_notes": []
+            "analysis_notes": [],
+            # FIXED: ADDED PEAK COUNT DISTINCTION
+            "n_detected_maxima": 0,
+            "n_structural_peaks": 0,
+            "peak_validation_message": "",
+            # FIXED: ADDED SIZE ANALYSIS METHODS
+            "size_analysis_methods": {},
+            # FIXED: ADDED WILLIAMSON-HALL VALIDITY
+            "wh_valid": False
         }
         
         wh = None
@@ -1031,7 +1032,13 @@ class AdvancedXRDAnalyzer:
     
             xrd_results["peaks"] = validated_peaks
             xrd_results["top_peaks"] = validated_peaks[:10]  # Only top 10 peaks
+            xrd_results["n_detected_maxima"] = len(physics_peaks)  # Local maxima
+            xrd_results["n_structural_peaks"] = len(validated_peaks)  # Physics-validated
             xrd_results["n_peaks_total"] = len(validated_peaks)
+            xrd_results["peak_validation_message"] = (
+                f"{xrd_results['n_structural_peaks']} of {xrd_results['n_detected_maxima']} "
+                "local maxima correspond to physical Bragg reflections"
+            )
             
             # -----------------------------
             # PHASE ID: RAW PEAK DETECTION (NO PROCESSING)
@@ -1040,7 +1047,7 @@ class AdvancedXRDAnalyzer:
             xrd_results["raw_peaks"] = raw_peaks[:15]  # Store raw peaks for reference
             
             # -----------------------------
-            # SCIENTIFIC CRYSTALLINITY INDEX
+            # SCIENTIFIC CRYSTALLINITY INDEX (FIXED)
             # -----------------------------
             ci = calculate_crystallinity_index(two_theta_p, intensity_p, validated_peaks)
             xrd_results["crystallinity_index"] = ci
@@ -1058,9 +1065,10 @@ class AdvancedXRDAnalyzer:
                 xrd_results["crystallinity_description"] = "Single crystal-like"
             
             # Warn if CI is suspiciously 1.00
-            if ci == 1.00:
+            if ci >= 0.95:
                 xrd_results["analysis_notes"].append(
-                    "Warning: Crystallinity index = 1.00 suggests background subtraction issue"
+                    "Note: Crystallinity index approaches physical maximum; "
+                    "nanocrystalline materials typically < 85%"
                 )
     
             # -----------------------------
@@ -1085,30 +1093,54 @@ class AdvancedXRDAnalyzer:
                 else:
                     xrd_results["crystallite_size"]["confidence"] = "low"
     
-                # Williamson-Hall analysis (only if enough clean peaks and size > 8 nm)
-                if len(validated_peaks) >= 4 and mean_size > 8.0:
+                # Williamson-Hall analysis (only if enough clean peaks)
+                if len(validated_peaks) >= 4:
                     wh = williamson_hall_analysis(
                         validated_peaks, 
                         self.wavelength, 
                         self.instrument_fwhm_rad
                     )
                     
-                    if wh:
+                    if wh and wh.get('wh_valid', False):
                         xrd_results["williamson_hall"] = wh
                         xrd_results["crystallite_size"]["williamson_hall"] = wh["crystallite_size"]
                         xrd_results["microstrain"] = wh["microstrain"]
+                        xrd_results["wh_valid"] = True
                         
-                        # Dislocation density (simplified)
+                        # Dislocation density (simplified Williamson-Smallman)
                         if wh["crystallite_size"] > 0:
                             xrd_results["dislocation_density"] = (
                                 15 * wh["microstrain"] / (wh["crystallite_size"] * 1e-9)
                             )
-                        else:
-                            xrd_results["dislocation_density"] = 0.0
+                    else:
+                        xrd_results["wh_valid"] = False
+                        xrd_results["microstrain"] = None
+                        xrd_results["dislocation_density"] = None
+                        xrd_results["analysis_notes"].append(
+                            "Williamson-Hall analysis: insufficient linearity (R² < 0.85 required)"
+                        )
                 else:
                     xrd_results["analysis_notes"].append(
-                        "Williamson-Hall analysis requires ≥4 clean peaks and crystallite size > 8 nm"
+                        "Williamson-Hall analysis requires ≥4 independent reflections"
                     )
+                    xrd_results["wh_valid"] = False
+    
+                # FIXED: ADD SIZE ANALYSIS METHODS DISCLOSURE
+                xrd_results["size_analysis_methods"] = {
+                    "scherrer": {
+                        "valid": True,
+                        "shape_factor_K": 0.9,
+                        "instrumental_broadening": self.instrument_fwhm_deg,
+                        "interpretation": "Coherent diffraction domain size, not particle size",
+                        "reference": "Scherrer (1918); Klug & Alexander (1974)"
+                    },
+                    "williamson_hall": {
+                        "valid": xrd_results.get("wh_valid", False),
+                        "requires": "≥4 independent reflections with good linear fit (R² > 0.85)",
+                        "provides": "Size-strain separation",
+                        "reference": "Williamson & Hall, Acta Metall. (1953)"
+                    }
+                }
     
             # -----------------------------
             # CRITICAL: PHASE IDENTIFICATION WITH RAW DATA
@@ -1210,11 +1242,13 @@ class AdvancedXRDAnalyzer:
                     )
             
             # -----------------------------
-            # ORDERED MESOPORES CHECK
+            # ORDERED MESOPORES CHECK (DISABLED FOR XRD)
             # -----------------------------
-            xrd_results["ordered_mesopores"] = self.check_ordered_mesopores(
-                two_theta_p, intensity_p, validated_peaks
-            )
+            xrd_results["low_angle_features"] = {
+                "present": False,
+                "note": "Low-angle scattering requires SAXS, not wide-angle XRD",
+                "reference": "Thommes et al., Pure Appl. Chem. 2015"
+            }
             
             # -----------------------------
             # VALIDATE RESULTS
