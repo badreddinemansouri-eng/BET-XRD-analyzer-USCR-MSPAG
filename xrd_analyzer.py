@@ -202,7 +202,16 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
     This function now uses the validator from xrd_peak_physics.py
     """
     # 1. Normalize for initial peak detection
-    intensity_norm = (intensity - intensity.min()) / (intensity.max() - intensity.min())
+    # --- FIX 1: background-corrected signal ---
+    signal_corr = intensity - background
+    signal_corr[signal_corr < 0] = 0
+    
+    # Normalize AFTER background correction
+    if signal_corr.max() > 0:
+        signal_norm = signal_corr / signal_corr.max()
+    else:
+        signal_norm = signal_corr
+
     
     # 2. Convert angular distance to points for find_peaks
     angular_step = np.mean(np.diff(two_theta))
@@ -210,11 +219,12 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
     
     # 3. Initial peak detection (local maxima only)
     peaks_idx, properties = signal.find_peaks(
-        intensity_norm,
+        signal_norm,
         prominence=min_prominence,
-        distance=max(min_distance_points, 5),
-        wlen=len(intensity_norm)//10
+        width=3,
+        distance=max(min_distance_points, 5)
     )
+
     
     # 4. PHYSICAL VALIDATION using PhysicalPeakValidator
     if PEAK_VALIDATOR_AVAILABLE:
@@ -350,7 +360,13 @@ def detect_peaks_raw(two_theta, intensity, min_distance_deg=1.0, min_prominence=
     intensity_raw = intensity.copy()
     
     # Normalize for peak detection
-    intensity_norm = (intensity_raw - intensity_raw.min()) / (intensity_raw.max() - intensity_raw.min())
+    # Raw peaks still need background removal for maxima detection
+    background = signal.savgol_filter(intensity_raw, 101, 3)
+    signal_raw = intensity_raw - background
+    signal_raw[signal_raw < 0] = 0
+    
+    signal_norm = signal_raw / signal_raw.max() if signal_raw.max() > 0 else signal_raw
+
     
     # Convert angular distance to points for find_peaks
     angular_step = np.mean(np.diff(two_theta))
@@ -358,11 +374,11 @@ def detect_peaks_raw(two_theta, intensity, min_distance_deg=1.0, min_prominence=
     
     # Peak detection on RAW data
     peaks_idx, properties = signal.find_peaks(
-        intensity_norm,
+        signal_norm,
         prominence=min_prominence,
         width=(3, None),  # Minimum 3 points width for FWHM
         distance=max(min_distance_points, 5),
-        wlen=len(intensity_norm)//10
+       
     )
     
     peaks = []
@@ -1342,4 +1358,5 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
