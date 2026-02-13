@@ -75,7 +75,7 @@ class PhysicalPeakValidator:
         # ----------------------------------
         # FIX #2: Identify strongest peak
         # ----------------------------------
-        global_max_intensity = np.max(intensity)
+      
     
         noise = np.std(y)
 
