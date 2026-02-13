@@ -67,13 +67,16 @@ class PhysicalPeakValidator:
         if len(x) < 6:
             return None
 
-        peak_height = y.max()
+        local_max_idx = np.argmax(y)
+        true_idx = left + local_max_idx
+        true_two_theta = two_theta[true_idx]
+        peak_height = y[local_max_idx]
+
         # ----------------------------------
         # FIX #2: Identify strongest peak
         # ----------------------------------
         global_max_intensity = np.max(intensity)
-        is_strongest_peak = peak_height >= 0.9 * global_max_intensity
-
+    
         noise = np.std(y)
 
         # ---------------------------
@@ -96,7 +99,7 @@ class PhysicalPeakValidator:
 
         # Nanocrystalline-safe threshold
         # Do not reject dominant Bragg reflections by area heuristics
-        if peak_area / total_local_area < 0.015 and not is_strongest_peak:
+        if peak_area / total_local_area < 0.015:
             return None
 
 
@@ -118,7 +121,7 @@ class PhysicalPeakValidator:
             return None
 
         # Allow broad nanocrystalline Bragg peak if it is the strongest reflection
-        if fwhm > self.instrument.max_fwhm and not is_strongest_peak:
+        if fwhm > self.instrument.max_fwhm:
             return None
 
 
@@ -180,12 +183,13 @@ class PhysicalPeakValidator:
         # VALID PEAK
         # ---------------------------
         return {
-            "two_theta": float(two_theta[idx]),
+            "two_theta": float(true_two_theta),
+            "index": int(true_idx),
             "intensity": float(peak_height),
             "fwhm_deg": float(fwhm),
             "snr": float(peak_height / noise),
             "shape": shape,
             "fit_quality": float(best_r2),
             "area": float(peak_area),
-            "peak_type": "nanocrystalline_bragg" if is_strongest_peak else "bragg"
         }
+
