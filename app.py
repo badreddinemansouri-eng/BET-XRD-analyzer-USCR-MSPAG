@@ -1504,10 +1504,13 @@ def display_xrd_analysis(results, plotter):
     # ------------------------------------------------------------
     # STRICT PEAK SEMANTICS
     # ------------------------------------------------------------
-    raw_peaks = xrd_res.get("raw_peaks", [])
+    # STRICT PEAK SEMANTICS (CORRECT)
     structural_peaks = xrd_res.get("structural_peaks", [])
-
-    n_detected = len(raw_peaks)
+    
+    # True number of local maxima detected by find_peaks
+    n_detected = xrd_res.get("n_detected_maxima", 0)
+    
+    # Number of physically validated Bragg peaks
     n_structural = len(structural_peaks)
 
     st.markdown("### 📊 Peak Statistics")
@@ -2511,6 +2514,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
