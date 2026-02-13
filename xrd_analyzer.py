@@ -247,23 +247,24 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
             # ----------------------------
             # FIX: PHYSICAL PEAK RECENTERING
             # ----------------------------
+            # ----------------------------
+            # FIX: PHYSICAL PEAK RECENTERING
+            # ----------------------------
             left = max(0, idx - 10)
             right = min(len(intensity), idx + 10)
             
-            # Use RAW background-corrected signal
             local_y = intensity[left:right] - background[left:right]
             true_local_idx = np.argmax(local_y)
             
             true_idx = left + true_local_idx
             true_two_theta = two_theta[true_idx]
             true_intensity = intensity[true_idx]
-            assert abs(two_theta[true_idx] - true_two_theta) < 1e-6, (
-                f"Peak recentering mismatch at index {idx}: "
-                f"{two_theta[true_idx]} vs {true_two_theta}"
-            )
+            
+            assert abs(two_theta[true_idx] - true_two_theta) < 1e-6
+
             # Create structural peak dictionary
             peak_dict = {
-                'index': int(idx),
+                'index': int(true_idx),
                 'position': float(true_two_theta),
                 'intensity': float(true_intensity),
                 'intensity_raw': float(intensity[idx]),
@@ -1374,6 +1375,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
