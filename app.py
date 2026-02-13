@@ -2299,7 +2299,7 @@ def display_export(results, scientific_params):
                     "n_detected_maxima": results.get("xrd_results", {}).get("n_detected_maxima", 0),
                     "parameters": scientific_params,
                 }
-
+            }
         import numpy as np
         import json
         # Use a custom JSON encoder to handle numpy arrays and other non-serializable objects
@@ -2520,6 +2520,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
