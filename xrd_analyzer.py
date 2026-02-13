@@ -264,19 +264,26 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
 
             # Create structural peak dictionary
             peak_dict = {
+                # 🔥 REPLACED INDEX — THIS IS THE CORE FIX
                 'index': int(true_idx),
+            
+                # true Bragg position
                 'position': float(true_two_theta),
+            
+                # true apex intensity
                 'intensity': float(true_intensity),
-                'intensity_raw': float(intensity[idx]),
+            
+                # raw intensity at apex
+                'intensity_raw': float(intensity[true_idx]),
+            
                 'fwhm_deg': float(result["fwhm_deg"]),
                 'fwhm_rad': float(np.deg2rad(result["fwhm_deg"])),
                 'area': float(result["area"]),
                 'snr': float(result["snr"]),
                 'shape': result["shape"],
                 'fit_quality': float(result["fit_quality"]),
-                'prominence': float(properties['prominences'][list(peaks_idx).index(idx)] 
-                                   if 'prominences' in properties and idx in peaks_idx else 0.0)
             }
+
             
             # Calculate asymmetry
             peak_start = max(0, int(idx - 10))
@@ -1375,6 +1382,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
