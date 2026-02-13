@@ -488,10 +488,10 @@ class PublicationPlotter:
         # ============================================================
         # STRICT PEAK SEMANTICS
         # ============================================================
-        raw_peaks = xrd_results.get("raw_peaks", [])
         structural_peaks = xrd_results.get("structural_peaks", [])
     
-        n_raw = len(raw_peaks)
+        n_raw = xrd_results.get("n_detected_maxima", 0)
+
         n_structural = len(structural_peaks)
     
         # UI subset (display only)
@@ -892,6 +892,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
