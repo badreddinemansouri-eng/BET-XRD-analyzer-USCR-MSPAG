@@ -555,7 +555,8 @@ def perform_analysis_validation(results):
         xrd = results['xrd_results']
         
         # Check number of peaks
-        n_peaks = len(xrd.get('peaks', []))
+        n_peaks = len(xrd.get('structural_peaks', []))
+
         if n_peaks >= 3:
             validation['xrd_checks'].append({'check': 'Number of Peaks', 'status': '✅', 'value': f"{n_peaks} peaks detected"})
         else:
@@ -910,7 +911,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                                     lattice_dict[match.group(1)] = float(match.group(2))
                                 
                                 # Index peaks using crystallography engine
-                                peak_positions = [p['position'] for p in xrd_results['peaks']]
+                                peak_positions = [p['position'] for p in xrd_results['structural_peaks']]
                                 indexing_result = ce.index_peaks(
                                     peak_positions=peak_positions,
                                     crystal_system=params['crystal']['system'],
@@ -1687,7 +1688,8 @@ def display_3d_xrd_visualization(results, scientific_params):
         import numpy as np
         
         # Get peaks data
-        peaks = xrd_res['peaks']
+        peaks = xrd_res.get("structural_peaks", [])
+
         positions = [p['position'] for p in peaks]
         intensities = [p['intensity'] for p in peaks]
         
@@ -2293,11 +2295,10 @@ def display_export(results, scientific_params):
                     "crystal_system": results.get("crystal_system"),
                     "space_group": results.get("space_group"),
                     "lattice_parameters": results.get("lattice_parameters", {}),
-                    "peaks": results.get("peaks", []),
-                    "top_peaks": results.get("top_peaks", []),
-                },
-                "parameters": scientific_params,
-            }
+                    "structural_peaks": results.get("xrd_results", {}).get("structural_peaks", []),
+                    "n_detected_maxima": results.get("xrd_results", {}).get("n_detected_maxima", 0),
+                    "parameters": scientific_params,
+                }
 
         import numpy as np
         import json
@@ -2475,8 +2476,13 @@ def generate_scientific_report(results):
 
         report.append("Crystalline Domains Detected: Yes")
         
-        if xrd.get('peaks'):
-            report.append(f"Peaks Detected: {len(xrd['peaks'])}")
+        report.append(
+            f"Structural Bragg Peaks: {len(xrd.get('structural_peaks', []))}"
+        )
+        report.append(
+            f"Detected Local Maxima: {xrd.get('n_detected_maxima', 0)}"
+        )
+
         report.append("")
     
     # Morphology/Fusion Results
@@ -2514,6 +2520,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
