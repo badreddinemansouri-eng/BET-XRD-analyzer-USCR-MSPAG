@@ -105,9 +105,10 @@ class UniversalPeakAnalyzer:
             return peaks_2theta, peaks_intensity
         
         # Sort by intensity (descending)
-        sort_idx = np.argsort(peaks_intensity)[::-1]
-        peaks_2theta_sorted = peaks_2theta[sort_idx]
-        peaks_intensity_sorted = peaks_intensity[sort_idx]
+        # Keep original order (physics already validated upstream)
+        peaks_2theta_sorted = peaks_2theta
+        peaks_intensity_sorted = peaks_intensity
+
         
         # CRITICAL FIX: Enforce angular diversity (minimum 1.5° separation)
         selected_2theta = []
@@ -118,7 +119,7 @@ class UniversalPeakAnalyzer:
             current_intensity = peaks_intensity_sorted[i]
             
             # Check if this peak is sufficiently separated from already selected peaks
-            if all(abs(current_2theta - selected) >= 1.5 for selected in selected_2theta):
+            if all(abs(current_2theta - selected) >= 1.2 for selected in selected_2theta):
                 selected_2theta.append(current_2theta)
                 selected_intensity.append(current_intensity)
             
@@ -149,11 +150,6 @@ class UniversalPeakAnalyzer:
             d_spacing_range = d_spacings.max() - d_spacings.min()
             
             # If d-spacing range is small, material is highly nanocrystalline
-            if d_spacing_range < 2.0:  # Highly nanocrystalline
-                # Keep only top 6 diverse peaks
-                n_keep = min(6, len(selected_2theta))
-                selected_2theta = selected_2theta[:n_keep]
-                selected_intensity = selected_intensity[:n_keep]
         
         return np.array(selected_2theta), np.array(selected_intensity)
     
@@ -873,3 +869,4 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                     st.markdown(f"   - *Tentative match - verify with additional characterization*")
     
     return final_results
+
