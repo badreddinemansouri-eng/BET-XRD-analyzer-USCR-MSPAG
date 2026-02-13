@@ -13,7 +13,7 @@ import pandas as pd
 from typing import Dict, List
 from scipy import stats
 
-def calculate_phase_fractions(peaks, phases, tol=0.15):
+def calculate_phase_fractions(peaks, phases, tol):
     """
     Semi-quantitative phase fractions using matched peak intensities.
     No estimation, CIF-validated only.
@@ -41,7 +41,11 @@ def calculate_phase_fractions(peaks, phases, tol=0.15):
         for phase in phases:
             for hkl_entry in phase["hkls"]:
                 for refl in hkl_entry:
-                    if abs(refl["two_theta"] - t_exp) < tol:
+                    fwhm = peak.get("fwhm_deg", 0.1)
+                    peak_tol = tol * (1 + fwhm)
+                    
+                    if abs(refl["two_theta"] - t_exp) < peak_tol:
+
                         phase_intensity[phase["phase"]] += I
                         total_intensity += I
                         break
@@ -62,7 +66,7 @@ def calculate_phase_fractions(peaks, phases, tol=0.15):
 
     return sorted(results, key=lambda x: x["fraction"], reverse=True)     
 
-def map_peaks_to_phases(peaks, phases, tol=0.15):
+def map_peaks_to_phases(peaks, phases, tol):
     """
     Assign phase + HKL to experimental peaks using CIF d-spacing match.
     """
@@ -75,7 +79,11 @@ def map_peaks_to_phases(peaks, phases, tol=0.15):
         for phase in phases:
             for hkl_entry in phase["hkls"]:
                 for refl in hkl_entry:
-                    if abs(refl["two_theta"] - peak["position"]) < tol:
+                    fwhm = peak.get("fwhm_deg", 0.1)
+                    peak_tol = tol * (1 + fwhm)
+                    
+                    if abs(refl["two_theta"] - peak["position"]) < peak_tol:
+
                         peak["phase"] = phase["phase"]
                         peak["hkl"] = refl["hkl"]
                         peak["phase_confidence"] = phase["score"]
@@ -337,3 +345,4 @@ class ScientificIntegrator:
     def _generate_recommendations(self, integration):
         """Generate scientific recommendations"""
         return ['Further characterization recommended for validation']
+
