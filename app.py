@@ -922,12 +922,20 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                                 
                                 # Update peaks with better hkl indexing
                                 indexed_peaks = indexing_result.get('indexed_peaks', [])
-                                for i, peak in enumerate(xrd_results['peaks']):
-                                    if i < len(indexed_peaks):
-                                        hkl_info = indexed_peaks[i]
-                                        peak['hkl'] = f"({hkl_info['h']}{hkl_info['k']}{hkl_info['l']})"
-                                        peak['hkl_detail'] = hkl_info
-                                        peak['indexing_error'] = hkl_info['error_percent']
+                                for peak in xrd_results["structural_peaks"]:
+                                    pos = peak["position"]
+                                
+                                    match = min(
+                                        indexed_peaks,
+                                        key=lambda ip: abs(ip["two_theta"] - pos),
+                                        default=None
+                                    )
+                                
+                                    if match and abs(match["two_theta"] - pos) < 0.1:
+                                        peak["hkl"] = f"({match['h']}{match['k']}{match['l']})"
+                                        peak["hkl_detail"] = match
+                                        peak["indexing_error"] = match["error_percent"]
+
                                 
                                 # Add indexing results to XRD results
                                 xrd_results['indexing'] = indexing_result
@@ -984,6 +992,10 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                         # Keep the raw data we already have
                         if "xrd_raw" in xrd_out:
                             analysis_results["xrd_raw"] = xrd_out["xrd_raw"]
+                        # === ENFORCE STRUCTURAL PEAK CANONICALITY ===
+                        if "structural_peaks" in xrd_results:
+                            xrd_results["peaks"] = xrd_results["structural_peaks"]
+
                 
                 # ============================================================
                 # POST-PROCESSING: ENSURE PROPER STRUCTURE
@@ -1716,8 +1728,11 @@ def display_3d_xrd_visualization(results, scientific_params):
         # Add peak lines (vertical lines)
         for pos, intensity, hkl in zip(positions, norm_intensities, hkl_labels):
             # Line from base to peak
-            fig.add_trace(go.Scatter3d(
-                x=[pos, pos],
+                fig.add_trace(go.Scatter3d(
+                theta = np.radians(pos / 2)
+                q = (4 * np.pi / xrd_res["wavelength"]) * np.sin(theta)
+                
+                x=[q, q],
                 y=[0, intensity],
                 z=[0, 0],
                 mode='lines',
@@ -1727,9 +1742,13 @@ def display_3d_xrd_visualization(results, scientific_params):
             
             # Peak marker
             fig.add_trace(go.Scatter3d(
-                x=[pos],
-                y=[intensity],
-                z=[0],
+                theta = np.radians(pos / 2)
+                q = (4 * np.pi / xrd_res["wavelength"]) * np.sin(theta)
+                
+                x=[q, q],
+                y=[0, intensity],
+                z=[0, 0],
+
                 mode='markers',
                 marker=dict(
                     size=8,
@@ -2520,6 +2539,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
