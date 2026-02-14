@@ -1729,12 +1729,12 @@ def display_3d_xrd_visualization(results, scientific_params):
         for pos, intensity, hkl in zip(positions, norm_intensities, hkl_labels):
             # Line from base to peak
                 fig.add_trace(go.Scatter3d(
-                theta = np.radians(pos / 2)
-                q = (4 * np.pi / xrd_res["wavelength"]) * np.sin(theta)
+                theta = np.radians(pos / 2),
+                q = (4 * np.pi / xrd_res["wavelength"]) * np.sin(theta),
                 
-                x=[q, q]
-                y=[0, intensity]
-                z=[0, 0]
+                x=[q, q],
+                y=[0, intensity],
+                z=[0, 0],
             
                 mode='lines',
                 line=dict(color='blue', width=3),
@@ -1743,12 +1743,12 @@ def display_3d_xrd_visualization(results, scientific_params):
             
             # Peak marker
             fig.add_trace(go.Scatter3d(
-                theta = np.radians(pos / 2)
-                q = (4 * np.pi / xrd_res["wavelength"]) * np.sin(theta)
+                theta = np.radians(pos / 2),
+                q = (4 * np.pi / xrd_res["wavelength"]) * np.sin(theta),
                 
-                x=[q, q]
-                y=[0, intensity]
-                z=[0, 0]
+                x=[q, q],
+                y=[0, intensity],
+                z=[0, 0],
                 
 
                 mode='markers',
@@ -2541,6 +2541,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
