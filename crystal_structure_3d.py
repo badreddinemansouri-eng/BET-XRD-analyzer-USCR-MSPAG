@@ -24,6 +24,48 @@ class CrystalStructure3D:
             'Fe': 1.24, 'Ti': 1.47, 'Zr': 1.60, 'Ce': 1.85,
             'Na': 1.02, 'Ca': 1.00, 'Mg': 1.60
         }
+    def hkl_plane_geometry(self, hkl, lattice_params):
+        """
+        Returns plane normal and distance from origin for (hkl)
+        """
+        a = lattice_params["a"]
+        b = lattice_params.get("b", a)
+        c = lattice_params.get("c", a)
+    
+        # Reciprocal lattice vectors
+        a_star = np.array([1/a, 0, 0])
+        b_star = np.array([0, 1/b, 0])
+        c_star = np.array([0, 0, 1/c])
+    
+        h, k, l = hkl
+        normal = h*a_star + k*b_star + l*c_star
+        norm = np.linalg.norm(normal)
+    
+        if norm == 0:
+            return None
+    
+        d_hkl = 1 / norm
+        unit_normal = normal / norm
+    
+        return {
+            "normal": unit_normal,
+            "d_spacing": d_hkl
+        }
+    def draw_hkl_plane(self, ax, hkl_info, extent=10):
+        n = hkl_info["normal"]
+        d = hkl_info["d_spacing"]
+    
+        # Plane equation: n·r = d
+        xx, yy = np.meshgrid(
+            np.linspace(-extent, extent, 10),
+            np.linspace(-extent, extent, 10)
+        )
+    
+        # Solve for z
+        z = (d - n[0]*xx - n[1]*yy) / n[2]
+    
+        ax.plot_surface(xx, yy, z, alpha=0.3, color="cyan")
+        
 
     def generate_structure(self, crystal_system: str, 
                           lattice_params: Dict,
@@ -243,7 +285,10 @@ class CrystalStructure3D:
                 [composition[:2]],  # Use first element from composition
                 [[0, 0, 0]]
             )
-            
+            self._a = lattice_params.get('a', 5.0)
+            self._b = lattice_params.get('b', self._a)
+            self._c = lattice_params.get('c', self._a)
+
             # Convert to our atom format
             atoms = []
             for site in structure:
@@ -274,7 +319,12 @@ class CrystalStructure3D:
                 for j in range(ny):
                     for k in range(nz):
                         # Simple translation
-                        new_pos = atom['position'] + np.array([i * 5.0, j * 5.0, k * 5.0])
+                        a_vec = np.array([self._a, 0, 0])
+                        b_vec = np.array([0, self._b, 0])
+                        c_vec = np.array([0, 0, self._c])
+                        
+                        new_pos = atom['position'] + i*a_vec + j*b_vec + k*c_vec
+
                         supercell_atoms.append({
                             'element': atom['element'],
                             'position': new_pos,
@@ -516,6 +566,7 @@ def create_interactive_plot(self, structure: Dict):
     except Exception:
         # Any Plotly / WebGL failure → safe fallback
         return None
+
 
 
 
