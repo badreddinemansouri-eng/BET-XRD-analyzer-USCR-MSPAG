@@ -138,12 +138,23 @@ class PhysicalPeakValidator:
     
         if best_r2 < 0.65:
             return None
-    
+        # =================================================
+        # 🔥 FIX 5 — CONTINUOUS APEX (SUB-GRID TRUE θ)
+        # =================================================
+        if best_fit == "gaussian":
+            peak_pos = popt_g[1]
+        elif best_fit == "lorentzian":
+            peak_pos = popt_l[1]
+        elif best_fit == "pseudo_voigt":
+            peak_pos = popt_pv[1]
+        else:
+            peak_pos = two_theta[idx]
+
         # =================================================
         # ✅ SAME TERMS — CORRECT VALUES
         # =================================================
         return {
-            "two_theta": float(two_theta[idx]),  # TRUE apex
+            "two_theta": float(peak_pos),   # TRUE apex
             "index": int(idx),                   # TRUE index
             "intensity": float(peak_height),
             "fwhm_deg": float(fwhm),
