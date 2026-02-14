@@ -1728,7 +1728,7 @@ def display_3d_xrd_visualization(results, scientific_params):
         # Add peak lines (vertical lines)
         for pos, intensity, hkl in zip(positions, norm_intensities, hkl_labels):
             # Line from base to peak
-                fig.add_trace(go.Scatter3d(
+            fig.add_trace(go.Scatter3d(
                 theta = np.radians(pos / 2),
                 q = (4 * np.pi / xrd_res["wavelength"]) * np.sin(theta),
                 
@@ -2541,6 +2541,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
