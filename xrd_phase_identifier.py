@@ -167,8 +167,36 @@ def identify_phases(two_theta, intensity, wavelength, elements, size_nm=None):
         return []
 
     threshold = 0.30 * np.max(intensity)
-    exp_peaks = two_theta[intensity >= threshold]
+    candidate_idx = np.where(intensity >= threshold)[0]
     
+    refined_peaks = []
+    
+    for idx in candidate_idx:
+        left = max(0, idx - 5)
+        right = min(len(intensity), idx + 6)
+    
+        local_idx = left + np.argmax(intensity[left:right])
+        refined_peaks.append(two_theta[local_idx])
+    
+    # REMOVE DUPLICATES (important for broad peaks)
+    exp_peaks = np.unique(refined_peaks)
+
+    # Sort experimental peaks by descending intensity
+    exp_peaks = np.array(sorted(
+        exp_peaks,
+        key=lambda t: intensity[np.argmin(np.abs(two_theta - t))],
+        reverse=True
+    ))
+    # Enforce angular uniqueness (protect strongest peak)
+    unique_peaks = []
+    
+    for t in exp_peaks:
+        if all(abs(t - u) >= 1.0 for u in unique_peaks):
+            unique_peaks.append(t)
+    
+    exp_peaks = np.array(unique_peaks)
+
+        
     # Debug output
     st.write("🧪 PHASE DEBUG → Elements:", elements)
     st.write("🧪 PHASE DEBUG → Experimental peaks found:", len(exp_peaks))
@@ -333,3 +361,4 @@ def identify_phases(two_theta, intensity, wavelength, elements, size_nm=None):
 
     st.write(f"🧪 PHASE DEBUG → Final unique results: {len(final_results)}")
     return final_results
+
