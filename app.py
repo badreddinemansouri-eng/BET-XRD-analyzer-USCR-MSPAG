@@ -1735,7 +1735,7 @@ def display_3d_xrd_visualization(results, scientific_params):
                 x=[q, q]
                 y=[0, intensity]
                 z=[0, 0]
-                ,
+            
                 mode='lines',
                 line=dict(color='blue', width=3),
                 showlegend=False
@@ -1749,7 +1749,7 @@ def display_3d_xrd_visualization(results, scientific_params):
                 x=[q, q]
                 y=[0, intensity]
                 z=[0, 0]
-                ,
+                
 
                 mode='markers',
                 marker=dict(
@@ -2541,6 +2541,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
