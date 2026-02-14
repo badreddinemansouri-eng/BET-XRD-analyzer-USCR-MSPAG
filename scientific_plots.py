@@ -496,10 +496,10 @@ class PublicationPlotter:
     
         # UI subset (display only)
         display_peaks = sorted(
-            structural_peaks,
-            key=lambda p: p["intensity"],
-            reverse=True
-        )[:8]
+            sorted(structural_peaks, key=lambda p: p["intensity"], reverse=True)[:10],
+            key=lambda p: p["position"]
+        )
+
     
         # ============================================================
         # (A) XRD PATTERN
@@ -572,7 +572,13 @@ class PublicationPlotter:
         # (C) SIZE DISTRIBUTION (STRUCTURAL ONLY)
         # ============================================================
         ax3 = fig.add_subplot(gs[1, 1])
-        sizes = [p["crystallite_size"] for p in structural_peaks if p.get("crystallite_size", 0) > 0]
+        sizes = [
+            p["crystallite_size"]
+            for p in structural_peaks
+            if p.get("crystallite_size", 0) > 0
+            and p.get("fitted", False)
+        ]
+
     
         if len(sizes) >= 3:
             ax3.hist(sizes, bins=min(10, len(sizes)), alpha=0.7)
@@ -892,6 +898,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
