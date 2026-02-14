@@ -105,9 +105,10 @@ class UniversalPeakAnalyzer:
             return peaks_2theta, peaks_intensity
         
         # Sort by intensity (descending)
-        # Keep original order (physics already validated upstream)
-        peaks_2theta_sorted = peaks_2theta
-        peaks_intensity_sorted = peaks_intensity
+        order = np.argsort(peaks_intensity)[::-1]
+        peaks_2theta_sorted = peaks_2theta[order]
+        peaks_intensity_sorted = peaks_intensity[order]
+
 
         
         # CRITICAL FIX: Enforce angular diversity (minimum 1.5° separation)
@@ -119,7 +120,17 @@ class UniversalPeakAnalyzer:
             current_intensity = peaks_intensity_sorted[i]
             
             # Check if this peak is sufficiently separated from already selected peaks
-            if all(abs(current_2theta - selected) >= 1.2 for selected in selected_2theta):
+            accept = True
+            for i, sel in enumerate(selected_2theta):
+                if abs(current_2theta - sel) < 1.2:
+                    # keep the stronger one
+                    if current_intensity > selected_intensity[i]:
+                        selected_2theta[i] = current_2theta
+                        selected_intensity[i] = current_intensity
+                    accept = False
+                    break
+            
+            if accept:
                 selected_2theta.append(current_2theta)
                 selected_intensity.append(current_intensity)
             
@@ -134,8 +145,9 @@ class UniversalPeakAnalyzer:
                 current_intensity = peaks_intensity_sorted[i]
                 
                 # Skip if already selected
-                if current_2theta in selected_2theta:
+                if any(abs(current_2theta - s) < 1e-3 for s in selected_2theta):
                     continue
+
                 
                 selected_2theta.append(current_2theta)
                 selected_intensity.append(current_intensity)
@@ -596,6 +608,23 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     exp_peaks_2theta, exp_intensities = peak_analyzer.detect_peaks_universal(
         two_theta, intensity
     )
+    # --- FIX: local apex recentering for phase ID only ---
+    refined_2theta = []
+    refined_intensity = []
+    
+    for t0 in exp_peaks_2theta:
+        idx = np.argmin(np.abs(two_theta - t0))
+        left = max(0, idx - 5)
+        right = min(len(two_theta), idx + 6)
+    
+        local_idx = left + np.argmax(intensity[left:right])
+    
+        refined_2theta.append(two_theta[local_idx])
+        refined_intensity.append(intensity[local_idx])
+    
+    exp_peaks_2theta = np.array(refined_2theta)
+    exp_intensities = np.array(refined_intensity)
+
     
     # CRITICAL FIX: Filter to strongest peaks with angular diversity
     exp_peaks_2theta, exp_intensities = peak_analyzer.filter_peaks_for_nanomaterials(
@@ -869,4 +898,5 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                     st.markdown(f"   - *Tentative match - verify with additional characterization*")
     
     return final_results
+
 
