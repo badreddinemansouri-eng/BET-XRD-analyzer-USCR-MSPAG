@@ -28,6 +28,15 @@ class CrystalStructure3D:
         """
         Returns plane normal and distance from origin for (hkl)
         """
+        alpha = lattice_params.get("alpha", 90)
+        beta  = lattice_params.get("beta", 90)
+        gamma = lattice_params.get("gamma", 90)
+        
+        if not (alpha == beta == gamma == 90):
+            raise NotImplementedError(
+                "General reciprocal lattice requires non-orthogonal metric tensor"
+            )
+
         a = lattice_params["a"]
         b = lattice_params.get("b", a)
         c = lattice_params.get("c", a)
@@ -46,7 +55,10 @@ class CrystalStructure3D:
     
         d_hkl = 1 / norm
         unit_normal = normal / norm
-    
+        if "d_spacing_exp" in peak:
+        ratio = peak["d_spacing_exp"] / hkl_info["d_spacing"]
+        peak["d_consistency"] = ratio
+
         return {
             "normal": unit_normal,
             "d_spacing": d_hkl
@@ -62,9 +74,28 @@ class CrystalStructure3D:
         )
     
         # Solve for z
+        eps = 1e-8
+
+    if abs(n[2]) > eps:
         z = (d - n[0]*xx - n[1]*yy) / n[2]
-    
         ax.plot_surface(xx, yy, z, alpha=0.3, color="cyan")
+    
+    elif abs(n[1]) > eps:
+        yy, zz = np.meshgrid(
+            np.linspace(-extent, extent, 10),
+            np.linspace(-extent, extent, 10)
+        )
+        x = (d - n[1]*yy - n[2]*zz) / n[0]
+        ax.plot_surface(x, yy, zz, alpha=0.3, color="cyan")
+    
+    elif abs(n[0]) > eps:
+        xx, zz = np.meshgrid(
+            np.linspace(-extent, extent, 10),
+            np.linspace(-extent, extent, 10)
+        )
+        y = (d - n[0]*xx - n[2]*zz) / n[1]
+        ax.plot_surface(xx, y, zz, alpha=0.3, color="cyan")
+
         
 
     def generate_structure(self, crystal_system: str, 
@@ -566,6 +597,7 @@ def create_interactive_plot(self, structure: Dict):
     except Exception:
         # Any Plotly / WebGL failure → safe fallback
         return None
+
 
 
 
