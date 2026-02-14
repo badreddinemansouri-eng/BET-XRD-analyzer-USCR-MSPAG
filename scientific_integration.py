@@ -44,11 +44,23 @@ def calculate_phase_fractions(peaks, phases, tol):
                     fwhm = peak.get("fwhm_deg", 0.1)
                     peak_tol = tol * (1 + fwhm)
                     
-                    if abs(refl["two_theta"] - t_exp) < peak_tol:
-
-                        phase_intensity[phase["phase"]] += I
+                    best_error = float("inf")
+                    
+                    for phase in phases:
+                        for hkl_entry in phase["hkls"]:
+                            for refl in hkl_entry:
+                                fwhm = peak.get("fwhm_deg", 0.1)
+                                peak_tol = tol * (1 + fwhm)
+                    
+                                error = abs(refl["two_theta"] - t_exp)
+                                if error < peak_tol and error < best_error:
+                                    best_error = error
+                                    best_phase = phase["phase"]
+                    
+                    if best_error < float("inf"):
+                        phase_intensity[best_phase] += I
                         total_intensity += I
-                        break
+
 
     results = []
     for phase in phases:
@@ -82,12 +94,26 @@ def map_peaks_to_phases(peaks, phases, tol):
                     fwhm = peak.get("fwhm_deg", 0.1)
                     peak_tol = tol * (1 + fwhm)
                     
-                    if abs(refl["two_theta"] - peak["position"]) < peak_tol:
-
+                    best_error = float("inf")
+                    best_match = None
+                    
+                    for phase in phases:
+                        for hkl_entry in phase["hkls"]:
+                            for refl in hkl_entry:
+                                fwhm = peak.get("fwhm_deg", 0.1)
+                                peak_tol = tol * (1 + fwhm)
+                    
+                                error = abs(refl["two_theta"] - peak["position"])
+                                if error < peak_tol and error < best_error:
+                                    best_error = error
+                                    best_match = (phase, refl)
+                    
+                    if best_match:
+                        phase, refl = best_match
                         peak["phase"] = phase["phase"]
                         peak["hkl"] = refl["hkl"]
                         peak["phase_confidence"] = phase["score"]
-                        break                                
+                                
 
 
     return peaks        
@@ -345,4 +371,5 @@ class ScientificIntegrator:
     def _generate_recommendations(self, integration):
         """Generate scientific recommendations"""
         return ['Further characterization recommended for validation']
+
 
