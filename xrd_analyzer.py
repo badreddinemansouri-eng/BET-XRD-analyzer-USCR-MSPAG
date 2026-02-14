@@ -267,11 +267,16 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
 
             
             # Calculate asymmetry
-            peak_start = max(0, int(idx - 10))
-            peak_end = min(len(intensity), int(idx + 10))
-            left_half = intensity[idx] - np.min(intensity[peak_start:idx]) if peak_start < idx else intensity[idx]
-            right_half = intensity[idx] - np.min(intensity[idx:peak_end]) if idx < peak_end - 1 else intensity[idx]
+            true_idx = result["index"]
+            
+            peak_start = max(0, true_idx - 10)
+            peak_end = min(len(intensity), true_idx + 10)
+            
+            left_half = intensity[true_idx] - np.min(intensity[peak_start:true_idx])
+            right_half = intensity[true_idx] - np.min(intensity[true_idx:peak_end])
+            
             peak_dict['asymmetry'] = left_half / right_half if right_half > 0 else 1.0
+
             
             structural_peaks.append(peak_dict)
         
@@ -356,7 +361,7 @@ def detect_peaks(two_theta, intensity, min_distance_deg=1.0, min_prominence=0.03
     return peak_results['structural_peaks']
 
 
-def detect_peaks_raw(two_theta, intensity, min_distance_deg=1.0, min_prominence=0.03):
+def detect_peaks_raw(two_theta, intensity, min_distance_deg=1.0, min_prominence=0.015):
     """
     RAW peak detection for phase identification (NO processing)
     CRITICAL: Phase matching needs raw, unprocessed peak positions
@@ -1363,6 +1368,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
