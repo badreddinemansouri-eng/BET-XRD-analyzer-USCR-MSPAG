@@ -1168,9 +1168,17 @@ class AdvancedXRDAnalyzer:
                 background=background,
                 min_prominence=0.03
             )
+            # ============================================================
+            # ✅ CANONICAL PEAK RESULT MAPPING (CORRECT)
+            # ============================================================
             
-            # Store raw local maxima count
+            xrd_results["structural_peaks"] = peak_results["structural_peaks"]
+            xrd_results["detected_peaks"] = peak_results.get("local_maxima_debug", [])
             xrd_results["n_detected_maxima"] = peak_results["n_local_maxima"]
+            xrd_results["n_structural_peaks"] = peak_results["n_structural_peaks"]
+
+
+            
             
             # Get structural peaks (already validated)
             structural_peaks_raw = peak_results["structural_peaks"]
@@ -1468,6 +1476,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
