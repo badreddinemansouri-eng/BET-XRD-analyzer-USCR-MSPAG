@@ -218,12 +218,19 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
     min_distance_points = int(min_distance_deg / angular_step) if angular_step > 0 else 20
     
     # 3. Initial peak detection (local maxima only)
+    noise_level = np.std(signal_corr)
+    adaptive_prominence = max(
+        min_prominence * np.max(signal_corr),
+        3.0 * noise_level
+    )
+    
     peaks_idx, properties = signal.find_peaks(
         signal_corr,
-        prominence=min_prominence * np.max(signal_corr),
+        prominence=adaptive_prominence,
         width=3,
         distance=max(min_distance_points, 5)
     )
+
 
     # ------------------------------------------------------------
     # BUILD DETECTED PEAK LIST FROM find_peaks OUTPUT
@@ -1461,6 +1468,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
