@@ -1157,7 +1157,7 @@ class AdvancedXRDAnalyzer:
             # PATCHED: Use the validation function
             peak_results = detect_peaks_with_validation(
                 two_theta=two_theta_p,
-                intensity=intensity_smooth,
+                intensity=intensity_p,
                 background=background,
                 min_prominence=0.03
             )
@@ -1466,3 +1466,4 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
