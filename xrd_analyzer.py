@@ -224,6 +224,28 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
         width=3,
         distance=max(min_distance_points, 5)
     )
+    # ------------------------------------------------------------
+    # ENFORCE PRESENCE OF STRONGEST RAW APEX (NANO-SAFE)
+    # ------------------------------------------------------------
+    
+    idx_max = np.argmax(intensity)
+    true_theta = two_theta[idx_max]
+    true_intensity = intensity[idx_max]
+    
+    # Check if this apex already exists in detected peaks
+    exists = any(
+        abs(p["position"] - true_theta) < 0.3
+        for p in detected_peaks
+    )
+    
+    if not exists:
+        detected_peaks.append({
+            "position": float(true_theta),
+            "intensity": float(true_intensity),
+            "source": "raw_apex",
+            "fwhm_estimate": None
+        })
+
     # DEBUG 2: STORE ALL LOCAL MAXIMA
     debug_local_maxima = [
         {
@@ -1405,6 +1427,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
