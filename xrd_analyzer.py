@@ -278,8 +278,7 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
         validator = PhysicalPeakValidator(instrument)
         
         structural_peaks = []
-        if "index" not in peak:
-            continue
+
 
         for peak in detected_peaks:
             idx = peak["index"]
@@ -1445,6 +1444,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
