@@ -1591,6 +1591,54 @@ against **CIF-validated crystal structures** (COD + OPTIMADE).
     if xrd_raw and xrd_res:
         fig = plotter.create_xrd_figure(xrd_raw, xrd_res)
         st.pyplot(fig)
+     # ============================================================
+    # 🔍 PEAK POSITION DIAGNOSTICS (AUTHORITATIVE)
+    # ============================================================
+    
+    with st.expander("🔍 Peak Position Diagnostics (Debug)", expanded=True):
+    
+        two_theta = results["xrd_raw"]["two_theta"]
+        intensity = results["xrd_raw"]["intensity"]
+    
+        # 1️⃣ TRUE RAW APEX (GROUND TRUTH)
+        idx_max = np.argmax(intensity)
+        true_theta = two_theta[idx_max]
+        true_intensity = intensity[idx_max]
+    
+        st.markdown("### 1️⃣ True raw-data apex (ground truth)")
+        st.code(f"2θ = {true_theta:.4f}°, Intensity = {true_intensity:.1f}")
+    
+        # 2️⃣ STRONGEST DETECTED LOCAL MAXIMUM
+        detected = xrd_res.get("detected_peaks", [])
+        if detected:
+            strongest_detected = max(detected, key=lambda p: p["intensity"])
+            st.markdown("### 2️⃣ Strongest detected local maximum")
+            st.code(
+                f"2θ = {strongest_detected['position']:.4f}°, "
+                f"Intensity = {strongest_detected['intensity']:.1f}"
+            )
+        else:
+            st.warning("No detected local maxima")
+    
+        # 3️⃣ STRONGEST STRUCTURAL BRAGG PEAK (RED POINT)
+        structural = xrd_res.get("structural_peaks", [])
+        if structural:
+            strongest_structural = max(structural, key=lambda p: p["intensity"])
+            st.markdown("### 3️⃣ Strongest structural Bragg peak (RED)")
+            st.code(
+                f"2θ = {strongest_structural['position']:.4f}°, "
+                f"Intensity = {strongest_structural['intensity']:.1f}"
+            )
+        else:
+            st.warning("No structural Bragg peaks")
+    
+        # 4️⃣ VERDICT
+        st.markdown("### 4️⃣ Diagnostic verdict")
+        if structural and abs(true_theta - strongest_structural["position"]) < 0.5:
+            st.success("✅ Strongest raw peak survived structural validation")
+        else:
+            st.error("❌ Strongest raw peak was rejected during structural filtering")
+
     # ============================================================
     # 🔎 PEAK POSITION DIAGNOSTIC (MINIMAL & SAFE)
     # ============================================================
@@ -2581,6 +2629,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
