@@ -75,33 +75,33 @@ def safe_trapz(y, x):
 def extract_xrd_data(file, preview_only=False):
     """
     Extract XRD data from various file formats
-    
+
     Parameters:
     -----------
     file : Uploaded file object
     preview_only : If True, returns only preview info
-    
+
     Returns:
     --------
     two_theta, intensity, message
     """
     try:
         filename = file.name.lower()
-        
+
         # Read file content
         content = file.read().decode('utf-8', errors='ignore')
         file.seek(0)  # Reset file pointer
-        
+
         lines = content.split('\n')
-        
+
         # Try different formats
         data_points = []
-        
+
         for line in lines:
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
-            
+
             # Try splitting by various delimiters
             for delimiter in ['\t', ',', ';', ' ']:
                 parts = [p.strip() for p in line.split(delimiter) if p.strip()]
@@ -114,7 +114,7 @@ def extract_xrd_data(file, preview_only=False):
                         break
                     except:
                         continue
-        
+
         if not data_points:
             # Try reading with pandas
             try:
@@ -132,34 +132,34 @@ def extract_xrd_data(file, preview_only=False):
                         continue
             except:
                 pass
-        
+
         if not data_points:
             return None, None, "No valid data found"
-        
+
         # Convert to arrays
         data_points = sorted(data_points, key=lambda x: x[0])
         two_theta = np.array([p[0] for p in data_points])
         intensity = np.array([p[1] for p in data_points])
-        
+
         # Remove duplicates in two_theta
         unique_theta, unique_indices = np.unique(two_theta, return_index=True)
         if len(unique_theta) < len(two_theta):
             two_theta = unique_theta
             intensity = intensity[unique_indices]
-        
+
         # Preview mode
         if preview_only:
             return two_theta, intensity, f"Found {len(two_theta)} data points"
-        
+
         # Validate data
         if len(two_theta) < 50:
             return None, None, f"Insufficient data points: {len(two_theta)} (<50)"
-        
+
         if two_theta.max() - two_theta.min() < 10:
             return None, None, f"Insufficient angular range: {two_theta.max()-two_theta.min():.1f}° (<10°)"
-        
+
         return two_theta, intensity, "Data extracted successfully"
-        
+
     except Exception as e:
         return None, None, f"Extraction error: {str(e)}"
 
@@ -170,7 +170,7 @@ def extract_xrd_data(file, preview_only=False):
 def snip_background(intensity, iterations=100, reduction_factor=0.8):
     """
     SNIP algorithm for background subtraction
-    
+
     References:
     Ryan et al., Nucl. Instrum. Methods B, 1988, 34, 396-402
     Morháč et al., Nucl. Instrum. Methods A, 1997, 401, 113-132
@@ -178,17 +178,17 @@ def snip_background(intensity, iterations=100, reduction_factor=0.8):
     # Initial spectrum
     spectrum = np.log(np.log(intensity + 1) + 1)
     background = spectrum.copy()
-    
+
     # SNIP iterations
     for it in range(iterations):
         for i in range(1, len(spectrum) - 1):
             min_val = min(background[i-1], background[i+1])
             if background[i] > min_val:
                 background[i] = min_val + (background[i] - min_val) * reduction_factor
-    
+
     # Convert back
     bg_subtracted = np.exp(np.exp(background) - 1) - 1
-    
+
     return intensity - bg_subtracted, bg_subtracted
 
 
@@ -198,39 +198,39 @@ def snip_background(intensity, iterations=100, reduction_factor=0.8):
 def detect_peaks_with_validation(two_theta, intensity, background, min_distance_deg=1.0, min_prominence=0.03):
     """
     SCIENTIFIC peak detection with PHYSICAL VALIDATION using PhysicalPeakValidator
-    
+
     This function now uses the validator from xrd_peak_physics.py
     """
     # 1. Normalize for initial peak detection
     # --- FIX 1: background-corrected signal ---
     signal_corr = intensity - background
     signal_corr[signal_corr < 0] = 0
-    
+
     # Normalize AFTER background correction
     if signal_corr.max() > 0:
         signal_norm = signal_corr / signal_corr.max()
     else:
         signal_norm = signal_corr
 
-    
+
     # 2. Convert angular distance to points for find_peaks
     angular_step = np.mean(np.diff(two_theta))
     min_distance_points = int(min_distance_deg / angular_step) if angular_step > 0 else 20
-    
+    # Ensure at least 5 points distance to avoid over-suppression of broad peaks
+    min_distance_points = max(min_distance_points, 5)
+
     # 3. Initial peak detection (local maxima only)
     # --- SCIENTIFIC NOISE ESTIMATE ---
     noise_level = np.std(signal_corr)
-    
+
+    # Adjusted prominence threshold for nanocrystalline materials:
+    # Use 1× noise level instead of 2×, and lower minimum fraction to 0.5% of max.
     peaks_idx, properties = signal.find_peaks(
         signal_corr,
-        prominence=max(2.0 * noise_level, 0.01 * np.max(signal_corr)),
+        prominence=max(1.0 * noise_level, 0.005 * np.max(signal_corr)),
         width=(1, None),                  # allow nanocrystalline broad peaks
         distance=min_distance_points
     )
-
-    
-
-
 
     # ------------------------------------------------------------
     # BUILD DETECTED PEAK LIST FROM find_peaks OUTPUT
@@ -248,17 +248,17 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
     # ------------------------------------------------------------
     # ENFORCE PRESENCE OF STRONGEST RAW APEX (NANO-SAFE)
     # ------------------------------------------------------------
-    
+
     idx_max = np.argmax(intensity)
     true_theta = two_theta[idx_max]
     true_intensity = intensity[idx_max]
-    
+
     # Check if this apex already exists in detected peaks
     exists = any(
         abs(p["position"] - true_theta) < 0.3
         for p in detected_peaks
     )
-    
+
     if not exists:
         detected_peaks.append({
             "index": int(idx_max),          # ✅ REQUIRED
@@ -279,14 +279,12 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
     ]
 
 
-    
     # 4. PHYSICAL VALIDATION using PhysicalPeakValidator
     if PEAK_VALIDATOR_AVAILABLE:
         instrument = InstrumentProfile()
         validator = PhysicalPeakValidator(instrument)
-        
-        structural_peaks = []
 
+        structural_peaks = []
 
         for peak in detected_peaks:
             idx = peak["index"]
@@ -299,7 +297,7 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
                 background=background
 
             )
-            
+
             if result is None:
                 if peak.get("source") == "raw_apex":
                     # FORCE-ACCEPT RAW APEX WITHOUT PHYSICAL FILTERING
@@ -316,11 +314,9 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
                 else:
                     continue
 
-
             # ----------------------------
             # FIX: PHYSICAL PEAK RECENTERING
             # ----------------------------
-
 
             # Create structural peak dictionary
             peak_dict = {
@@ -329,7 +325,7 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
                 'position': float(result["two_theta"]),
                 'intensity': float(result["intensity"]),
                 'intensity_raw': float(intensity[result["index"]]),
-            
+
                 'fwhm_deg': float(result["fwhm_deg"]),
                 'fwhm_rad': float(np.deg2rad(result["fwhm_deg"])),
                 'area': float(result["area"]),
@@ -338,24 +334,22 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
                 'fit_quality': float(result["fit_quality"]),
             }
 
-            
             # Calculate asymmetry
             true_idx = result["index"]
-            
+
             peak_start = max(0, true_idx - 10)
             peak_end = min(len(intensity), true_idx + 10)
-            
+
             left_half = intensity[true_idx] - np.min(intensity[peak_start:true_idx])
             right_half = intensity[true_idx] - np.min(intensity[true_idx:peak_end])
-            
+
             peak_dict['asymmetry'] = left_half / right_half if right_half > 0 else 1.0
 
-            
             structural_peaks.append(peak_dict)
-        
+
         # Sort by intensity (descending)
         structural_peaks.sort(key=lambda x: x['intensity'], reverse=True)
-        
+
         return {
             'local_maxima': peaks_idx.tolist(),
             'local_maxima_debug': debug_local_maxima,
@@ -370,11 +364,11 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
             # Simple FWHM estimation
             fwhm_points = properties['widths'][i] if 'widths' in properties and i < len(properties['widths']) else 5
             fwhm_deg = fwhm_points * angular_step
-            
+
             # Skip unphysical peaks
             if fwhm_deg < 0.02 or fwhm_deg > 5.0:
                 continue
-                
+
             peaks.append({
                 'index': int(idx),
                 'position': float(two_theta[idx]),
@@ -384,9 +378,9 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
                 'fwhm_rad': float(np.deg2rad(fwhm_deg)),
                 'prominence': float(properties['prominences'][i]) if 'prominences' in properties and i < len(properties['prominences']) else 0.0
             })
-        
+
         peaks.sort(key=lambda x: x['intensity'], reverse=True)
-        
+
         return {
             'local_maxima': peaks_idx.tolist(),
             'structural_peaks': peaks,
@@ -398,14 +392,14 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
 def detect_peaks(two_theta, intensity, min_distance_deg=1.0, min_prominence=0.03):
     """
     SCIENTIFIC peak detection for XRD with physics-based validation
-    
+
     Parameters:
     -----------
     two_theta : Array of 2θ values (degrees)
     intensity : Array of intensity values
     min_distance_deg : Minimum angular distance between peaks (degrees, not points)
     min_prominence : Minimum peak prominence relative to max intensity
-    
+
     Returns:
     --------
     List of validated peak dictionaries
@@ -414,7 +408,6 @@ def detect_peaks(two_theta, intensity, min_distance_deg=1.0, min_prominence=0.03
     intensity_corr, background = snip_background(intensity)
 
 
-    
     # 2. Instrumental smoothing (Savitzky-Golay only - XRD standard)
     if len(intensity_corr) > 11:
         intensity_smooth = signal.savgol_filter(
@@ -424,7 +417,7 @@ def detect_peaks(two_theta, intensity, min_distance_deg=1.0, min_prominence=0.03
         )
     else:
         intensity_smooth = intensity_corr
-    
+
     # 3. Use the new validation function
     peak_results = detect_peaks_with_validation(
         two_theta=two_theta,
@@ -433,7 +426,7 @@ def detect_peaks(two_theta, intensity, min_distance_deg=1.0, min_prominence=0.03
         min_distance_deg=min_distance_deg,
         min_prominence=min_prominence
     )
-    
+
     return peak_results['structural_peaks']
 
 
@@ -444,43 +437,43 @@ def detect_peaks_raw(two_theta, intensity, min_distance_deg=1.0, min_prominence=
     """
     # No background subtraction, no smoothing for phase ID
     intensity_raw = intensity.copy()
-    
+
     # Normalize for peak detection
     # Raw peaks still need background removal for maxima detection
     background = signal.savgol_filter(intensity_raw, 101, 3)
     signal_raw = intensity_raw - background
     signal_raw[signal_raw < 0] = 0
-    
+
     signal_norm = signal_raw / signal_raw.max() if signal_raw.max() > 0 else signal_raw
 
-    
+
     # Convert angular distance to points for find_peaks
     angular_step = np.mean(np.diff(two_theta))
     min_distance_points = int(min_distance_deg / angular_step) if angular_step > 0 else 20
-    
+
     # Peak detection on RAW data
     peaks_idx, properties = signal.find_peaks(
         signal_raw,
         prominence=min_prominence * np.max(signal_raw),
         width=(3, None),  # Minimum 3 points width for FWHM
         distance=max(min_distance_points, 5),
-       
+
     )
-    
+
     peaks = []
-    
+
     for i, idx in enumerate(peaks_idx):
         # Simple FWHM estimation for raw peaks (less strict)
         fwhm_points = properties['widths'][i] if 'widths' in properties and i < len(properties['widths']) else 5
         fwhm_deg = fwhm_points * angular_step
-        
+
         # Broader acceptance for raw peaks
         if fwhm_deg < 0.01:  # Still reject instrument noise
             continue
-            
+
         if fwhm_deg > 10.0:  # Accept very broad peaks for nanocrystalline
             fwhm_deg = 3.0  # Cap for matching
-            
+
         peaks.append({
             'index': int(idx),
             'position': float(two_theta[idx]),
@@ -489,10 +482,10 @@ def detect_peaks_raw(two_theta, intensity, min_distance_deg=1.0, min_prominence=
             'fwhm_rad': float(np.deg2rad(fwhm_deg)),
             'prominence': float(properties['prominences'][i]) if 'prominences' in properties and i < len(properties['prominences']) else 0.0
         })
-    
+
     # Sort by intensity (descending)
     peaks.sort(key=lambda x: x['intensity'], reverse=True)
-    
+
     return peaks
 
 
@@ -502,15 +495,15 @@ def detect_peaks_raw(two_theta, intensity, min_distance_deg=1.0, min_prominence=
 def calculate_d_spacing(theta_deg, wavelength=1.5406):
     """
     Calculate d-spacing from Bragg's law
-    
+
     nλ = 2d sinθ
     d = nλ / (2 sinθ)
-    
+
     Parameters:
     -----------
     theta_deg : Bragg angle in degrees
     wavelength : X-ray wavelength in Å
-    
+
     Returns:
     --------
     d-spacing in Å
@@ -522,13 +515,13 @@ def calculate_d_spacing(theta_deg, wavelength=1.5406):
 # ============================================================================
 # CRYSTALLITE SIZE ANALYSIS WITH INSTRUMENTAL BROADENING CORRECTION
 # ============================================================================
-def scherrer_crystallite_size(fwhm_rad, theta_rad, wavelength=1.5406, K=0.9, 
+def scherrer_crystallite_size(fwhm_rad, theta_rad, wavelength=1.5406, K=0.9,
                             instrument_fwhm_rad=0.0):
     """
     Scherrer equation for crystallite size with instrumental broadening correction
-    
+
     D = Kλ / (β cosθ) where β = √(β_measured² - β_instrument²)
-    
+
     Parameters:
     -----------
     fwhm_rad : Measured FWHM in radians (β_measured)
@@ -536,7 +529,7 @@ def scherrer_crystallite_size(fwhm_rad, theta_rad, wavelength=1.5406, K=0.9,
     wavelength : X-ray wavelength in Å
     K : Shape factor (typically 0.9)
     instrument_fwhm_rad : Instrumental broadening in radians
-    
+
     Returns:
     --------
     Crystallite size in nm
@@ -548,7 +541,7 @@ def scherrer_crystallite_size(fwhm_rad, theta_rad, wavelength=1.5406, K=0.9,
             return 0.0
     else:
         sample_fwhm_rad = fwhm_rad
-    
+
     size_angstrom = K * wavelength / (sample_fwhm_rad * np.cos(theta_rad))
     return size_angstrom / 10  # Convert Å to nm
 
@@ -556,14 +549,14 @@ def scherrer_crystallite_size(fwhm_rad, theta_rad, wavelength=1.5406, K=0.9,
 def williamson_hall_analysis(peaks, wavelength=1.5406, instrument_fwhm_rad=0.0):
     """
     SCIENTIFIC Williamson–Hall analysis for nanocrystalline materials
-    
+
     β cosθ = Kλ/D + 4ε sinθ
-    
+
     Only uses isolated peaks with valid FWHM and proper shape
     """
     if not peaks or len(peaks) < 4:
         return None
-    
+
     # Select only clean, isolated peaks for W-H analysis
     valid_peaks = []
     for p in peaks:
@@ -571,31 +564,31 @@ def williamson_hall_analysis(peaks, wavelength=1.5406, instrument_fwhm_rad=0.0):
         fwhm_deg = p.get("fwhm_deg", 0)
         asymmetry = p.get("asymmetry", 1.0)
         snr = p.get("snr", 0)
-        
+
         # Reject peaks that are too narrow or too broad
         if fwhm_deg < 0.05 or fwhm_deg > 2.0:
             continue
-            
+
         # Reject highly asymmetric peaks
         if asymmetry < 0.7 or asymmetry > 1.3:
             continue
-            
+
         # Minimum SNR requirement
         if snr < 3.0:
             continue
-            
+
         valid_peaks.append(p)
-    
+
     # Need at least 4 valid peaks for W-H analysis
     if len(valid_peaks) < 4:
         return None
-    
+
     x_vals, y_vals = [], []
-    
+
     for p in valid_peaks:
         theta_rad = np.deg2rad(p["position"] / 2)
         beta_measured = p["fwhm_rad"]
-        
+
         # Correct for instrumental broadening
         if instrument_fwhm_rad > 0:
             beta_sample = np.sqrt(beta_measured**2 - instrument_fwhm_rad**2)
@@ -603,38 +596,38 @@ def williamson_hall_analysis(peaks, wavelength=1.5406, instrument_fwhm_rad=0.0):
                 continue
         else:
             beta_sample = beta_measured
-        
+
         # Williamson-Hall plot coordinates
         x_vals.append(4 * np.sin(theta_rad))        # 4 sinθ
         y_vals.append(beta_sample * np.cos(theta_rad))  # β cosθ
-    
+
     # Need at least 4 points for meaningful regression
     if len(x_vals) < 4:
         return None
-    
+
     # Linear regression with error checking
     try:
         slope, intercept, r_value, p_value, std_err = stats.linregress(x_vals, y_vals)
-        
+
         # Physical validation of regression results
         if intercept <= 0 or np.isnan(intercept):
             return None
-            
+
         if r_value**2 < 0.85:  # R² < 0.85 indicates poor correlation for W-H
             return None
-            
+
         # Constants
         K = 0.9
         size_nm = (K * wavelength) / (intercept * 10)   # Å → nm
         microstrain = slope / 4
-        
+
         # Physical validation of results
         if size_nm < 0.5 or size_nm > 500:  # Unphysical size range
             return None
-            
+
         if microstrain < 0 or microstrain > 0.05:  # Unphysical strain range
             return None
-        
+
         return {
             "crystallite_size": float(size_nm),
             "microstrain": float(microstrain),
@@ -647,7 +640,7 @@ def williamson_hall_analysis(peaks, wavelength=1.5406, instrument_fwhm_rad=0.0):
             "valid_peaks": len(valid_peaks),
             "wh_valid": True  # Added for validation check
         }
-        
+
     except Exception as e:
         return None
 
@@ -659,37 +652,37 @@ def calculate_crystallinity_index(two_theta, intensity, peaks):
     """
     SCIENTIFIC crystallinity index based on crystalline area / total area
     FIXED: No longer uses undefined xrd_results
-    
+
     Reference: Klug & Alexander, X-ray Diffraction Procedures, 1974
-    
+
     CI = ∫I_crystalline / ∫I_total
-    
+
     This is the correct, physically meaningful definition.
     """
     if not peaks:
         return 0.0
-    
+
     # First, separate background using SNIP
     intensity_corr, background = snip_background(intensity)
-    
+
     # Total area under the corrected pattern - USING safe_trapz
     total_area = safe_trapz(intensity_corr, two_theta)
-    
+
     if total_area <= 0:
         return 0.0
-    
+
     # PATCHED: Use the passed peaks directly, not xrd_results["structural_peaks"]
     crystalline_area = sum(p.get("area", 0.0) for p in peaks)
-    
+
     # Ensure CI is between 0 and 1 with physical limit
     ci = crystalline_area / total_area
-    
+
     # Apply nanocrystalline physical limit: < 85% for < 10 nm crystallites
     if peaks:
         avg_fwhm = np.mean([p.get('fwhm_deg', 0) for p in peaks])
         if avg_fwhm > 0.5:  # Highly nanocrystalline
             ci = ci * 0.9  # 10% reduction for size effects
-    
+
     # Never report 100% crystallinity (physically impossible)
     return min(max(ci, 0.0), 0.95)
 
@@ -697,38 +690,38 @@ def calculate_crystallinity_index(two_theta, intensity, peaks):
 # ============================================================================
 # LATTICE PARAMETER REFINEMENT
 # ============================================================================
-def refine_lattice_parameters(peaks, wavelength=1.5406, 
+def refine_lattice_parameters(peaks, wavelength=1.5406,
                             crystal_system='cubic', initial_guess=4.0):
     """
     Refine lattice parameters from peak positions
-    
+
     Parameters:
     -----------
     peaks : List of peak dictionaries
     wavelength : X-ray wavelength in Å
     crystal_system : Crystal system
     initial_guess : Initial lattice parameter guess
-    
+
     Returns:
     --------
     Refined lattice parameters
     """
     if len(peaks) < 3:
         return None
-    
+
     # Extract d-spacings
     d_spacings = [calculate_d_spacing(p['position'], wavelength) for p in peaks]
-    
+
     # Simplified lattice parameter calculation
     if crystal_system == 'cubic' and len(d_spacings) >= 3:
         # Use the peak with highest intensity to estimate lattice parameter
         main_peak_d = d_spacings[np.argmax([p['intensity'] for p in peaks])]
         a_estimated = main_peak_d * np.sqrt(3)  # For (111) reflection
-        
+
         # Refine using multiple peaks
         try:
             from scipy.optimize import minimize_scalar
-            
+
             # Define simplified optimization
             def cubic_residual(a_val):
                 res = 0
@@ -741,19 +734,19 @@ def refine_lattice_parameters(peaks, wavelength=1.5406,
                             res += (d_exp - d_calc)**2
                             break
                 return res
-            
-            result = minimize_scalar(cubic_residual, 
+
+            result = minimize_scalar(cubic_residual,
                                     bounds=(a_estimated*0.8, a_estimated*1.2),
                                     method='bounded')
-            
+
             if result.success:
                 return {'a': float(result.x), 'error': float(result.fun)}
-            
+
         except:
             pass
-        
+
         return {'a': float(a_estimated), 'error': 0.0}
-    
+
     return None
 
 
@@ -776,12 +769,12 @@ class AdvancedXRDAnalyzer:
     """
     Advanced XRD analysis with scientific rigor
     """
-    
+
     def __init__(self, wavelength=1.5406, background_subtraction=True,
                  smoothing='Savitzky-Golay', instrument_fwhm_deg=0.0):
         """
         Initialize XRD analyzer
-        
+
         Parameters:
         -----------
         wavelength : X-ray wavelength in Å
@@ -795,7 +788,7 @@ class AdvancedXRDAnalyzer:
         self.scherrer_constant = 0.9
         self.instrument_fwhm_deg = instrument_fwhm_deg
         self.instrument_fwhm_rad = np.deg2rad(instrument_fwhm_deg)
-    
+
     def validate_crystallographic_results(self, xrd_results: Dict) -> Dict:
         """
         Validate XRD results against crystallographic standards.
@@ -807,7 +800,7 @@ class AdvancedXRDAnalyzer:
             'confidence_score': 1.0,
             'scientific_checks': []
         }
-        
+
         # Check crystallite size is physically reasonable
         size = xrd_results.get('crystallite_size', {}).get('scherrer', 0)
         if size > 1000:  # > 1 micron - unlikely from XRD
@@ -816,7 +809,7 @@ class AdvancedXRDAnalyzer:
         elif size < 0.5:  # < 0.5 nm - unphysical
             validation['warnings'].append(f"Crystallite size unusually small: {size:.1f} nm")
             validation['confidence_score'] *= 0.6
-        
+
         # Check crystallinity index is in valid range
         ci = xrd_results.get('crystallinity_index', 0)
         if ci < 0 or ci > 1:
@@ -825,7 +818,7 @@ class AdvancedXRDAnalyzer:
         elif ci == 1.00:  # Physically impossible
             validation['warnings'].append(f"Crystallinity index = 1.00 is physically impossible")
             validation['confidence_score'] *= 0.3
-        
+
         # Check peak count is reasonable
         n_peaks = len(xrd_results.get('peaks', []))
         if n_peaks < 3:
@@ -834,7 +827,7 @@ class AdvancedXRDAnalyzer:
         elif n_peaks > 100:  # Too many peaks likely noise
             validation['warnings'].append(f"Excessive peaks detected ({n_peaks}), likely including noise")
             validation['confidence_score'] *= 0.7
-        
+
         # Check for physically impossible FWHM
         peaks = xrd_results.get('peaks', [])
         for peak in peaks:
@@ -842,7 +835,7 @@ class AdvancedXRDAnalyzer:
             if fwhm < 0.01 or fwhm > 5.0:  # Unphysical values
                 validation['warnings'].append(f"Unphysical FWHM: {fwhm:.4f}° at 2θ={peak.get('position', 0):.2f}°")
                 validation['confidence_score'] *= 0.9
-        
+
         # Calculate scientific checks
         validation['scientific_checks'] = [
             {
@@ -870,21 +863,21 @@ class AdvancedXRDAnalyzer:
                 'expected': '0.03-3.0°'
             }
         ]
-        
+
         # Overall validity
         validation['valid'] = validation['confidence_score'] > 0.5
-        
+
         return validation
-    
+
     def preprocess_pattern(self, two_theta, intensity):
         """
         Preprocess XRD pattern
-        
+
         Parameters:
         -----------
         two_theta : Array of 2θ values
         intensity : Array of intensity values
-        
+
         Returns:
         --------
         Processed two_theta and intensity
@@ -893,63 +886,63 @@ class AdvancedXRDAnalyzer:
         sort_idx = np.argsort(two_theta)
         two_theta = two_theta[sort_idx]
         intensity = intensity[sort_idx]
-        
+
         # Smoothing (only Savitzky-Golay for XRD)
         if self.smoothing == 'Savitzky-Golay':
             if len(intensity) > 11:
                 intensity = signal.savgol_filter(intensity, window_length=11, polyorder=3)
-        
+
         # Background subtraction
-        
+
         return two_theta, intensity
-    
+
     def analyze_peaks(self, two_theta, intensity, min_prominence=0.03):
         """
         Complete peak analysis with scientific validation
-        
+
         Parameters:
         -----------
         two_theta : Array of 2θ values
         intensity : Array of intensity values
         min_prominence : Minimum peak prominence for detection
-        
+
         Returns:
         --------
         List of analyzed peaks
         """
         # Use scientific peak detection (FWHM-validated)
         peaks = detect_peaks(two_theta, intensity, min_prominence=min_prominence)
-        
+
         # Analyze each peak
         analyzed_peaks = []
         for peak in peaks:
             # Calculate d-spacing
             d_spacing = calculate_d_spacing(peak['position'], self.wavelength)
-            
+
             # Calculate crystallite size (Scherrer with instrumental correction)
             theta_rad = np.deg2rad(peak['position'] / 2)
             crystallite_size = scherrer_crystallite_size(
-                peak['fwhm_rad'], theta_rad, self.wavelength, 
+                peak['fwhm_rad'], theta_rad, self.wavelength,
                 self.scherrer_constant, self.instrument_fwhm_rad
             )
-            
+
             analyzed_peaks.append({
                 **peak,
                 'd_spacing': float(d_spacing),
                 'crystallite_size': float(crystallite_size),
                 'theta_bragg': float(peak['position'] / 2)
             })
-        
+
         return analyzed_peaks
-    
+
     def calculate_crystallite_statistics(self, peaks):
         """
         Calculate statistics from multiple peaks
-        
+
         Parameters:
         -----------
         peaks : List of peak dictionaries
-        
+
         Returns:
         --------
         Crystallite size statistics
@@ -961,9 +954,9 @@ class AdvancedXRDAnalyzer:
                 'size_distribution': 'Unknown',
                 'n_peaks': 0
             }
-        
+
         sizes = [p['crystallite_size'] for p in peaks if p['crystallite_size'] > 0]
-        
+
         if not sizes:
             return {
                 'mean_size': 0.0,
@@ -971,13 +964,13 @@ class AdvancedXRDAnalyzer:
                 'size_distribution': 'Unknown',
                 'n_peaks': 0
             }
-        
+
         mean_size = np.mean(sizes)
         std_size = np.std(sizes)
-        
+
         # Classify size distribution scientifically
         cv = std_size / mean_size if mean_size > 0 else 0
-        
+
         if cv < 0.1:
             distribution = 'Narrow (monodisperse)'
         elif cv < 0.25:
@@ -986,7 +979,7 @@ class AdvancedXRDAnalyzer:
             distribution = 'Broad (polydisperse)'
         else:
             distribution = 'Very broad'
-        
+
         return {
             'mean_size': float(mean_size),
             'std_size': float(std_size),
@@ -994,49 +987,49 @@ class AdvancedXRDAnalyzer:
             'cv': float(cv),
             'n_peaks': len(sizes)
         }
-    
+
     def check_ordered_mesopores(self, two_theta, intensity, peaks):
         """
         Check for ordered mesoporous structure (low-angle peaks)
-        
+
         Parameters:
         -----------
         two_theta : Array of 2θ values
         intensity : Array of intensity values
         peaks : List of detected peaks
-        
+
         Returns:
         --------
         Ordered mesopore analysis
         """
         # Check for peaks in low-angle region (0.5-10° 2θ)
         low_angle_peaks = [p for p in peaks if 0.5 <= p['position'] <= 10]
-        
+
         if len(low_angle_peaks) >= 2:
             # Check for regular spacing (characteristic of ordered mesopores)
             positions = [p['position'] for p in low_angle_peaks]
             ratios = [positions[i]/positions[0] for i in range(1, len(positions))]
-            
+
             # Typical ratios for ordered mesopores: √1:√3:√4:√7:√9...
             typical_ratios = [1.0, 1.732, 2.0, 2.646, 3.0]  # √1, √3, √4, √7, √9
-            
+
             match_score = 0
             for r in ratios:
                 for tr in typical_ratios:
                     if abs(r - tr) / tr < 0.1:  # 10% tolerance
                         match_score += 1
                         break
-            
+
             ordered = match_score >= 2  # At least 2 peaks match typical pattern
-            
+
             # Calculate d-spacing for main peak
             if low_angle_peaks:
                 main_peak = max(low_angle_peaks, key=lambda x: x['intensity'])
                 d_spacing = calculate_d_spacing(main_peak['position'], self.wavelength)
-                
+
                 # Estimate pore size (simplified - for 2D hexagonal)
                 pore_size = d_spacing * 1.05  # Rough approximation
-                
+
                 return {
                     'ordered': True,
                     'n_peaks': len(low_angle_peaks),
@@ -1045,7 +1038,7 @@ class AdvancedXRDAnalyzer:
                     'pore_size_estimate': float(pore_size),
                     'structure': '2D Hexagonal (p6mm)' if match_score >= 2 else 'Possibly Ordered'
                 }
-        
+
         return {
             'ordered': False,
             'n_peaks': len(low_angle_peaks),
@@ -1054,16 +1047,16 @@ class AdvancedXRDAnalyzer:
             'pore_size_estimate': 0.0,
             'structure': 'Disordered'
         }
-    
+
     def calculate_nano_tolerance(self, size_nm):
         """
         CRITICAL FIX: Physics-based tolerance for nanocrystalline materials
-        
+
         Scherrer size -> d-spacing tolerance mapping:
         < 5 nm: 10% tolerance (Δd/d ≈ 0.10)
         5-10 nm: 6% tolerance (Δd/d ≈ 0.06)
         > 10 nm: 3% tolerance (Δd/d ≈ 0.03)
-        
+
         Williamson-Hall predicts:
         Δ2θ ≈ λ/(D cosθ) ≈ 0.15-0.30° for 4.7 nm crystallites
         """
@@ -1073,18 +1066,18 @@ class AdvancedXRDAnalyzer:
             return 0.06  # Nanocrystalline
         else:
             return 0.03  # Sub-micron to micron
-    
+
     def complete_analysis(self, two_theta, intensity, elements=None):
         """
         FULL XRD ANALYSIS — SCIENTIFICALLY CORRECTED VERSION
-        
+
         CRITICAL PATCHES APPLIED:
         1. Fixed calculate_crystallinity_index (no more undefined xrd_results)
         2. Explicit structural_peaks storage
         3. Correct peak counts (raw vs. validated)
         4. Integrated PhysicalPeakValidator
         """
-        
+
         # -----------------------------
         # SCIENTIFICALLY VALID DEFAULTS
         # -----------------------------
@@ -1121,9 +1114,9 @@ class AdvancedXRDAnalyzer:
             "size_analysis_methods": {},
             "wh_valid": False
         }
-        
+
         wh = None
-        
+
         try:
             # -----------------------------
             # CRITICAL: RAW DATA FOR PHASE ID
@@ -1144,13 +1137,13 @@ class AdvancedXRDAnalyzer:
             # PREPROCESS FOR PHYSICS ONLY
             # -----------------------------
             two_theta_p, intensity_p = self.preprocess_pattern(two_theta, intensity)
-    
+
             # -----------------------------
             # PHYSICS: PROCESSED PEAK DETECTION WITH VALIDATION
             # -----------------------------
             # Use detect_peaks_with_validation to get both raw and structural peaks
             intensity_corr, background = snip_background(intensity_p)
-            
+
             # Get peak detection results with validation
             if len(intensity_p) > 11:
                 intensity_smooth = signal.savgol_filter(
@@ -1160,7 +1153,7 @@ class AdvancedXRDAnalyzer:
                 )
             else:
                 intensity_smooth = intensity_corr
-                
+
             # PATCHED: Use the validation function
             peak_results = detect_peaks_with_validation(
                 two_theta=two_theta_p,
@@ -1171,38 +1164,35 @@ class AdvancedXRDAnalyzer:
             # ============================================================
             # ✅ CANONICAL PEAK RESULT MAPPING (CORRECT)
             # ============================================================
-            
+
             xrd_results["structural_peaks"] = peak_results["structural_peaks"]
             xrd_results["detected_peaks"] = peak_results.get("local_maxima_debug", [])
             xrd_results["n_detected_maxima"] = peak_results["n_local_maxima"]
             xrd_results["n_structural_peaks"] = peak_results["n_structural_peaks"]
 
-
-            
-            
             # Get structural peaks (already validated)
             structural_peaks_raw = peak_results["structural_peaks"]
-            
+
             # PATCHED: Analyze structural peaks (add d-spacing, size, etc.)
             validated_peaks = []
             for peak in structural_peaks_raw:
                 # Calculate d-spacing
                 d_spacing = calculate_d_spacing(peak['position'], self.wavelength)
-                
+
                 # Calculate crystallite size
                 theta_rad = np.deg2rad(peak['position'] / 2)
                 crystallite_size = scherrer_crystallite_size(
-                    peak['fwhm_rad'], theta_rad, self.wavelength, 
+                    peak['fwhm_rad'], theta_rad, self.wavelength,
                     self.scherrer_constant, self.instrument_fwhm_rad
                 )
-                
+
                 validated_peaks.append({
                     **peak,
                     'd_spacing': float(d_spacing),
                     'crystallite_size': float(crystallite_size),
                     'theta_bragg': float(peak['position'] / 2)
                 })
-            
+
             # PATCHED: Store structural peaks explicitly
             xrd_results["structural_peaks"] = validated_peaks
             # DEBUG 3: STRONGEST STRUCTURAL PEAK
@@ -1217,31 +1207,31 @@ class AdvancedXRDAnalyzer:
                 xrd_results["debug_strongest_structural"] = None
             # DEBUG 4: CHECK IF RAW APEX SURVIVED STRUCTURAL FILTER
             raw_apex_theta = xrd_results["debug_raw_apex"]["two_theta"]
-            
+
             xrd_results["debug_raw_apex_match"] = any(
                 abs(p["position"] - raw_apex_theta) < 0.5
                 for p in validated_peaks
             )
-                
+
 
             xrd_results["peaks"] = validated_peaks  # Backward compatibility
             xrd_results["top_peaks"] = validated_peaks[:10]
             xrd_results["n_structural_peaks"] = len(validated_peaks)
             xrd_results["n_peaks_total"] = len(validated_peaks)
-            
+
             # PATCHED: Create meaningful validation message
             xrd_results["peak_validation_message"] = (
                 f"{xrd_results['n_structural_peaks']} of {xrd_results['n_detected_maxima']} "
                 f"local maxima correspond to physical Bragg reflections "
                 f"(SNR > 2, FWHM 0.03-5.0°, R² > 0.65)"
             )
-            
+
             # -----------------------------
             # PHASE ID: RAW PEAK DETECTION (NO PROCESSING)
             # -----------------------------
             raw_peaks = detect_peaks_raw(two_theta_raw, intensity_raw)
             xrd_results["raw_peaks"] = raw_peaks  # Store raw peaks for reference
-            
+
             # -----------------------------
             # SCIENTIFIC CRYSTALLINITY INDEX (PATCHED)
             # -----------------------------
@@ -1252,7 +1242,7 @@ class AdvancedXRDAnalyzer:
                 xrd_results["structural_peaks"]  # PATCHED: Use structural_peaks
             )
             xrd_results["crystallinity_index"] = ci
-            
+
             # Scientifically accurate description
             if ci < 0.3:
                 xrd_results["crystallinity_description"] = "Mostly amorphous"
@@ -1264,14 +1254,14 @@ class AdvancedXRDAnalyzer:
                 xrd_results["crystallinity_description"] = "Highly crystalline"
             else:
                 xrd_results["crystallinity_description"] = "Single crystal-like"
-            
+
             # Warn if CI is suspiciously 1.00
             if ci >= 0.95:
                 xrd_results["analysis_notes"].append(
                     "Note: Crystallinity index approaches physical maximum; "
                     "nanocrystalline materials typically < 85%"
                 )
-    
+
             # -----------------------------
             # CRYSTALLITE SIZE ANALYSIS
             # -----------------------------
@@ -1281,11 +1271,11 @@ class AdvancedXRDAnalyzer:
                 xrd_results["crystallite_size"]["scherrer"] = mean_size
                 xrd_results["crystallite_size"]["distribution"] = size_stats["distribution"]
                 xrd_results["crystallite_size"]["cv"] = size_stats["cv"]
-                
+
                 # Calculate physics-based tolerance for phase matching
                 nano_tolerance = self.calculate_nano_tolerance(mean_size)
                 xrd_results["nano_tolerance"] = nano_tolerance
-                
+
                 # Confidence level based on number of peaks
                 if size_stats["n_peaks"] >= 5:
                     xrd_results["crystallite_size"]["confidence"] = "high"
@@ -1293,21 +1283,21 @@ class AdvancedXRDAnalyzer:
                     xrd_results["crystallite_size"]["confidence"] = "medium"
                 else:
                     xrd_results["crystallite_size"]["confidence"] = "low"
-    
+
                 # Williamson-Hall analysis (only if enough clean peaks)
                 if len(validated_peaks) >= 4:
                     wh = williamson_hall_analysis(
-                        validated_peaks, 
-                        self.wavelength, 
+                        validated_peaks,
+                        self.wavelength,
                         self.instrument_fwhm_rad
                     )
-                    
+
                     if wh and wh.get('wh_valid', False):
                         xrd_results["williamson_hall"] = wh
                         xrd_results["crystallite_size"]["williamson_hall"] = wh["crystallite_size"]
                         xrd_results["microstrain"] = wh["microstrain"]
                         xrd_results["wh_valid"] = True
-                        
+
                         # Dislocation density (simplified Williamson-Smallman)
                         if wh["crystallite_size"] > 0:
                             xrd_results["dislocation_density"] = (
@@ -1325,7 +1315,7 @@ class AdvancedXRDAnalyzer:
                         "Williamson-Hall analysis requires ≥4 independent reflections"
                     )
                     xrd_results["wh_valid"] = False
-    
+
                 # Size analysis methods disclosure
                 xrd_results["size_analysis_methods"] = {
                     "scherrer": {
@@ -1342,7 +1332,7 @@ class AdvancedXRDAnalyzer:
                         "reference": "Williamson & Hall, Acta Metall. (1953)"
                     }
                 }
-    
+
             # -----------------------------
             # CRITICAL: PHASE IDENTIFICATION WITH RAW DATA
             # -----------------------------
@@ -1353,7 +1343,7 @@ class AdvancedXRDAnalyzer:
                         # Extract raw peak positions and intensities
                         raw_positions = [p['position'] for p in raw_peaks]
                         raw_intensities = [p['intensity'] for p in raw_peaks]
-                        
+
                         # Use universal nanomaterial identification with RAW data
                         phases = identify_phases_universal(
                             np.array(raw_positions),
@@ -1369,22 +1359,22 @@ class AdvancedXRDAnalyzer:
                             wavelength=self.wavelength,
                             elements=elements
                         )
-                    
+
                     xrd_results["phases"] = phases
-                    
+
                     if phases:
                         best = phases[0]
                         xrd_results["crystal_system"] = best["crystal_system"]
                         xrd_results["space_group"] = best["space_group"]
                         xrd_results["lattice_parameters"] = best["lattice"]
                         xrd_results["material_family"] = best.get("material_family", "unknown")
-                        
+
                         # Map peaks to phases
                         try:
                             xrd_results["peaks"] = map_peaks_to_phases(validated_peaks, phases)
                         except:
                             pass
-                        
+
                         # Calculate phase fractions
                         try:
                             xrd_results["phase_fractions"] = calculate_phase_fractions(
@@ -1392,25 +1382,25 @@ class AdvancedXRDAnalyzer:
                             )
                         except:
                             pass
-                    
+
                     # CRITICAL FIX: Handle case where no phases found but material is nanocrystalline
                     if not phases and mean_size < 10:
                         xrd_results["analysis_notes"].append(
                             "Note: Nanocrystalline material detected (size < 10 nm). "
                             "Phase identification may be limited due to peak broadening."
                         )
-                        
+
                 except Exception as phase_error:
                     # Don't fail entire analysis
                     xrd_results["analysis_notes"].append(f"Phase identification issue: {str(phase_error)[:100]}")
-            
+
             # -----------------------------
             # MATERIAL CHARACTERIZATION SUMMARY
             # -----------------------------
             if validated_peaks:
                 avg_fwhm = np.mean([p.get('fwhm_deg', 0) for p in validated_peaks[:5]]) if len(validated_peaks) >= 5 else 0
                 avg_size = xrd_results["crystallite_size"]["scherrer"]
-                
+
                 if avg_size < 5:
                     xrd_results["material_type"] = "Ultrafine nanocrystalline"
                 elif avg_size < 20:
@@ -1419,7 +1409,7 @@ class AdvancedXRDAnalyzer:
                     xrd_results["material_type"] = "Sub-micron crystalline"
                 else:
                     xrd_results["material_type"] = "Micron-scale crystalline"
-                
+
                 # Scientifically accurate statement about crystallinity
                 if avg_fwhm > 1.0 and avg_size < 10:
                     xrd_results["crystallinity_statement"] = (
@@ -1431,7 +1421,7 @@ class AdvancedXRDAnalyzer:
                         f"The diffraction pattern shows {xrd_results['crystallinity_description'].lower()} "
                         f"features with an estimated crystallite size of {avg_size:.1f} nm."
                     )
-                
+
                 # CRITICAL FIX: Handle mismatch between crystallinity and identifiability
                 if not xrd_results["phases"] and avg_size < 10:
                     xrd_results["crystallinity_statement"] = (
@@ -1439,7 +1429,7 @@ class AdvancedXRDAnalyzer:
                         "Crystalline domains are present but below reliable phase-identification threshold "
                         "due to severe peak broadening."
                     )
-            
+
             # -----------------------------
             # ORDERED MESOPORES CHECK (DISABLED FOR XRD)
             # -----------------------------
@@ -1448,13 +1438,13 @@ class AdvancedXRDAnalyzer:
                 "note": "Low-angle scattering requires SAXS, not wide-angle XRD",
                 "reference": "Thommes et al., Pure Appl. Chem. 2015"
             }
-            
+
             # -----------------------------
             # VALIDATE RESULTS
             # -----------------------------
             validation = self.validate_crystallographic_results(xrd_results)
             xrd_results["validation"] = validation
-            
+
             # Return successful structure
             return {
                 "valid": True,
@@ -1468,7 +1458,7 @@ class AdvancedXRDAnalyzer:
                     "intensity": intensity_p.tolist()
                 }
             }
-    
+
         except Exception as e:
             # Return error structure
             return {
@@ -1476,23 +1466,3 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
