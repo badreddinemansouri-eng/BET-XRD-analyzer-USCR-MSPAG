@@ -224,6 +224,16 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
         width=3,
         distance=max(min_distance_points, 5)
     )
+    # DEBUG 2: STORE ALL LOCAL MAXIMA
+    debug_local_maxima = [
+        {
+            "index": int(i),
+            "two_theta": float(two_theta[i]),
+            "intensity": float(intensity[i])
+        }
+        for i in peaks_idx
+    ]
+
 
     
     # 4. PHYSICAL VALIDATION using PhysicalPeakValidator
@@ -285,6 +295,7 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
         
         return {
             'local_maxima': peaks_idx.tolist(),
+            'local_maxima_debug': debug_local_maxima,
             'structural_peaks': structural_peaks,
             'n_local_maxima': len(peaks_idx),
             'n_structural_peaks': len(structural_peaks)
@@ -1058,7 +1069,14 @@ class AdvancedXRDAnalyzer:
             sort_idx = np.argsort(two_theta)
             two_theta_raw = two_theta[sort_idx]
             intensity_raw = intensity[sort_idx]
-            
+            # DEBUG 1: TRUE RAW-DATA APEX
+            raw_max_idx = int(np.argmax(intensity_raw))
+            xrd_results["debug_raw_apex"] = {
+                "index": raw_max_idx,
+                "two_theta": float(two_theta_raw[raw_max_idx]),
+                "intensity": float(intensity_raw[raw_max_idx])
+            }
+
             # -----------------------------
             # PREPROCESS FOR PHYSICS ONLY
             # -----------------------------
@@ -1116,6 +1134,25 @@ class AdvancedXRDAnalyzer:
             
             # PATCHED: Store structural peaks explicitly
             xrd_results["structural_peaks"] = validated_peaks
+            # DEBUG 3: STRONGEST STRUCTURAL PEAK
+            if validated_peaks:
+                strongest = max(validated_peaks, key=lambda p: p["intensity"])
+                xrd_results["debug_strongest_structural"] = {
+                    "two_theta": strongest["position"],
+                    "intensity": strongest["intensity"],
+                    "fwhm": strongest["fwhm_deg"]
+                }
+            else:
+                xrd_results["debug_strongest_structural"] = None
+            # DEBUG 4: CHECK IF RAW APEX SURVIVED STRUCTURAL FILTER
+            raw_apex_theta = xrd_results["debug_raw_apex"]["two_theta"]
+            
+            xrd_results["debug_raw_apex_match"] = any(
+                abs(p["position"] - raw_apex_theta) < 0.5
+                for p in validated_peaks
+            )
+                
+
             xrd_results["peaks"] = validated_peaks  # Backward compatibility
             xrd_results["top_peaks"] = validated_peaks[:10]
             xrd_results["n_structural_peaks"] = len(validated_peaks)
@@ -1368,6 +1405,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
