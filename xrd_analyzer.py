@@ -272,7 +272,7 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
     debug_local_maxima = [
         {
             "index": int(i),
-            "two_theta": float(two_theta[i]),
+            "position": float(two_theta[i]),
             "intensity": float(intensity[i])
         }
         for i in peaks_idx
@@ -1466,4 +1466,5 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
