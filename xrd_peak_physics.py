@@ -43,7 +43,6 @@ class PhysicalPeakValidator:
         self.instrument = instrument
 
     def validate(self, idx, two_theta, intensity, background):
-    
         window = 25
         left = max(0, idx - window)
         right = min(len(two_theta), idx + window)
@@ -55,10 +54,10 @@ class PhysicalPeakValidator:
             return None
     
         # =================================================
-        # 🔥 FIX 1 — TRUE PEAK RECENTERING (MANDATORY)
+        # TRUE PEAK RECENTERING
         # =================================================
         local_max_idx = np.argmax(y)
-        idx = left + local_max_idx          # 🔥 overwrite idx
+        idx = left + local_max_idx
         peak_height = y[local_max_idx]
     
         noise = np.std(y)
@@ -66,7 +65,7 @@ class PhysicalPeakValidator:
             return None
     
         # =================================================
-        # 🔥 FIX 2 — AREA TEST (NO SPECIAL PEAKS)
+        # AREA TEST (threshold relaxed)
         # =================================================
         peak_area = np.trapz(y[y > 0], x[y > 0])
         total_local_area = np.trapz(np.abs(y), x)
@@ -74,11 +73,12 @@ class PhysicalPeakValidator:
         if total_local_area <= 0:
             return None
     
-        if peak_area / total_local_area < 0.015:
+        # 🔧 lowered from 0.015 to 0.01 (tunable)
+        if peak_area / total_local_area < 0.01:
             return None
     
         # =================================================
-        # 🔥 FIX 3 — FWHM AROUND TRUE APEX
+        # FWHM AROUND TRUE APEX
         # =================================================
         half_max = peak_height / 2
         above = np.where(y >= half_max)[0]
@@ -95,12 +95,19 @@ class PhysicalPeakValidator:
             return None
     
         # =================================================
-        # 🔥 FIX 4 — FIT CENTER USES RECENTERED idx
+        # CURVE FITTING WITH CORRECT INITIAL GUESSES & BOUNDS
         # =================================================
+        # 🔧 Correct initial guesses
+        sigma_g = fwhm / 2.3548   # for Gaussian
+        gamma_l = fwhm / 2.0      # for Lorentzian
+        sigma_pv = fwhm / 2.2     # compromise for pseudo-Voigt
+    
+        # Gaussian fit with bounds
         try:
             popt_g, _ = curve_fit(
                 gaussian, x, y,
-                p0=[peak_height, two_theta[idx], fwhm],
+                p0=[peak_height, two_theta[idx], sigma_g],
+                bounds=([0, x[0], 0.01], [peak_height*2, x[-1], fwhm*2]),
                 maxfev=2000
             )
             fit_g = gaussian(x, *popt_g)
@@ -108,10 +115,12 @@ class PhysicalPeakValidator:
         except:
             r2_g = 0
     
+        # Lorentzian fit with bounds
         try:
             popt_l, _ = curve_fit(
                 lorentzian, x, y,
-                p0=[peak_height, two_theta[idx], fwhm],
+                p0=[peak_height, two_theta[idx], gamma_l],
+                bounds=([0, x[0], 0.01], [peak_height*2, x[-1], fwhm*2]),
                 maxfev=2000
             )
             fit_l = lorentzian(x, *popt_l)
@@ -119,11 +128,12 @@ class PhysicalPeakValidator:
         except:
             r2_l = 0
     
+        # Pseudo-Voigt fit (already had bounds, just improve initial sigma)
         try:
             popt_pv, _ = curve_fit(
                 pseudo_voigt, x, y,
-                p0=[peak_height, two_theta[idx], fwhm / 2.3548, 0.5],
-                bounds=([0, x[0], 0.01, 0], [peak_height * 2, x[-1], fwhm * 2, 1]),
+                p0=[peak_height, two_theta[idx], sigma_pv, 0.5],
+                bounds=([0, x[0], 0.01, 0], [peak_height*2, x[-1], fwhm*2, 1]),
                 maxfev=3000
             )
             fit_pv = pseudo_voigt(x, *popt_pv)
@@ -136,10 +146,12 @@ class PhysicalPeakValidator:
             np.argmax([r2_g, r2_l, r2_pv])
         ]
     
-        if best_r2 < 0.65:
+        # 🔧 R² threshold relaxed from 0.65 to 0.5
+        if best_r2 < 0.5:
             return None
+    
         # =================================================
-        # 🔥 FIX 5 — CONTINUOUS APEX (SUB-GRID TRUE θ)
+        # DETERMINE FINAL PEAK POSITION FROM BEST FIT
         # =================================================
         if best_fit == "gaussian":
             peak_pos = popt_g[1]
@@ -149,13 +161,10 @@ class PhysicalPeakValidator:
             peak_pos = popt_pv[1]
         else:
             peak_pos = two_theta[idx]
-
-        # =================================================
-        # ✅ SAME TERMS — CORRECT VALUES
-        # =================================================
+    
         return {
-            "two_theta": float(peak_pos),   # TRUE apex
-            "index": int(idx),                   # TRUE index
+            "two_theta": float(peak_pos),
+            "index": int(idx),
             "intensity": float(peak_height),
             "fwhm_deg": float(fwhm),
             "snr": float(peak_height / noise),
@@ -163,4 +172,3 @@ class PhysicalPeakValidator:
             "fit_quality": float(best_r2),
             "area": float(peak_area),
         }
-
