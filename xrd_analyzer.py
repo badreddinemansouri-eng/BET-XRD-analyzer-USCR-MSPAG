@@ -874,8 +874,6 @@ class AdvancedXRDAnalyzer:
                 intensity = signal.savgol_filter(intensity, window_length=11, polyorder=3)
         
         # Background subtraction
-        if self.background_subtraction:
-            intensity, background = snip_background(intensity)
         
         return two_theta, intensity
     
@@ -1444,6 +1442,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
