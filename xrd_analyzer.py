@@ -1336,7 +1336,7 @@ class AdvancedXRDAnalyzer:
             # -----------------------------
             # CRITICAL: PHASE IDENTIFICATION WITH RAW DATA
             # -----------------------------
-            if elements and raw_peaks:
+            if raw_peaks:
                 try:
                     if UNIVERSAL_PHASE_ID_AVAILABLE:
                         # CRITICAL: Pass tolerance to phase identifier
@@ -1350,7 +1350,7 @@ class AdvancedXRDAnalyzer:
                             np.array(raw_intensities),
                             wavelength=self.wavelength,
                             elements=elements
-                        )
+                        )if elements else []
                     else:
                         # Fallback to original
                         phases = identify_phases(
@@ -1466,5 +1466,6 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
