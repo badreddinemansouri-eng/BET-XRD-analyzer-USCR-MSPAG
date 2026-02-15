@@ -225,6 +225,19 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
         distance=max(min_distance_points, 5)
     )
     # ------------------------------------------------------------
+    # BUILD DETECTED PEAK LIST FROM find_peaks OUTPUT
+    # ------------------------------------------------------------
+    detected_peaks = [
+        {
+            "index": int(i),
+            "position": float(two_theta[i]),
+            "intensity": float(intensity[i]),
+            "source": "find_peaks"
+        }
+        for i in peaks_idx
+    ]
+
+    # ------------------------------------------------------------
     # ENFORCE PRESENCE OF STRONGEST RAW APEX (NANO-SAFE)
     # ------------------------------------------------------------
     
@@ -265,7 +278,9 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
         
         structural_peaks = []
         
-        for idx in peaks_idx:
+        for peak in detected_peaks:
+            idx = peak["index"]
+
             # Use physical validator to check if this is a real Bragg peak
             result = validator.validate(
                 idx=idx,
@@ -1427,6 +1442,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
