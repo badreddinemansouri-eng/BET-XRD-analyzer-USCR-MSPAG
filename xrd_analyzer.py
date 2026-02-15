@@ -288,7 +288,7 @@ def detect_peaks_with_validation(two_theta, intensity, background, min_distance_
             result = validator.validate(
                 idx=idx,
                 two_theta=two_theta,
-                intensity=intensity + background,
+                intensity=intensity,
                 background=background
 
             )
@@ -1457,6 +1457,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
