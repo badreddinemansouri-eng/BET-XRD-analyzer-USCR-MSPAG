@@ -3,6 +3,7 @@ UNIVERSAL XRD PHASE IDENTIFICATION FOR NANOMATERIALS
 ========================================================================
 Scientific phase identification for nanocrystalline materials with proper
 peak filtering and d-spacing matching.
+Now supports automatic peak-based search when elements are not provided.
 ========================================================================
 """
 
@@ -111,7 +112,7 @@ class UniversalPeakAnalyzer:
         peaks_2theta_sorted = peaks_2theta[order]
         peaks_intensity_sorted = peaks_intensity[order]
 
-        # Determine minimum separation (1.5° base, larger if peaks are broad)
+        # Determine minimum separation (1.2° base, larger if peaks are broad)
         min_sep = 1.2
         if avg_fwhm is not None:
             # For very broad peaks, require larger separation to avoid overlaps
@@ -382,65 +383,132 @@ class UniversalDatabaseSearcher:
         
         return []
     
-    def search_all_databases(self, elements: List[str], material_family: str = 'unknown') -> List[Dict]:
+    # --------------------------------------------------------
+    # NEW METHOD: Search COD by d-spacings (no elements required)
+    # --------------------------------------------------------
+    @lru_cache(maxsize=50)
+    def search_by_dspacings(self, dspacings: Tuple[float], max_results: int = 30) -> List[Dict]:
         """
-        Search all available databases in parallel
+        Search COD using a list of d-spacings (in Angstroms).
+        Returns a list of candidate structures in the same format as other search methods.
         """
-        if not elements:
-            return []
-        
-        elements_tuple = tuple(sorted(elements))
-        
-        # Check cache
-        cache_key = (elements_tuple, material_family)
-        if cache_key in self.query_cache:
-            return self.query_cache[cache_key]
-        
-        st.info(f"🔍 Searching databases for: {', '.join(elements)}")
-        
-        all_structures = []
-        
-        # Determine which databases to search based on material family
-        if material_family in UniversalNanoParams.DATABASE_PRIORITY:
-            db_priority = UniversalNanoParams.DATABASE_PRIORITY[material_family]
-        else:
-            # Default priority
-            db_priority = ['COD', 'MaterialsProject', 'AFLOW', 'OQMD']
-        
-        # Search databases in parallel for speed
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            futures = []
-            for db_name in db_priority[:3]:  # Limit to 3 databases for speed
-                if db_name in self.databases:
-                    futures.append(
-                        executor.submit(self.databases[db_name], elements_tuple, 15)
-                    )
+        try:
+            # COD expects d-spacings as a comma-separated list
+            dspacing_str = ",".join([f"{d:.3f}" for d in dspacings[:5]])  # Use top 5 peaks
+            query = {
+                "format": "json",
+                "dspacing": dspacing_str,
+                "maxresults": max_results
+            }
             
-            # Collect results
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    results = future.result(timeout=10)
-                    if results:
-                        all_structures.extend(results)
-                except Exception as e:
-                    continue
+            response = requests.get(
+                "https://www.crystallography.net/cod/result",
+                params=query,
+                timeout=20
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                structures = []
+                if isinstance(data, list):
+                    for entry in data[:max_results]:
+                        if isinstance(entry, dict) and 'codid' in entry:
+                            structures.append({
+                                'database': 'COD',
+                                'id': str(entry['codid']),
+                                'formula': entry.get('formula', ''),
+                                'space_group': entry.get('sg', ''),
+                                'cif_url': f"https://www.crystallography.net/cod/{entry['codid']}.cif",
+                                'confidence': 0.7  # Slightly lower confidence because only d-spacings used
+                            })
+                
+                return structures
+                
+        except Exception as e:
+            st.warning(f"COD d-spacing search: {str(e)[:100]}")
         
-        # Remove duplicates based on formula and space group
-        unique_structures = []
-        seen = set()
+        return []
+    
+    def search_all_databases(self, elements: Optional[List[str]] = None, 
+                            dspacings: Optional[np.ndarray] = None,
+                            material_family: str = 'unknown') -> List[Dict]:
+        """
+        Search all available databases.
+        If elements are provided, use element-filtered search.
+        If no elements but dspacings provided, use d-spacing search.
+        """
+        if elements:
+            # Element-filtered search
+            elements_tuple = tuple(sorted(elements))
+            cache_key = (elements_tuple, material_family)
+            
+            # Check cache
+            if cache_key in self.query_cache:
+                return self.query_cache[cache_key]
+            
+            st.info(f"🔍 Searching databases for elements: {', '.join(elements)}")
+            
+            all_structures = []
+            
+            # Determine which databases to search based on material family
+            if material_family in UniversalNanoParams.DATABASE_PRIORITY:
+                db_priority = UniversalNanoParams.DATABASE_PRIORITY[material_family]
+            else:
+                db_priority = ['COD', 'MaterialsProject', 'AFLOW', 'OQMD']
+            
+            # Search databases in parallel for speed
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                futures = []
+                for db_name in db_priority[:3]:  # Limit to 3 databases for speed
+                    if db_name in self.databases:
+                        futures.append(
+                            executor.submit(self.databases[db_name], elements_tuple, 15)
+                        )
+                
+                # Collect results
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        results = future.result(timeout=10)
+                        if results:
+                            all_structures.extend(results)
+                    except Exception as e:
+                        continue
+            
+            # Remove duplicates based on formula and space group
+            unique_structures = []
+            seen = set()
+            
+            for struct in all_structures:
+                key = (struct.get('formula', ''), struct.get('space_group', ''))
+                if key not in seen:
+                    seen.add(key)
+                    unique_structures.append(struct)
+            
+            # Cache results
+            self.query_cache[cache_key] = unique_structures
+            
+            st.success(f"✅ Found {len(unique_structures)} unique structures from databases")
+            
+            return unique_structures
         
-        for struct in all_structures:
-            key = (struct.get('formula', ''), struct.get('space_group', ''))
-            if key not in seen:
-                seen.add(key)
-                unique_structures.append(struct)
+        elif dspacings is not None and len(dspacings) > 0:
+            # D-spacing search (no elements)
+            # Use only COD for now, as other databases don't support d-spacing search easily
+            st.info("🔍 No elements provided. Searching COD by d-spacings...")
+            dspacings_tuple = tuple(sorted(dspacings[:5]))  # Use top 5 peaks
+            structures = self.search_by_dspacings(dspacings_tuple, max_results=30)
+            
+            if structures:
+                st.success(f"✅ Found {len(structures)} candidate structures from COD d-spacing search")
+            else:
+                st.warning("No structures found via d-spacing search.")
+            
+            return structures
         
-        # Cache results
-        self.query_cache[cache_key] = unique_structures
-        
-        st.success(f"✅ Found {len(unique_structures)} unique structures from databases")
-        
-        return unique_structures
+        else:
+            st.warning("No search criteria provided (neither elements nor d-spacings).")
+            return []
 
 # ------------------------------------------------------------
 # SCIENTIFIC MATCHING ALGORITHM FOR NANOCRYSTALLINE MATERIALS
@@ -623,7 +691,7 @@ def _simulate_pattern_cached(cif_url: str, wavelength: float) -> Tuple[np.ndarra
 # MAIN UNIVERSAL IDENTIFICATION ENGINE (SCIENTIFICALLY CORRECTED)
 # ------------------------------------------------------------
 def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
-                            wavelength: float, elements: List[str],
+                            wavelength: float, elements: Optional[List[str]] = None,
                             size_nm: Optional[float] = None) -> List[Dict]:
     """
     SCIENTIFIC phase identification for nanocrystalline materials
@@ -636,14 +704,14 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     5. Pass crystallite size for physics-based tolerance
     6. ADDED: Phase identification diagnostics for transparency
     7. ADDED: Caching for simulated patterns (performance)
-    8. REMOVED: Placeholder "UNIDENTIFIED" phase (causes KeyError elsewhere)
+    8. ADDED: Automatic peak-based search when elements not provided
+    9. REMOVED: Placeholder "UNIDENTIFIED" phase (causes KeyError elsewhere)
     """
     st.info("🔬 Running scientific nanomaterial phase identification...")
     
-    # Handle empty elements case
-    if not elements:
-        st.warning("No elements selected. Phase identification requires element information.")
-        return []
+    # Handle elements=None gracefully
+    if elements is None:
+        elements = []
     
     # --------------------------------------------------------
     # STEP 1: UNIVERSAL PEAK DETECTION WITH FILTERING
@@ -691,11 +759,14 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     exp_intensities_norm = exp_intensities / np.max(exp_intensities)
     
     # --------------------------------------------------------
-    # STEP 2: ESTIMATE MATERIAL FAMILY
+    # STEP 2: ESTIMATE MATERIAL FAMILY (if elements provided)
     # --------------------------------------------------------
-    material_family = peak_analyzer.estimate_material_family(
-        elements, exp_peaks_2theta
-    )
+    if elements:
+        material_family = peak_analyzer.estimate_material_family(
+            elements, exp_peaks_2theta
+        )
+    else:
+        material_family = 'unknown'
     
     st.info(f"📊 Material family estimated: {material_family}")
     if size_nm:
@@ -711,10 +782,18 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     # --------------------------------------------------------
     db_searcher = UniversalDatabaseSearcher()
     
-    database_structures = db_searcher.search_all_databases(elements, material_family)
+    # Use d-spacings for search if no elements provided
+    if elements:
+        database_structures = db_searcher.search_all_databases(
+            elements=elements, material_family=material_family
+        )
+    else:
+        database_structures = db_searcher.search_all_databases(
+            dspacings=exp_d, material_family=material_family
+        )
     
     if not database_structures:
-        st.warning("No structures found in databases. Try different elements.")
+        st.warning("No structures found in databases. Try different elements or improve pattern quality.")
         return []
     
     # --------------------------------------------------------
