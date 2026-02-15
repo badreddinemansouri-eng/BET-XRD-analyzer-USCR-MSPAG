@@ -1438,7 +1438,27 @@ class AdvancedXRDAnalyzer:
                 "note": "Low-angle scattering requires SAXS, not wide-angle XRD",
                 "reference": "Thommes et al., Pure Appl. Chem. 2015"
             }
-
+            print(f"DEBUG: raw_peaks count = {len(raw_peaks)}")
+            print(f"DEBUG: UNIVERSAL_PHASE_ID_AVAILABLE = {UNIVERSAL_PHASE_ID_AVAILABLE}")
+            print(f"DEBUG: elements = {elements}")
+            if raw_peaks:
+                try:
+                    if UNIVERSAL_PHASE_ID_AVAILABLE:
+                        print("DEBUG: Calling identify_phases_universal")
+                        phases = identify_phases_universal(
+                            np.array(raw_positions),
+                            np.array(raw_intensities),
+                            wavelength=self.wavelength,
+                            elements=elements
+                        )
+                        print(f"DEBUG: phases returned = {len(phases)}")
+                    else:
+                        # fallback
+                        phases = []
+                    xrd_results["phases"] = phases
+                except Exception as e:
+                    print(f"DEBUG: Phase identification error: {e}")
+                    xrd_results["phases"] = []
             # -----------------------------
             # VALIDATE RESULTS
             # -----------------------------
@@ -1466,6 +1486,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
