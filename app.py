@@ -10,8 +10,9 @@ References:
 4. Williamson & Hall, Acta Metall., 1953, 1, 22-31 (Microstrain)
 ========================================================================
 """
-
+import os
 import streamlit as st
+os.environ["MP_API_KEY"] = st.secrets.get("MP_API_KEY", "")
 import numpy as np
 import pandas as pd
 import sys
@@ -814,7 +815,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     wavelength=wavelength,
                     background_subtraction=params['xrd']['background_subtraction'],
                     smoothing=params['xrd']['smoothing'],
-                    mp_api_key="TeFfLE7aumMjc4fMgtFXPuxnNTwp2sVg"   # <-- add this
+              
                 )
                 
                 xrd_out = xrd_analyzer.complete_analysis(
@@ -2630,6 +2631,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
