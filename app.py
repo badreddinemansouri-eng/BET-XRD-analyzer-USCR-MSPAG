@@ -804,11 +804,11 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                 # Get wavelength
                 wavelength_str = params['xrd']['wavelength']
                 if "Cu" in wavelength_str:
-                    wavelength = 0.15406
+                    wavelength = 1.5406
                 elif "Mo" in wavelength_str:
-                    wavelength = 0.07107
+                    wavelength = 0.7107
                 else:  # Co
-                    wavelength = 0.17902
+                    wavelength = 1.7902
                 
                 xrd_analyzer = AdvancedXRDAnalyzer(
                     wavelength=wavelength,
@@ -2629,6 +2629,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
