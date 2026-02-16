@@ -5,7 +5,7 @@ Scientific phase identification for nanocrystalline materials with proper
 peak filtering and d-spacing matching.
 Now supports automatic peak-based search when elements are not provided,
 multiple databases (COD, AMCSD, Materials Project), parallel simulation,
-and a built‑in fallback database for guaranteed results.
+and a built‑in fallback database.
 ========================================================================
 """
 
@@ -210,7 +210,10 @@ class UniversalDatabaseSearcher:
     """Searches multiple open crystallographic databases."""
     
     def __init__(self, mp_api_key: Optional[str] = None):
-        self.mp_api_key = mp_api_key or os.environ.get("MP_API_KEY", "")
+        # Try to read key from environment if not provided
+        if mp_api_key is None:
+            mp_api_key = os.environ.get("MP_API_KEY", "")
+        self.mp_api_key = mp_api_key
         self.session = requests.Session()
         self.query_cache = {}
     
@@ -548,15 +551,12 @@ def _simulate_pattern_cached(cif_url: str, wavelength: float) -> Tuple[np.ndarra
 # ------------------------------------------------------------
 # BUILT‑IN FALLBACK DATABASE (common nanomaterials)
 # ------------------------------------------------------------
-# This is a minimal embedded database of common phases.
-# In a real application you might load a pre‑computed JSON file.
-# Here we provide a few entries – you can expand this list.
 FALLBACK_STRUCTURES = [
     {
         "name": "Gold (Au)",
         "formula": "Au",
         "space_group": "Fm-3m",
-        "cif_url": "https://www.crystallography.net/cod/9008463.cif",  # example COD ID
+        "cif_url": "https://www.crystallography.net/cod/9008463.cif",
         "database": "Fallback"
     },
     {
@@ -590,14 +590,22 @@ FALLBACK_STRUCTURES = [
 ]
 
 # ------------------------------------------------------------
-# MAIN IDENTIFICATION ENGINE
+# MAIN IDENTIFICATION ENGINE (NOW WITH PRECOMPUTED PEAKS SUPPORT)
 # ------------------------------------------------------------
-def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
-                            wavelength: float, elements: Optional[List[str]] = None,
-                            size_nm: Optional[float] = None,
-                            mp_api_key: Optional[str] = None) -> List[Dict]:
+def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarray = None,
+                            wavelength: float = 1.5406, elements: Optional[List[str]] = None,
+                            size_nm: Optional[float] = None, mp_api_key: Optional[str] = None,
+                            # NEW OPTIONAL PARAMETERS:
+                            precomputed_peaks_2theta: Optional[np.ndarray] = None,
+                            precomputed_peaks_intensity: Optional[np.ndarray] = None) -> List[Dict]:
     """
-    Main phase identification function with live progress updates.
+    SCIENTIFIC phase identification for nanocrystalline materials.
+    
+    If precomputed_peaks_2theta and precomputed_peaks_intensity are provided,
+    they are used directly (skipping internal peak detection). Otherwise,
+    peak detection is performed on the raw (two_theta, intensity) data.
+    
+    This ensures perfect consistency with any prior peak analysis.
     """
     if not PMG_AVAILABLE:
         st.error("pymatgen is required. Please install it and restart.")
@@ -609,41 +617,50 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     status = st.status("Initializing...", expanded=True)
     
     # --------------------------------------------------------
-    # STEP 1: UNIVERSAL PEAK DETECTION
+    # STEP 1: PEAK DETECTION (OR USE PRECOMPUTED PEAKS)
     # --------------------------------------------------------
-    status.update(label="Detecting peaks...", state="running")
     peak_analyzer = UniversalPeakAnalyzer()
     
-    exp_peaks_2theta, exp_intensities = peak_analyzer.detect_peaks_universal(two_theta, intensity)
-    
-    # Local apex refinement
-    refined_2theta = []
-    refined_intensity = []
-    for t0 in exp_peaks_2theta:
-        idx = np.argmin(np.abs(two_theta - t0))
-        left = max(0, idx - 5)
-        right = min(len(two_theta), idx + 6)
-        local_idx = left + np.argmax(intensity[left:right])
-        refined_2theta.append(two_theta[local_idx])
-        refined_intensity.append(intensity[local_idx])
-    exp_peaks_2theta = np.array(refined_2theta)
-    exp_intensities = np.array(refined_intensity)
-    
-    # Estimate FWHM for better filtering
-    avg_fwhm = peak_analyzer.estimate_fwhm(exp_peaks_2theta, two_theta, intensity)
-    
-    exp_peaks_2theta, exp_intensities = peak_analyzer.filter_peaks_for_nanomaterials(
-        exp_peaks_2theta, exp_intensities, wavelength, max_peaks=10, avg_fwhm=avg_fwhm
-    )
+    if precomputed_peaks_2theta is not None and precomputed_peaks_intensity is not None:
+        # Use the provided structural peaks
+        status.update(label="Using pre‑computed structural peaks...", state="running")
+        exp_peaks_2theta = np.array(precomputed_peaks_2theta)
+        exp_intensities = np.array(precomputed_peaks_intensity)
+        status.write(f"✅ Using {len(exp_peaks_2theta)} pre‑computed peaks")
+    else:
+        # Fall back to detecting peaks from raw data
+        status.update(label="Detecting peaks from raw data...", state="running")
+        exp_peaks_2theta, exp_intensities = peak_analyzer.detect_peaks_universal(two_theta, intensity)
+        
+        # Local apex refinement (only if using raw data)
+        refined_2theta = []
+        refined_intensity = []
+        for t0 in exp_peaks_2theta:
+            idx = np.argmin(np.abs(two_theta - t0))
+            left = max(0, idx - 5)
+            right = min(len(two_theta), idx + 6)
+            local_idx = left + np.argmax(intensity[left:right])
+            refined_2theta.append(two_theta[local_idx])
+            refined_intensity.append(intensity[local_idx])
+        exp_peaks_2theta = np.array(refined_2theta)
+        exp_intensities = np.array(refined_intensity)
+        
+        # Estimate FWHM for better filtering (if raw data available)
+        avg_fwhm = peak_analyzer.estimate_fwhm(exp_peaks_2theta, two_theta, intensity)
+        
+        exp_peaks_2theta, exp_intensities = peak_analyzer.filter_peaks_for_nanomaterials(
+            exp_peaks_2theta, exp_intensities, wavelength, max_peaks=10, avg_fwhm=avg_fwhm
+        )
+        status.write(f"✅ Detected and filtered {len(exp_peaks_2theta)} peaks")
     
     if len(exp_peaks_2theta) < 2:
         status.update(label="❌ Insufficient peaks found", state="error")
         st.warning("Insufficient strong peaks for reliable phase identification")
         return []
     
-    status.write(f"✅ Using {len(exp_peaks_2theta)} strongest diverse peaks")
     status.write(f"🧪 2θ peaks: {np.round(exp_peaks_2theta, 3).tolist()}")
     
+    # Calculate d-spacings (always needed)
     exp_d = wavelength / (2 * np.sin(np.radians(exp_peaks_2theta / 2)))
     status.write(f"🧪 d-spacings (Å): {np.round(exp_d, 3).tolist()}")
     
@@ -669,7 +686,7 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     
     def db_progress(msg):
         status.write(f"🔍 {msg}")
-    st.write(f"📚 Retrieved {len(database_structures)} candidates from databases")
+    
     if elements:
         database_structures = db_searcher.search_all_databases(
             elements=elements, 
@@ -844,4 +861,3 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                        f"Score: {res['score']:.3f} [{res['confidence_level']}]")
     
     return final_results
-
