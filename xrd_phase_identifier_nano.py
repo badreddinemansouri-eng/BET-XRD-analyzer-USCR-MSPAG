@@ -701,6 +701,7 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
             material_family=material_family,
             progress_callback=db_progress
         )
+    st.write(f"📊 Retrieved {len(database_structures)} candidates from databases")
     
     # Limit to top 20 candidates for speed
     database_structures = database_structures[:20]
@@ -861,3 +862,4 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
                        f"Score: {res['score']:.3f} [{res['confidence_level']}]")
     
     return final_results
+
