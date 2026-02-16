@@ -75,24 +75,32 @@ class UniversalPeakAnalyzer:
     @staticmethod
     def detect_peaks_universal(two_theta: np.ndarray, intensity: np.ndarray, 
                                min_snr: float = 2.0) -> Tuple[np.ndarray, np.ndarray]:
-        """Scientific peak detection for nanomaterials with proper filtering"""
-        if len(intensity) > 50:
-            noise_level = np.std(intensity[:50])
-        else:
-            noise_level = np.std(intensity)
-        
-        baseline = np.percentile(intensity, 10)
-        threshold = baseline + min_snr * noise_level
-        
-        peaks_idx, properties = find_peaks(
-            intensity, 
-            height=threshold,
-            prominence=noise_level * 2,
-            width=(2, None),
-            distance=5,
-            wlen=len(intensity)//5
-        )
-        return two_theta[peaks_idx], intensity[peaks_idx]
+        """Diagnostic version with fallback to simple peak detection."""
+        import time
+        st.write(f"   [detect_peaks] Input shape: two_theta {two_theta.shape}, intensity {intensity.shape}")
+        st.write(f"   [detect_peaks] intensity min/max: {intensity.min():.2f}, {intensity.max():.2f}")
+        st.write(f"   [detect_peaks] Checking for NaNs: {np.isnan(intensity).any()}")
+    
+        # Simple peak detection (no width calculation)
+        try:
+            from scipy.signal import find_peaks
+            t0 = time.time()
+            peaks_idx, properties = find_peaks(
+                intensity,
+                height=np.percentile(intensity, 90),  # simple threshold
+                distance=10,                           # avoid too many peaks
+                prominence=0.5                          # require some prominence
+            )
+            st.write(f"   [detect_peaks] Simple find_peaks took {time.time()-t0:.2f}s, found {len(peaks_idx)} peaks")
+            if len(peaks_idx) > 0:
+                return two_theta[peaks_idx], intensity[peaks_idx]
+        except Exception as e:
+            st.write(f"   [detect_peaks] Simple detection failed: {e}")
+    
+        # If simple fails, fall back to absolute max search (very crude)
+        st.write("   [detect_peaks] Falling back to absolute max search")
+        idx = np.argmax(intensity)
+        return np.array([two_theta[idx]]), np.array([intensity[idx]])
     
     @staticmethod
     def estimate_fwhm(peaks_2theta: np.ndarray, two_theta: np.ndarray, intensity: np.ndarray) -> float:
@@ -877,3 +885,4 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
 
     st.write(f"🕐 [{time.time()-start_time:.1f}s] Exiting identify_phases_universal")
     return final_results
+
