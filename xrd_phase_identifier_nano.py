@@ -422,7 +422,7 @@ class UniversalDatabaseSearcher:
                                 'cif_url': f"https://www.crystallography.net/cod/{entry['codid']}.cif",
                                 'confidence': 0.7  # Slightly lower confidence because only d-spacings used
                             })
-                
+               
                 return structures
                 
         except Exception as e:
@@ -779,6 +779,9 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     # STEP 3: UNIVERSAL DATABASE SEARCH
     # --------------------------------------------------------
     db_searcher = UniversalDatabaseSearcher()
+    # After calculating exp_d, before database search
+    search_status = st.empty()
+    search_status.info("🔍 Searching COD database for matching structures...")                            
     
     # Use d-spacings for search if no elements provided
     if elements:
@@ -787,11 +790,14 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
         )
     else:
         # Use more peaks for d-spacing search (up to 8)
-        dspacings_for_search = exp_d[:8]
+        dspacings_for_search = exp_d[:6]
         database_structures = db_searcher.search_all_databases(
             dspacings=dspacings_for_search, material_family=material_family
         )
-    
+     # Process only top 15 candidates for speed
+    max_structures = 15
+    database_structures = database_structures[:max_structures]
+    st.info(f"🔍 Processing first {len(database_structures)} candidate structures...")
     st.write(f"📚 Database search returned {len(database_structures)} candidate structures.")
     
     if not database_structures:
@@ -818,9 +824,10 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
             cif_url = struct.get('cif_url')
             if not cif_url:
                 continue
-            
+            st.write(f"   → Simulating {struct.get('formula', 'unknown')}...")
             # Use cached simulation
-            sim_x, sim_y = _simulate_pattern_cached(cif_url, wavelength)
+            sim_x, sim_y = _simulate_pattern_cached(cif_url, wavelength) 
+            response = requests.get(cif_url, timeout=8)
             if len(sim_x) == 0:
                 continue
             
@@ -885,7 +892,7 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
             
             # Extract structure info
             try:
-                response = requests.get(cif_url, timeout=10)
+                response = requests.get(cif_url, timeout=8)
                 cif_text = response.text
                 from pymatgen.io.cif import CifParser
                 parser = CifParser.from_string(cif_text)
@@ -934,7 +941,7 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
             continue
     
     progress_bar.empty()
-    
+    detail_status.empty()
     # --------------------------------------------------------
     # STEP 5: RESULTS PROCESSING WITH DIAGNOSTICS
     # --------------------------------------------------------
@@ -1022,3 +1029,4 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                        f"Score: {result['score']:.3f} [{result['confidence_level']}]")
     
     return final_results
+
