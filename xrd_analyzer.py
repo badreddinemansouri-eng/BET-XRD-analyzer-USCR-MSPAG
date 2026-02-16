@@ -1336,65 +1336,53 @@ class AdvancedXRDAnalyzer:
             # -----------------------------
             # CRITICAL: PHASE IDENTIFICATION WITH RAW DATA
             # -----------------------------
-            if raw_peaks:
-                try:
-                    if UNIVERSAL_PHASE_ID_AVAILABLE:
-                        # CRITICAL: Pass tolerance to phase identifier
-                        # Extract raw peak positions and intensities
-                        raw_positions = [p['position'] for p in raw_peaks]
-                        raw_intensities = [p['intensity'] for p in raw_peaks]
+            # ============================================================
+            # FIX: Always use precomputed structural peaks for phase ID
+            # ============================================================
+            if UNIVERSAL_PHASE_ID_AVAILABLE and validated_peaks:
+                phases = identify_phases_universal(
+                    two_theta=None,
+                    intensity=None,
+                    wavelength=self.wavelength,
+                    elements=elements,
+                    size_nm=xrd_results["crystallite_size"]["scherrer"],
+                    precomputed_peaks_2theta=[p['position'] for p in validated_peaks],
+                    precomputed_peaks_intensity=[p['intensity'] for p in validated_peaks]
+                )
+                xrd_results["phases"] = phases
 
-                        # Use universal nanomaterial identification with RAW data
-                        phases = identify_phases_universal(
-                            np.array(raw_positions),
-                            np.array(raw_intensities),
-                            wavelength=self.wavelength,
-                            elements=elements,
-                            precomputed_peaks_2theta=[p['position'] for p in structural_peaks],
-                            precomputed_peaks_intensity=[p['intensity'] for p in structural_peaks]
-                        )if elements else []
-                    else:
-                        # Fallback to original
-                        phases = identify_phases(
-                            two_theta_raw,
-                            intensity_raw,
-                            wavelength=self.wavelength,
-                            elements=elements
+                if phases:
+                    best = phases[0]
+                    xrd_results["crystal_system"] = best["crystal_system"]
+                    xrd_results["space_group"] = best["space_group"]
+                    xrd_results["lattice_parameters"] = best["lattice"]
+                    xrd_results["material_family"] = best.get("material_family", "unknown")
+
+                    # Map peaks to phases
+                    try:
+                        xrd_results["peaks"] = map_peaks_to_phases(validated_peaks, phases)
+                    except:
+                        pass
+
+                    # Calculate phase fractions
+                    try:
+                        xrd_results["phase_fractions"] = calculate_phase_fractions(
+                            xrd_results["peaks"], phases
                         )
+                    except:
+                        pass
 
-                    xrd_results["phases"] = phases
-
-                    if phases:
-                        best = phases[0]
-                        xrd_results["crystal_system"] = best["crystal_system"]
-                        xrd_results["space_group"] = best["space_group"]
-                        xrd_results["lattice_parameters"] = best["lattice"]
-                        xrd_results["material_family"] = best.get("material_family", "unknown")
-
-                        # Map peaks to phases
-                        try:
-                            xrd_results["peaks"] = map_peaks_to_phases(validated_peaks, phases)
-                        except:
-                            pass
-
-                        # Calculate phase fractions
-                        try:
-                            xrd_results["phase_fractions"] = calculate_phase_fractions(
-                                xrd_results["peaks"], phases
-                            )
-                        except:
-                            pass
-
-                    # CRITICAL FIX: Handle case where no phases found but material is nanocrystalline
-                    if not phases and mean_size < 10:
-                        xrd_results["analysis_notes"].append(
-                            "Note: Nanocrystalline material detected (size < 10 nm). "
-                            "Phase identification may be limited due to peak broadening."
-                        )
-
-                except Exception as phase_error:
-                    # Don't fail entire analysis
-                    xrd_results["analysis_notes"].append(f"Phase identification issue: {str(phase_error)[:100]}")
+                # CRITICAL FIX: Handle case where no phases found but material is nanocrystalline
+                if not phases and mean_size < 10:
+                    xrd_results["analysis_notes"].append(
+                        "Note: Nanocrystalline material detected (size < 10 nm). "
+                        "Phase identification may be limited due to peak broadening."
+                    )
+            else:
+                # Fallback: if universal phase identifier not available, just note
+                xrd_results["analysis_notes"].append(
+                    "Universal phase identifier not available or no structural peaks found."
+                )
 
             # -----------------------------
             # MATERIAL CHARACTERIZATION SUMMARY
@@ -1447,13 +1435,8 @@ class AdvancedXRDAnalyzer:
                 try:
                     if UNIVERSAL_PHASE_ID_AVAILABLE:
                         print("DEBUG: Calling identify_phases_universal")
-                        phases = identify_phases_universal(
-                            np.array(raw_positions),
-                            np.array(raw_intensities),
-                            wavelength=self.wavelength,
-                            elements=elements
-                        )
-                        print(f"DEBUG: phases returned = {len(phases)}")
+                        # This old call is now replaced by the above, but we keep the debug
+                        pass
                     else:
                         # fallback
                         phases = []
@@ -1488,12 +1471,3 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
-
-
-
-
-
-
-
-
-
