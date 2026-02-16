@@ -730,9 +730,7 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
         idx = np.argmin(np.abs(two_theta - t0))
         left = max(0, idx - 5)
         right = min(len(two_theta), idx + 6)
-    
         local_idx = left + np.argmax(intensity[left:right])
-    
         refined_2theta.append(two_theta[local_idx])
         refined_intensity.append(intensity[local_idx])
     
@@ -740,7 +738,6 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     exp_intensities = np.array(refined_intensity)
     
     # CRITICAL FIX: Filter to strongest peaks with angular diversity
-    # (We don't have FWHM info here, so avg_fwhm is not passed)
     exp_peaks_2theta, exp_intensities = peak_analyzer.filter_peaks_for_nanomaterials(
         exp_peaks_2theta, exp_intensities, wavelength, max_peaks=10
     )
@@ -750,10 +747,11 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
         return []
     
     st.success(f"✅ Using {len(exp_peaks_2theta)} strongest diverse peaks for matching")
-    st.write(f"🧪 Phase ID → Selected peaks: {exp_peaks_2theta.tolist()}")
+    st.write(f"🧪 Phase ID → Selected peaks (2θ): {np.round(exp_peaks_2theta, 3).tolist()}")
     
     # Calculate d-spacings (not 2θ)
     exp_d = wavelength / (2 * np.sin(np.radians(exp_peaks_2theta / 2)))
+    st.write(f"🧪 Corresponding d-spacings (Å): {np.round(exp_d, 3).tolist()}")
     
     # Normalize intensities for matching
     exp_intensities_norm = exp_intensities / np.max(exp_intensities)
@@ -788,9 +786,13 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
             elements=elements, material_family=material_family
         )
     else:
+        # Use more peaks for d-spacing search (up to 8)
+        dspacings_for_search = exp_d[:8]
         database_structures = db_searcher.search_all_databases(
-            dspacings=exp_d, material_family=material_family
+            dspacings=dspacings_for_search, material_family=material_family
         )
+    
+    st.write(f"📚 Database search returned {len(database_structures)} candidate structures.")
     
     if not database_structures:
         st.warning("No structures found in databases. Try different elements or improve pattern quality.")
@@ -834,41 +836,54 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                 size_nm
             )
             
-            # ADJUSTED thresholds for nanomaterials (LOWERED)
-            if size_nm and size_nm < 10:
-                # Ultra-nanocrystalline materials need even lower thresholds
-                threshold = 0.15 if size_nm < 5 else 0.20
+            # ADJUSTED thresholds for nanomaterials
+            if not elements:
+                # No elements provided – be more permissive
+                threshold = 0.10  # Lower threshold
+                if size_nm and size_nm < 5:
+                    threshold = 0.08
+                elif size_nm and size_nm < 10:
+                    threshold = 0.12
+                else:
+                    threshold = 0.15
             else:
-                threshold = 0.25
+                if size_nm and size_nm < 10:
+                    threshold = 0.15 if size_nm < 5 else 0.20
+                else:
+                    threshold = 0.25
             
             if match_score < threshold:
                 continue
             
-            # Determine confidence level (adjusted for nanomaterials)
-            if size_nm and size_nm < 10:
-                # Lower thresholds for nanocrystalline
-                if match_score >= 0.55:  # LOWERED for nanomaterials
-                    confidence = "confirmed"
-                elif match_score >= 0.35:  # LOWERED for nanomaterials
+            # Determine confidence level (adjusted)
+            if not elements:
+                if match_score >= 0.30:
                     confidence = "probable"
                 elif match_score >= threshold:
                     confidence = "possible"
                 else:
                     continue
             else:
-                if match_score >= 0.60:
-                    confidence = "confirmed"
-                elif match_score >= 0.40:
-                    confidence = "probable"
-                elif match_score >= 0.25:
-                    confidence = "possible"
+                if size_nm and size_nm < 10:
+                    if match_score >= 0.55:
+                        confidence = "confirmed"
+                    elif match_score >= 0.35:
+                        confidence = "probable"
+                    elif match_score >= threshold:
+                        confidence = "possible"
+                    else:
+                        continue
                 else:
-                    continue
+                    if match_score >= 0.60:
+                        confidence = "confirmed"
+                    elif match_score >= 0.40:
+                        confidence = "probable"
+                    elif match_score >= 0.25:
+                        confidence = "possible"
+                    else:
+                        continue
             
-            # Extract structure from cached simulation (need to re-parse for composition)
-            # To avoid re-downloading, we could store structure info in the cache,
-            # but for simplicity we'll re-download only if needed for lattice params.
-            # Since we already have the CIF text, we can parse it again quickly.
+            # Extract structure info
             try:
                 response = requests.get(cif_url, timeout=10)
                 cif_text = response.text
@@ -881,7 +896,6 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                 formula = structure.composition.reduced_formula
                 full_formula = str(structure.composition)
             except:
-                # Fallback to struct info if parsing fails
                 crystal_system = struct.get('space_group', 'Unknown')
                 space_group = struct.get('space_group', 'Unknown')
                 lattice = {}
@@ -895,14 +909,14 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                 "crystal_system": crystal_system,
                 "space_group": space_group,
                 "lattice": lattice,
-                "hkls": [],  # Not storing hkls for now
+                "hkls": [],
                 "score": round(match_score, 3),
                 "confidence_level": confidence,
                 "database": struct.get('database', 'Unknown'),
                 "material_family": material_family,
                 "peak_quality": peak_quality,
                 "n_peaks_matched": len(exp_d),
-                "structure": None,  # Cannot store structure in results for display
+                "structure": None,
                 "match_details": {
                     "n_exp_peaks": len(exp_d),
                     "avg_d_spacing": float(np.mean(exp_d)),
@@ -912,8 +926,11 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                 }
             })
             
+            # Debug: show match for first few
+            if len(results) <= 3:
+                st.write(f"   → {formula}: score {match_score:.3f} (threshold {threshold}) → {confidence}")
+            
         except Exception as e:
-            # Silently continue on individual structure errors
             continue
     
     progress_bar.empty()
@@ -944,7 +961,7 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
         if peak_quality.get('quality_score', 0) < 0.3:
             diagnostic["matching_issues"].append("Material may be amorphous or poorly crystalline")
         
-        # Display diagnostic in expander (the caller will see no phases)
+        # Display diagnostic in expander
         with st.expander("📊 No Phase Match – Diagnostic Report", expanded=True):
             st.markdown("### **Why were no crystalline phases identified?**")
             st.markdown("This is **NOT** a software error. Phase identification is based strictly on Bragg peak matching against CIF-validated crystal structures (COD + OPTIMADE).")
@@ -958,7 +975,6 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
             st.markdown("- Increase crystallinity (annealing) if possible")
             st.markdown("- Combine with Raman / FTIR")
         
-        # Return empty list (no placeholder)
         return []
     
     # Remove duplicates (same formula and space group)
@@ -974,27 +990,19 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     # Sort by score
     final_results = sorted(unique_results, key=lambda x: x.get("score", 0), reverse=True)
     
-    # --------------------------------------------------------
-    # STEP 6: ADD DIAGNOSTICS TO ALL RESULTS
-    # --------------------------------------------------------
+    # Add diagnostics to results
     for result in final_results:
-        if result.get("phase") != "UNIDENTIFIED":
-            result["phase_diagnostics"] = {
-                "experimental_peaks_used": len(exp_peaks_2theta),
-                "matched_peaks": result.get("n_peaks_matched", 0),
-                "match_score": result.get("score", 0),
-                "nanocrystalline_tolerance_applied": UniversalPatternMatcher.calculate_nano_tolerance(size_nm),
-                "database_reliability": "CIF-validated" if result.get("database") == "COD" else "Theoretical/computational",
-                "database_limitations": "COD contains only crystalline structures; amorphous/nanocrystalline patterns not included"
-            }
+        result["phase_diagnostics"] = {
+            "experimental_peaks_used": len(exp_peaks_2theta),
+            "matched_peaks": result.get("n_peaks_matched", 0),
+            "match_score": result.get("score", 0),
+            "nanocrystalline_tolerance_applied": UniversalPatternMatcher.calculate_nano_tolerance(size_nm),
+            "database_reliability": "CIF-validated" if result.get("database") == "COD" else "Theoretical/computational",
+            "database_limitations": "COD contains only crystalline structures; amorphous/nanocrystalline patterns not included"
+        }
     
-    # --------------------------------------------------------
-    # STEP 7: SCIENTIFIC REPORT
-    # --------------------------------------------------------
-    if final_results:
-        st.success(f"✅ Identified {len(final_results)} potential phases")
-    else:
-        st.warning("⚠️ No crystalline phase identified with sufficient confidence")
+    # Final report
+    st.success(f"✅ Identified {len(final_results)} potential phases")
     
     with st.expander("📊 Scientific Analysis Report", expanded=False):
         st.markdown(f"### **Nanocrystalline Material Analysis**")
@@ -1002,45 +1010,15 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
         st.markdown(f"- **Strong peaks used**: {len(exp_peaks_2theta)} (filtered for angular diversity)")
         st.markdown(f"- **Average d-spacing**: {np.mean(exp_d):.3f} Å")
         st.markdown(f"- **Angular range**: {peak_quality.get('angular_range', 0):.1f}°")
-        st.markdown(f"- **Databases searched**: {len(set(r['database'] for r in final_results if 'database' in r))}")
         
         if size_nm:
             tolerance = UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
             st.markdown(f"- **Crystallite size**: {size_nm:.1f} nm")
             st.markdown(f"- **Matching tolerance**: {tolerance:.1%} d-spacing (physics-based)")
         
-        # Scientific notes about nanocrystalline matching
-        st.markdown("### **Matching Notes for Nanocrystalline Materials**")
-        st.markdown("""
-        - **Peak broadening**: Nanocrystalline materials exhibit broadened peaks
-        - **Angular diversity**: Selected peaks are ≥1.5° apart for structural information
-        - **d-spacing matching**: Using d-spacings (not 2θ) for better accuracy
-        - **Relative intensities**: Matching intensity ordering, not absolute values
-        - **Size-based tolerance**: Tolerance adjusted based on crystallite size
-        """)
-        
-        # Database limitations disclosure
-        st.markdown("### **Database Limitations**")
-        st.markdown("""
-        - **COD**: Experimental CIFs only (no amorphous/nanocrystalline patterns)
-        - **Materials Project**: DFT-optimized structures (may differ from experiment)
-        - **Coverage**: ~1.5M known crystalline phases vs. estimated 10⁸ possible compositions
-        - **Nanomaterials**: Severe peak broadening reduces match probability
-        """)
-        
-        # Show top matches
-        if final_results:
-            st.markdown("### **Top Phase Matches**")
-            for i, result in enumerate(final_results[:3]):
-                st.markdown(f"{i+1}. **{result['phase']}** ({result['crystal_system']}) - "
-                          f"Score: {result['score']:.3f} [{result['confidence_level']}]")
-                
-                # Add scientific justification
-                if result['score'] > 0.6:
-                    st.markdown(f"   - *Strong match with {result['n_peaks_matched']} peak correspondences*")
-                elif result['score'] > 0.4:
-                    st.markdown(f"   - *Reasonable match considering nanocrystalline broadening*")
-                else:
-                    st.markdown(f"   - *Tentative match - verify with additional characterization*")
+        st.markdown("### **Top Phase Matches**")
+        for i, result in enumerate(final_results[:5]):
+            st.markdown(f"{i+1}. **{result['phase']}** ({result['crystal_system']}) - "
+                       f"Score: {result['score']:.3f} [{result['confidence_level']}]")
     
     return final_results
