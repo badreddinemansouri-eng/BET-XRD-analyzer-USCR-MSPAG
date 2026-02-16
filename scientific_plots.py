@@ -576,7 +576,6 @@ class PublicationPlotter:
             p["crystallite_size"]
             for p in structural_peaks
             if p.get("crystallite_size", 0) > 0
-            and p.get("fitted", False)
         ]
 
     
@@ -898,6 +897,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
