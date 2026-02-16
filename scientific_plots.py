@@ -510,15 +510,15 @@ class PublicationPlotter:
         if display_peaks:
             ax1.scatter(
                 [p["position"] for p in display_peaks],
-                [p["intensity"] for p in display_peaks],
+                [p.get("intensity_raw", p["intensity"]) for p in display_peaks],
                 color="red", s=35, zorder=5, label="Structural Bragg peaks"
             )
-    
             for p in display_peaks:
+                raw_int = p.get("intensity_raw", p["intensity"])
                 ax1.annotate(
                     f"{p['position']:.2f}°",
-                    xy=(p["position"], p["intensity"]),
-                    xytext=(p["position"], p["intensity"] * 1.1),
+                    xy=(p["position"], raw_int),
+                    xytext=(p["position"], raw_int * 1.1),
                     ha="center", fontsize=self.font_size - 2,
                     arrowprops=dict(arrowstyle="->", lw=0.5)
                 )
@@ -897,6 +897,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
