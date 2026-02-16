@@ -669,7 +669,7 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
     
     def db_progress(msg):
         status.write(f"🔍 {msg}")
-    
+    st.write(f"📚 Retrieved {len(database_structures)} candidates from databases")
     if elements:
         database_structures = db_searcher.search_all_databases(
             elements=elements, 
@@ -844,3 +844,4 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                        f"Score: {res['score']:.3f} [{res['confidence_level']}]")
     
     return final_results
+
