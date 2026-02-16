@@ -595,47 +595,49 @@ FALLBACK_STRUCTURES = [
 def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarray = None,
                             wavelength: float = 1.5406, elements: Optional[List[str]] = None,
                             size_nm: Optional[float] = None, mp_api_key: Optional[str] = None,
-                            # NEW OPTIONAL PARAMETERS:
                             precomputed_peaks_2theta: Optional[np.ndarray] = None,
                             precomputed_peaks_intensity: Optional[np.ndarray] = None) -> List[Dict]:
     """
     SCIENTIFIC phase identification for nanocrystalline materials.
-    
-    If precomputed_peaks_2theta and precomputed_peaks_intensity are provided,
-    they are used directly (skipping internal peak detection). Otherwise,
-    peak detection is performed on the raw (two_theta, intensity) data.
-    
-    This ensures perfect consistency with any prior peak analysis.
+    Includes detailed diagnostic timestamps.
     """
+    import time
+    start_time = time.time()
+    st.write(f"🕐 [{time.time()-start_time:.1f}s] Entered identify_phases_universal")
+
     if not PMG_AVAILABLE:
         st.error("pymatgen is required. Please install it and restart.")
         return []
-    
+
     st.info("🔬 Running scientific nanomaterial phase identification...")
-    
-    # Create a status container for live updates
     status = st.status("Initializing...", expanded=True)
-    
+
     # --------------------------------------------------------
     # STEP 1: PEAK DETECTION (OR USE PRECOMPUTED PEAKS)
     # --------------------------------------------------------
     peak_analyzer = UniversalPeakAnalyzer()
-    
+
     if precomputed_peaks_2theta is not None and precomputed_peaks_intensity is not None:
-        # Use the provided structural peaks
         status.update(label="Using pre‑computed structural peaks...", state="running")
         exp_peaks_2theta = np.array(precomputed_peaks_2theta)
         exp_intensities = np.array(precomputed_peaks_intensity)
         status.write(f"✅ Using {len(exp_peaks_2theta)} pre‑computed peaks")
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Using precomputed peaks")
     else:
-        # Fall back to detecting peaks from raw data
         status.update(label="Detecting peaks from raw data...", state="running")
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Starting peak detection...")
+
+        # 1a. Initial peak detection with find_peaks
         exp_peaks_2theta, exp_intensities = peak_analyzer.detect_peaks_universal(two_theta, intensity)
-        
-        # Local apex refinement (only if using raw data)
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] find_peaks found {len(exp_peaks_2theta)} raw peaks")
+
+        # 1b. Local apex refinement
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Starting apex refinement for {len(exp_peaks_2theta)} peaks...")
         refined_2theta = []
         refined_intensity = []
-        for t0 in exp_peaks_2theta:
+        for i, t0 in enumerate(exp_peaks_2theta):
+            if i % 10 == 0:
+                st.write(f"   ... refining peak {i+1}/{len(exp_peaks_2theta)}")
             idx = np.argmin(np.abs(two_theta - t0))
             left = max(0, idx - 5)
             right = min(len(two_theta), idx + 6)
@@ -644,28 +646,31 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
             refined_intensity.append(intensity[local_idx])
         exp_peaks_2theta = np.array(refined_2theta)
         exp_intensities = np.array(refined_intensity)
-        
-        # Estimate FWHM for better filtering (if raw data available)
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Apex refinement complete")
+
+        # 1c. Estimate average FWHM (rough)
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Estimating FWHM...")
         avg_fwhm = peak_analyzer.estimate_fwhm(exp_peaks_2theta, two_theta, intensity)
-        
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Estimated FWHM = {avg_fwhm:.3f}°")
+
+        # 1d. Filter peaks for angular diversity
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Filtering peaks for angular diversity...")
         exp_peaks_2theta, exp_intensities = peak_analyzer.filter_peaks_for_nanomaterials(
             exp_peaks_2theta, exp_intensities, wavelength, max_peaks=10, avg_fwhm=avg_fwhm
         )
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Filtered to {len(exp_peaks_2theta)} peaks")
         status.write(f"✅ Detected and filtered {len(exp_peaks_2theta)} peaks")
-    
+
     if len(exp_peaks_2theta) < 2:
         status.update(label="❌ Insufficient peaks found", state="error")
         st.warning("Insufficient strong peaks for reliable phase identification")
         return []
-    
-    status.write(f"🧪 2θ peaks: {np.round(exp_peaks_2theta, 3).tolist()}")
-    
-    # Calculate d-spacings (always needed)
+
+    st.write(f"🕐 [{time.time()-start_time:.1f}s] Peak detection complete. Calculating d‑spacings...")
     exp_d = wavelength / (2 * np.sin(np.radians(exp_peaks_2theta / 2)))
-    status.write(f"🧪 d-spacings (Å): {np.round(exp_d, 3).tolist()}")
-    
+    st.write(f"🧪 d‑spacings (Å): {np.round(exp_d, 3).tolist()}")
     exp_intensities_norm = exp_intensities / np.max(exp_intensities)
-    
+
     # --------------------------------------------------------
     # STEP 2: ESTIMATE MATERIAL FAMILY
     # --------------------------------------------------------
@@ -674,53 +679,57 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
         status.write(f"📊 Material family estimated: {material_family}")
     else:
         material_family = 'unknown'
-    
+
     if size_nm:
-        status.write(f"📊 Crystallite size: {size_nm:.1f} nm → tolerance: {UniversalPatternMatcher.calculate_nano_tolerance(size_nm):.1%}")
-    
+        tolerance = UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
+        status.write(f"📊 Crystallite size: {size_nm:.1f} nm → tolerance: {tolerance:.1%}")
+
     # --------------------------------------------------------
     # STEP 3: DATABASE SEARCH
     # --------------------------------------------------------
     status.update(label="Searching crystallographic databases...", state="running")
+    st.write(f"🕐 [{time.time()-start_time:.1f}s] Initializing database searcher...")
     db_searcher = UniversalDatabaseSearcher(mp_api_key=mp_api_key)
-    
+
     def db_progress(msg):
         status.write(f"🔍 {msg}")
-    
+
     if elements:
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Starting element‑based database search...")
         database_structures = db_searcher.search_all_databases(
-            elements=elements, 
+            elements=elements,
             material_family=material_family,
             progress_callback=db_progress
         )
     else:
-        # Use top 5 d‑spacings for search
-        dspacings_for_search = exp_d[:5]
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Starting d‑spacing‑based database search...")
+        dspacings_for_search = exp_d[:5]  # use top 5 d‑spacings
         database_structures = db_searcher.search_all_databases(
             dspacings=dspacings_for_search,
             material_family=material_family,
             progress_callback=db_progress
         )
-    st.write(f"📊 Retrieved {len(database_structures)} candidates from databases")
-    
-    # Limit to top 20 candidates for speed
-    database_structures = database_structures[:20]
+
+    st.write(f"🕐 [{time.time()-start_time:.1f}s] Database search returned {len(database_structures)} candidates")
+    # Limit to top 15 for speed
+    database_structures = database_structures[:15]
+    st.write(f"🕐 [{time.time()-start_time:.1f}s] Limited to {len(database_structures)} candidates")
     status.write(f"📚 Retrieved {len(database_structures)} candidate structures")
-    
-    # If no structures from databases, use fallback
+
     if not database_structures:
         status.write("⚠️ No structures found in online databases. Using built‑in fallback list.")
         database_structures = FALLBACK_STRUCTURES
-    
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Using {len(database_structures)} fallback structures")
+
     # --------------------------------------------------------
     # STEP 4: PARALLEL PATTERN SIMULATION AND MATCHING
     # --------------------------------------------------------
     status.update(label=f"Simulating and matching {len(database_structures)} structures...", state="running")
-    
+    st.write(f"🕐 [{time.time()-start_time:.1f}s] Starting parallel simulation with {len(database_structures)} structures")
+
     matcher = UniversalPatternMatcher()
     results = []
-    
-    # Use ThreadPoolExecutor to simulate patterns in parallel (max 4 workers)
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         future_to_struct = {}
         for struct in database_structures:
@@ -728,39 +737,41 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
             if cif_url:
                 future = executor.submit(_simulate_pattern_cached, cif_url, wavelength)
                 future_to_struct[future] = struct
-        
+
         total = len(future_to_struct)
         completed = 0
         for future in concurrent.futures.as_completed(future_to_struct):
             struct = future_to_struct[future]
             completed += 1
             status.write(f"   [{completed}/{total}] Simulating {struct.get('formula', 'unknown')}...")
+            st.write(f"🕐 [{time.time()-start_time:.1f}s] Simulating {struct.get('formula', 'unknown')}...")
             try:
                 sim_x, sim_y = future.result(timeout=20)
                 if len(sim_x) == 0:
+                    st.write(f"   ⚠️ Simulation returned empty pattern")
                     continue
-                
+
                 sim_d = wavelength / (2 * np.sin(np.radians(sim_x / 2)))
                 sim_intensity = sim_y / np.max(sim_y) if len(sim_y) > 0 else np.zeros_like(sim_x)
-                
+
                 match_score = matcher.match_pattern_universal(
                     exp_d, exp_intensities_norm,
                     sim_d, sim_intensity,
                     material_family, size_nm
                 )
-                
-                # Determine threshold based on input availability
+
+                # Determine threshold
                 if not elements:
                     threshold = 0.10
                     if size_nm and size_nm < 5:
                         threshold = 0.08
                 else:
                     threshold = 0.15 if size_nm and size_nm < 10 else 0.20
-                
+
                 if match_score < threshold:
                     continue
-                
-                # Determine confidence level
+
+                # Confidence level
                 if not elements:
                     confidence = "probable" if match_score >= 0.30 else "possible"
                 else:
@@ -778,8 +789,8 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
                             confidence = "probable"
                         else:
                             confidence = "possible"
-                
-                # Extract additional info from CIF if possible (fallback to struct dict)
+
+                # Extract info from CIF
                 try:
                     parser = CifParser.from_string(requests.get(cif_url, timeout=8).text)
                     structure = parser.get_structures()[0]
@@ -794,7 +805,7 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
                     lattice = {}
                     formula = struct.get('formula', 'Unknown')
                     full_formula = struct.get('formula', 'Unknown')
-                
+
                 results.append({
                     "phase": formula,
                     "full_formula": full_formula,
@@ -814,14 +825,16 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
                         "tolerance_used": UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
                     }
                 })
-                
-                # Early feedback for first good match
+
                 if len(results) <= 3:
                     status.write(f"   → {formula}: score {match_score:.3f} → {confidence}")
-                    
+
+            except concurrent.futures.TimeoutError:
+                st.write(f"   ⚠️ Simulation timed out for {struct.get('formula', 'unknown')}")
             except Exception as e:
-                status.write(f"   ⚠️ Error simulating {struct.get('formula', 'unknown')}: {str(e)[:50]}")
-    
+                st.write(f"   ⚠️ Error simulating {struct.get('formula', 'unknown')}: {str(e)[:50]}")
+
+    st.write(f"🕐 [{time.time()-start_time:.1f}s] Simulation completed. Found {len(results)} matches.")
     # --------------------------------------------------------
     # STEP 5: PROCESS RESULTS
     # --------------------------------------------------------
@@ -833,8 +846,9 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
             st.markdown("- Material may be amorphous or poorly crystalline")
             st.markdown("- Try providing element information for better filtering")
             st.markdown("- Consider using raw (unsmoothed) data")
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Exiting with no results")
         return []
-    
+
     # Remove duplicates
     unique_results = []
     seen = set()
@@ -843,12 +857,12 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
         if key not in seen:
             seen.add(key)
             unique_results.append(r)
-    
+
     final_results = sorted(unique_results, key=lambda x: x["score"], reverse=True)
-    
+
     status.update(label=f"✅ Identified {len(final_results)} potential phases", state="complete")
-    
-    # Show top matches in expander
+    st.write(f"🕐 [{time.time()-start_time:.1f}s] Final results: {len(final_results)} unique phases")
+
     with st.expander("📊 Scientific Analysis Report", expanded=False):
         st.markdown(f"### **Nanocrystalline Material Analysis**")
         st.markdown(f"- **Estimated family**: {material_family}")
@@ -860,6 +874,6 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
         for i, res in enumerate(final_results[:5]):
             st.markdown(f"{i+1}. **{res['phase']}** ({res['crystal_system']}) – "
                        f"Score: {res['score']:.3f} [{res['confidence_level']}]")
-    
-    return final_results
 
+    st.write(f"🕐 [{time.time()-start_time:.1f}s] Exiting identify_phases_universal")
+    return final_results
