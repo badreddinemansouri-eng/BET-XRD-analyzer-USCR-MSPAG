@@ -1349,7 +1349,7 @@ class AdvancedXRDAnalyzer:
                             np.array(raw_positions),
                             np.array(raw_intensities),
                             wavelength=self.wavelength,
-                            elements=elements
+                            elements=elements,
                             precomputed_peaks_2theta=[p['position'] for p in structural_peaks],
                             precomputed_peaks_intensity=[p['intensity'] for p in structural_peaks]
                         )if elements else []
@@ -1488,6 +1488,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
