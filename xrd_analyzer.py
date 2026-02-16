@@ -563,7 +563,7 @@ def williamson_hall_analysis(peaks, wavelength=1.5406, instrument_fwhm_rad=0.0):
         # Physical validation criteria
         fwhm_deg = p.get("fwhm_deg", 0)
         asymmetry = p.get("asymmetry", 1.0)
-        snr = p.get("snr", 0)
+        snr = p.get("snr")
 
         # Reject peaks that are too narrow or too broad
         if fwhm_deg < 0.05 or fwhm_deg > 2.0:
@@ -574,7 +574,7 @@ def williamson_hall_analysis(peaks, wavelength=1.5406, instrument_fwhm_rad=0.0):
             continue
 
         # Minimum SNR requirement
-        if snr < 3.0:
+        if snr is not None and snr < 3.0:
             continue
 
         valid_peaks.append(p)
@@ -1486,6 +1486,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
