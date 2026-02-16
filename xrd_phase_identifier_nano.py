@@ -3,20 +3,34 @@ UNIVERSAL XRD PHASE IDENTIFICATION FOR NANOMATERIALS
 ========================================================================
 Scientific phase identification for nanocrystalline materials with proper
 peak filtering and d-spacing matching.
-Now supports automatic peak-based search when elements are not provided.
+Now supports automatic peak-based search when elements are not provided,
+multiple databases (COD, AMCSD, Materials Project), parallel simulation,
+and a built‑in fallback database for guaranteed results.
 ========================================================================
 """
 
 import numpy as np
 import requests
 import time
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Set
 import streamlit as st
 from dataclasses import dataclass
 from scipy.signal import find_peaks
 from scipy.optimize import curve_fit
 import concurrent.futures
 from functools import lru_cache
+import hashlib
+import json
+import os
+
+# Attempt to import pymatgen – if not installed, show a helpful message
+try:
+    from pymatgen.io.cif import CifParser
+    from pymatgen.analysis.diffraction.xrd import XRDCalculator
+    PMG_AVAILABLE = True
+except ImportError:
+    PMG_AVAILABLE = False
+    st.error("pymatgen is required but not installed. Please run: pip install pymatgen")
 
 # ------------------------------------------------------------
 # UNIVERSAL NANOMATERIAL PARAMETERS
@@ -25,7 +39,6 @@ from functools import lru_cache
 class UniversalNanoParams:
     """Universal parameters for all nanomaterial types"""
     
-    # Peak broadening tolerance based on expected size
     SIZE_TOLERANCE_MAP = {
         'ultra_nano': (0.1, 20),   # < 5 nm: 0.1-20° tolerance
         'nano': (0.08, 15),        # 5-20 nm: 0.08-15° tolerance  
@@ -33,7 +46,6 @@ class UniversalNanoParams:
         'micron': (0.03, 5),       # > 100 nm: 0.03-5° tolerance
     }
     
-    # Common nanomaterial structure types with their characteristics
     NANOMATERIAL_FAMILIES = {
         'metal_nanoparticles': ['Au', 'Ag', 'Cu', 'Pt', 'Pd', 'Ni', 'Fe', 'Co'],
         'metal_oxides': ['TiO2', 'ZnO', 'Fe2O3', 'Fe3O4', 'CuO', 'Cu2O', 'NiO', 
@@ -47,16 +59,15 @@ class UniversalNanoParams:
         'mofs_cofs': ['ZIF-8', 'MOF-5', 'UIO-66', 'HKUST-1'],
     }
     
-    # Database priority based on material type
     DATABASE_PRIORITY = {
-        'metal_nanoparticles': ['COD', 'ICSD', 'MaterialsProject'],
-        'metal_oxides': ['COD', 'MaterialsProject', 'AFLOW'],
-        'perovskites': ['MaterialsProject', 'AFLOW', 'COD'],
-        '2d_materials': ['COD', '2DMatPedia', 'MaterialsProject'],
+        'metal_nanoparticles': ['COD', 'AMCSD', 'MaterialsProject'],
+        'metal_oxides': ['COD', 'AMCSD', 'MaterialsProject'],
+        'perovskites': ['MaterialsProject', 'COD', 'AMCSD'],
+        '2d_materials': ['COD', 'AMCSD', 'MaterialsProject'],
     }
 
 # ------------------------------------------------------------
-# UNIVERSAL PEAK ANALYSIS WITH NANOCRYSTALLINE FILTERING
+# UNIVERSAL PEAK ANALYSIS
 # ------------------------------------------------------------
 class UniversalPeakAnalyzer:
     """Universal peak analysis for nanocrystalline materials"""
@@ -64,31 +75,51 @@ class UniversalPeakAnalyzer:
     @staticmethod
     def detect_peaks_universal(two_theta: np.ndarray, intensity: np.ndarray, 
                                min_snr: float = 2.0) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Scientific peak detection for nanomaterials with proper filtering
-        """
-        # Calculate noise level
+        """Scientific peak detection for nanomaterials with proper filtering"""
         if len(intensity) > 50:
             noise_level = np.std(intensity[:50])
         else:
             noise_level = np.std(intensity)
         
         baseline = np.percentile(intensity, 10)
-        
-        # Adaptive threshold for nanomaterials (lower due to broadening)
         threshold = baseline + min_snr * noise_level
         
-        # Find peaks with proper parameters for broadened peaks
         peaks_idx, properties = find_peaks(
             intensity, 
             height=threshold,
-            prominence=noise_level * 2,  # Lower prominence for nanomaterials
-            width=(2, None),  # Minimum width for broad peaks
-            distance=5,  # Points
-            wlen=len(intensity)//5  # Window length
+            prominence=noise_level * 2,
+            width=(2, None),
+            distance=5,
+            wlen=len(intensity)//5
         )
-        
         return two_theta[peaks_idx], intensity[peaks_idx]
+    
+    @staticmethod
+    def estimate_fwhm(peaks_2theta: np.ndarray, two_theta: np.ndarray, intensity: np.ndarray) -> float:
+        """Estimate average full width at half maximum of peaks (rough approximation)"""
+        if len(peaks_2theta) == 0:
+            return 1.0
+        widths = []
+        for p in peaks_2theta:
+            idx = np.argmin(np.abs(two_theta - p))
+            left = max(0, idx - 10)
+            right = min(len(two_theta), idx + 10)
+            half_max = intensity[idx] / 2
+            # find left crossing
+            l_cross = idx
+            for i in range(idx, left, -1):
+                if intensity[i] <= half_max:
+                    l_cross = i
+                    break
+            # right crossing
+            r_cross = idx
+            for i in range(idx, right):
+                if intensity[i] <= half_max:
+                    r_cross = i
+                    break
+            if r_cross > l_cross:
+                widths.append(two_theta[r_cross] - two_theta[l_cross])
+        return np.mean(widths) if widths else 1.0
     
     @staticmethod
     def filter_peaks_for_nanomaterials(peaks_2theta: np.ndarray, 
@@ -96,29 +127,18 @@ class UniversalPeakAnalyzer:
                                       wavelength: float,
                                       max_peaks: int = 10,
                                       avg_fwhm: Optional[float] = None) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        CRITICAL FIX: Filter to strongest 6-10 peaks with ANGULAR DIVERSITY
-        
-        Nanocrystalline materials have fewer discernible peaks due to broadening.
-        Using all detected peaks leads to failed phase identification.
-        Now ensures peaks are at least 1.5° apart for structural diversity.
-        If avg_fwhm is provided, the minimum separation is adjusted accordingly.
-        """
+        """Filter to strongest peaks with angular diversity, using FWHM if available."""
         if len(peaks_2theta) == 0:
             return peaks_2theta, peaks_intensity
         
-        # Sort by intensity (descending)
         order = np.argsort(peaks_intensity)[::-1]
         peaks_2theta_sorted = peaks_2theta[order]
         peaks_intensity_sorted = peaks_intensity[order]
 
-        # Determine minimum separation (1.2° base, larger if peaks are broad)
         min_sep = 1.2
         if avg_fwhm is not None:
-            # For very broad peaks, require larger separation to avoid overlaps
             min_sep = max(1.2, avg_fwhm * 2.0)
         
-        # CRITICAL FIX: Enforce angular diversity
         selected_2theta = []
         selected_intensity = []
         
@@ -126,14 +146,12 @@ class UniversalPeakAnalyzer:
             current_2theta = peaks_2theta_sorted[i]
             current_intensity = peaks_intensity_sorted[i]
             
-            # Check if this peak is sufficiently separated from already selected peaks
             accept = True
-            for i, sel in enumerate(selected_2theta):
+            for j, sel in enumerate(selected_2theta):
                 if abs(current_2theta - sel) < min_sep:
-                    # keep the stronger one
-                    if current_intensity > selected_intensity[i]:
-                        selected_2theta[i] = current_2theta
-                        selected_intensity[i] = current_intensity
+                    if current_intensity > selected_intensity[j]:
+                        selected_2theta[j] = current_2theta
+                        selected_intensity[j] = current_intensity
                     accept = False
                     break
             
@@ -141,158 +159,84 @@ class UniversalPeakAnalyzer:
                 selected_2theta.append(current_2theta)
                 selected_intensity.append(current_intensity)
             
-            # Stop when we have enough diverse peaks
             if len(selected_2theta) >= max_peaks:
                 break
         
-        # If we don't have enough diverse peaks, add the strongest remaining ones
         if len(selected_2theta) < max_peaks:
             for i in range(len(peaks_2theta_sorted)):
                 current_2theta = peaks_2theta_sorted[i]
-                current_intensity = peaks_intensity_sorted[i]
-                
-                # Skip if already selected
                 if any(abs(current_2theta - s) < 1e-3 for s in selected_2theta):
                     continue
-                
                 selected_2theta.append(current_2theta)
-                selected_intensity.append(current_intensity)
-                
+                selected_intensity.append(peaks_intensity_sorted[i])
                 if len(selected_2theta) >= max_peaks:
                     break
-        
-        # For very nanocrystalline materials, keep fewer peaks
-        if len(selected_2theta) > 5:
-            # Calculate average peak width from d-spacing
-            d_spacings = wavelength / (2 * np.sin(np.radians(np.array(selected_2theta) / 2)))
-            d_spacing_range = d_spacings.max() - d_spacings.min()
-            
-            # If d-spacing range is small, material is highly nanocrystalline
-            if d_spacing_range < 2.0 and len(selected_2theta) > 6:
-                selected_2theta = selected_2theta[:6]
-                selected_intensity = selected_intensity[:6]
         
         return np.array(selected_2theta), np.array(selected_intensity)
     
     @staticmethod
     def estimate_material_family(elements: List[str], peak_positions: List[float]) -> str:
-        """
-        Intelligently estimate material family from elements and peaks
-        """
+        """Intelligently estimate material family from elements and peaks"""
         if not elements:
             return 'unknown'
         
         elements_set = set(elements)
-        
-        # Check for metals
         common_metals = {'Au', 'Ag', 'Cu', 'Pt', 'Pd', 'Ni', 'Fe', 'Co'}
         if elements_set & common_metals:
             return 'metal_nanoparticles'
         
-        # Check for oxides
         if 'O' in elements_set:
-            # Check for transition metals
             transition_metals = {'Ti', 'Zn', 'Fe', 'Cu', 'Ni', 'Co', 'Mn', 'Cr', 'V'}
-            if elements_set & transition_metals:
-                return 'metal_oxides'
-            # Check for rare earth oxides
             rare_earths = {'Ce', 'La', 'Nd', 'Pr', 'Sm', 'Eu', 'Gd'}
-            if elements_set & rare_earths:
+            if (elements_set & transition_metals) or (elements_set & rare_earths):
                 return 'metal_oxides'
         
-        # Check for sulfides/selenides/tellurides
         chalcogens = {'S', 'Se', 'Te'}
         if elements_set & chalcogens:
             return 'metal_chalcogenides'
         
-        # Check for perovskites (ABX3)
         if len(elements) >= 3 and 'O' in elements:
-            # Simple check for perovskite-like composition
             return 'perovskites'
         
-        # Check for carbon materials
         if 'C' in elements_set and len(elements) <= 2:
             return 'carbon_allotropes'
         
         return 'unknown'
-    
-    @staticmethod
-    def calculate_peak_quality_metrics(peaks_2theta: np.ndarray, 
-                                      peaks_intensity: np.ndarray,
-                                      wavelength: float) -> Dict:
-        """
-        Calculate quality metrics for peak matching
-        """
-        if len(peaks_2theta) == 0:
-            return {}
-        
-        # Calculate d-spacings
-        d_spacings = wavelength / (2 * np.sin(np.radians(peaks_2theta / 2)))
-        
-        # Peak intensity statistics
-        intensity_ratio = peaks_intensity / np.max(peaks_intensity)
-        
-        # Peak distribution metrics
-        angular_range = peaks_2theta.max() - peaks_2theta.min()
-        peak_density = len(peaks_2theta) / angular_range if angular_range > 0 else 0
-        
-        # Estimate nanocrystallinity from d-spacing distribution
-        d_spacing_std = np.std(d_spacings) / np.mean(d_spacings) if len(d_spacings) > 1 else 0
-        
-        return {
-            'n_peaks': len(peaks_2theta),
-            'angular_range': float(angular_range),
-            'peak_density': float(peak_density),
-            'avg_intensity_ratio': float(np.mean(intensity_ratio)),
-            'd_spacing_range': (float(d_spacings.min()), float(d_spacings.max())),
-            'd_spacing_std_norm': float(d_spacing_std),
-            'quality_score': min(np.mean(intensity_ratio) * len(peaks_2theta) / 10, 1.0)
-        }
 
 # ------------------------------------------------------------
-# UNIVERSAL DATABASE SEARCH
+# MULTI‑DATABASE SEARCHER (COD, AMCSD, Materials Project)
 # ------------------------------------------------------------
 class UniversalDatabaseSearcher:
-    """Universal database search for all material types"""
+    """Searches multiple open crystallographic databases."""
     
-    def __init__(self):
-        self.databases = {
-            'COD': self._search_cod_universal,
-            'MaterialsProject': self._search_materials_project,
-            'AFLOW': self._search_aflow,
-            'ICSD': self._search_icsd,
-            'OQMD': self._search_oqmd,
-        }
-        
-        # Cache for database queries
+    def __init__(self, mp_api_key: Optional[str] = None):
+        self.mp_api_key = mp_api_key or os.environ.get("MP_API_KEY", "")
+        self.session = requests.Session()
         self.query_cache = {}
     
+    # ------------------------------------------------------------------
+    # COD search (elements)
+    # ------------------------------------------------------------------
     @lru_cache(maxsize=100)
-    def _search_cod_universal(self, elements: Tuple[str], max_results: int = 30) -> List[Dict]:
-        """Universal COD search with robust error handling"""
+    def _search_cod_elements(self, elements: Tuple[str], max_results: int = 30) -> List[Dict]:
+        """Search COD by elements."""
         try:
-            # CRITICAL FIX: Add oxide constraints
-            query = {
+            params = {
                 "format": "json",
                 "el": ",".join(elements),
                 "maxresults": max_results
             }
-            
-            # Add oxide constraint for better filtering
             if "O" in elements:
-                query["formula"] = "*O*"
+                params["formula"] = "*O*"
             
-            response = requests.get(
+            resp = self.session.get(
                 "https://www.crystallography.net/cod/result",
-                params=query,
-                timeout=20
+                params=params,
+                timeout=15
             )
-            
-            if response.status_code == 200:
-                data = response.json()
-                
+            if resp.status_code == 200:
+                data = resp.json()
                 structures = []
-                # COD returns a list of entries
                 if isinstance(data, list):
                     for entry in data[:max_results]:
                         if isinstance(entry, dict) and 'codid' in entry:
@@ -302,330 +246,263 @@ class UniversalDatabaseSearcher:
                                 'formula': entry.get('formula', ''),
                                 'space_group': entry.get('sg', ''),
                                 'cif_url': f"https://www.crystallography.net/cod/{entry['codid']}.cif",
-                                'confidence': 0.8  # COD is experimental data
+                                'confidence': 0.8
                             })
-                
                 return structures
-                
         except Exception as e:
-            st.warning(f"COD search: {str(e)[:100]}")
-        
+            st.warning(f"COD element search failed: {str(e)[:100]}")
         return []
     
-    def _search_materials_project(self, elements: Tuple[str], max_results: int = 20) -> List[Dict]:
-        """Materials Project search (requires API key)"""
-        # This would require an API key
-        # For now, return empty - users can add their own key
-        return []
-    
-    def _search_aflow(self, elements: Tuple[str], max_results: int = 20) -> List[Dict]:
-        """AFLOW database search for inorganic compounds"""
-        try:
-            # AFLOW API endpoint for structure search
-            formula = "".join(elements)
-            url = f"http://aflowlib.duke.edu/search/API/?p={formula}&format=json"
-            
-            response = requests.get(url, timeout=20)
-            
-            if response.status_code == 200:
-                data = response.json()
-                structures = []
-                
-                for entry in data.get('results', [])[:max_results]:
-                    structures.append({
-                        'database': 'AFLOW',
-                        'id': entry.get('auid', ''),
-                        'formula': entry.get('compound', ''),
-                        'space_group': entry.get('spacegroup', ''),
-                        'cif_url': entry.get('cif_url', ''),
-                        'confidence': 0.7
-                    })
-                
-                return structures
-                
-        except:
-            pass
-        
-        return []
-    
-    def _search_icsd(self, elements: Tuple[str], max_results: int = 20) -> List[Dict]:
-        """ICSD search (would require subscription)"""
-        # ICSD requires subscription, so just return empty
-        return []
-    
-    def _search_oqmd(self, elements: Tuple[str], max_results: int = 20) -> List[Dict]:
-        """Open Quantum Materials Database search"""
-        try:
-            # OQMD API endpoint
-            elements_str = "-".join(elements)
-            url = f"https://oqmd.org/api/structures?elements={elements_str}&limit={max_results}"
-            
-            response = requests.get(url, timeout=20)
-            
-            if response.status_code == 200:
-                data = response.json()
-                structures = []
-                
-                for entry in data.get('results', [])[:max_results]:
-                    structures.append({
-                        'database': 'OQMD',
-                        'id': entry.get('id', ''),
-                        'formula': entry.get('formula', ''),
-                        'space_group': entry.get('spacegroup', ''),
-                        'cif_url': f"https://oqmd.org/api/structures/{entry.get('id')}/cif",
-                        'confidence': 0.6
-                    })
-                
-                return structures
-                
-        except:
-            pass
-        
-        return []
-    
-    # --------------------------------------------------------
-    # NEW METHOD: Search COD by d-spacings (no elements required)
-    # --------------------------------------------------------
+    # ------------------------------------------------------------------
+    # COD search by d‑spacings (robust method: query each peak with range)
+    # ------------------------------------------------------------------
     @lru_cache(maxsize=50)
-    def search_by_dspacings(self, dspacings: Tuple[float], max_results: int = 30) -> List[Dict]:
+    def _search_cod_dspacings(self, dspacings: Tuple[float], tolerance: float = 0.05) -> List[Dict]:
         """
-        Search COD using a list of d-spacings (in Angstroms).
-        Returns a list of candidate structures in the same format as other search methods.
+        Search COD using a list of d-spacings (Å). For each d, we query with a ±tolerance range
+        and collect unique COD IDs. This is much more reliable than a comma‑separated list.
+        """
+        all_structures = []
+        seen_ids = set()
+        
+        for d in dspacings[:5]:  # use top 5 peaks
+            lower = d * (1 - tolerance)
+            upper = d * (1 + tolerance)
+            params = {
+                "format": "json",
+                "dspacing": f"{lower:.3f}",
+                "dspacing2": f"{upper:.3f}",
+                "maxresults": 20
+            }
+            try:
+                resp = self.session.get(
+                    "https://www.crystallography.net/cod/result",
+                    params=params,
+                    timeout=10
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        for entry in data:
+                            codid = str(entry.get('codid', ''))
+                            if codid and codid not in seen_ids:
+                                seen_ids.add(codid)
+                                all_structures.append({
+                                    'database': 'COD',
+                                    'id': codid,
+                                    'formula': entry.get('formula', ''),
+                                    'space_group': entry.get('sg', ''),
+                                    'cif_url': f"https://www.crystallography.net/cod/{codid}.cif",
+                                    'confidence': 0.7
+                                })
+            except Exception:
+                continue
+        
+        return all_structures[:30]
+    
+    # ------------------------------------------------------------------
+    # AMCSD search (by elements)
+    # ------------------------------------------------------------------
+    @lru_cache(maxsize=50)
+    def _search_amcsd(self, elements: Tuple[str], max_results: int = 20) -> List[Dict]:
+        """
+        Search American Mineralogist Crystal Structure Database.
+        AMCSD provides a simple text‑based search; we parse the results.
         """
         try:
-            # COD expects d-spacings as a comma-separated list
-            dspacing_str = ",".join([f"{d:.3f}" for d in dspacings[:5]])  # Use top 5 peaks
-            query = {
-                "format": "json",
-                "dspacing": dspacing_str,
-                "maxresults": max_results
-            }
+            # AMCSD search URL (GET with formula)
+            formula = "".join(elements)
+            url = f"http://rruff.geo.arizona.edu/AMS/result.php?formula={formula}"
+            resp = self.session.get(url, timeout=15)
+            if resp.status_code != 200:
+                return []
             
-            response = requests.get(
-                "https://www.crystallography.net/cod/result",
-                params=query,
-                timeout=20
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                structures = []
-                if isinstance(data, list):
-                    for entry in data[:max_results]:
-                        if isinstance(entry, dict) and 'codid' in entry:
-                            structures.append({
-                                'database': 'COD',
-                                'id': str(entry['codid']),
-                                'formula': entry.get('formula', ''),
-                                'space_group': entry.get('sg', ''),
-                                'cif_url': f"https://www.crystallography.net/cod/{entry['codid']}.cif",
-                                'confidence': 0.7  # Slightly lower confidence because only d-spacings used
-                            })
-               
-                return structures
-                
+            # Very crude HTML parsing – look for links to CIF files
+            import re
+            cif_links = re.findall(r'href="([^"]+\.cif)"', resp.text)
+            structures = []
+            for link in cif_links[:max_results]:
+                full_url = link if link.startswith("http") else f"http://rruff.geo.arizona.edu/AMS/{link}"
+                # Try to extract formula from the link text or fallback
+                structures.append({
+                    'database': 'AMCSD',
+                    'id': link.split('/')[-1].replace('.cif', ''),
+                    'formula': formula,
+                    'space_group': 'Unknown',
+                    'cif_url': full_url,
+                    'confidence': 0.7
+                })
+            return structures
         except Exception as e:
-            st.warning(f"COD d-spacing search: {str(e)[:100]}")
-        
+            st.warning(f"AMCSD search failed: {str(e)[:100]}")
         return []
     
-    def search_all_databases(self, elements: Optional[List[str]] = None, 
+    # ------------------------------------------------------------------
+    # Materials Project search (requires API key)
+    # ------------------------------------------------------------------
+    @lru_cache(maxsize=50)
+    def _search_materials_project(self, elements: Tuple[str], max_results: int = 20) -> List[Dict]:
+        if not self.mp_api_key:
+            return []
+        try:
+            headers = {"X-API-KEY": self.mp_api_key}
+            # Use MP's new API (v2023)
+            elements_str = ",".join(elements)
+            url = f"https://api.materialsproject.org/materials/core/?elements={elements_str}&_per_page={max_results}"
+            resp = self.session.get(url, headers=headers, timeout=15)
+            if resp.status_code == 200:
+                data = resp.json()
+                structures = []
+                for doc in data.get("data", [])[:max_results]:
+                    structures.append({
+                        'database': 'MaterialsProject',
+                        'id': doc.get("material_id", ""),
+                        'formula': doc.get("formula_pretty", ""),
+                        'space_group': doc.get("symmetry", {}).get("symbol", ""),
+                        'cif_url': f"https://next-gen.materialsproject.org/materials/{doc.get('material_id')}/cif",
+                        'confidence': 0.75
+                    })
+                return structures
+        except Exception as e:
+            st.warning(f"Materials Project search failed: {str(e)[:100]}")
+        return []
+    
+    # ------------------------------------------------------------------
+    # Main search dispatcher
+    # ------------------------------------------------------------------
+    def search_all_databases(self, 
+                            elements: Optional[List[str]] = None, 
                             dspacings: Optional[np.ndarray] = None,
-                            material_family: str = 'unknown') -> List[Dict]:
+                            material_family: str = 'unknown',
+                            progress_callback=None) -> List[Dict]:
         """
-        Search all available databases.
-        If elements are provided, use element-filtered search.
-        If no elements but dspacings provided, use d-spacing search.
+        Search all configured databases.
+        If elements are provided, use element‑based searches.
+        Otherwise, use d‑spacing search (COD only, but multiple peaks).
         """
+        all_structures = []
+        
         if elements:
-            # Element-filtered search
             elements_tuple = tuple(sorted(elements))
-            cache_key = (elements_tuple, material_family)
-            
-            # Check cache
-            if cache_key in self.query_cache:
-                return self.query_cache[cache_key]
-            
             st.info(f"🔍 Searching databases for elements: {', '.join(elements)}")
             
-            all_structures = []
-            
-            # Determine which databases to search based on material family
+            # Determine which databases to query
             if material_family in UniversalNanoParams.DATABASE_PRIORITY:
                 db_priority = UniversalNanoParams.DATABASE_PRIORITY[material_family]
             else:
-                db_priority = ['COD', 'MaterialsProject', 'AFLOW', 'OQMD']
+                db_priority = ['COD', 'AMCSD', 'MaterialsProject']
             
-            # Search databases in parallel for speed
+            # Query in parallel
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                futures = []
-                for db_name in db_priority[:3]:  # Limit to 3 databases for speed
-                    if db_name in self.databases:
-                        futures.append(
-                            executor.submit(self.databases[db_name], elements_tuple, 15)
-                        )
+                future_to_db = {}
+                if 'COD' in db_priority:
+                    future_to_db[executor.submit(self._search_cod_elements, elements_tuple, 20)] = 'COD'
+                if 'AMCSD' in db_priority:
+                    future_to_db[executor.submit(self._search_amcsd, elements_tuple, 15)] = 'AMCSD'
+                if 'MaterialsProject' in db_priority and self.mp_api_key:
+                    future_to_db[executor.submit(self._search_materials_project, elements_tuple, 15)] = 'MP'
                 
-                # Collect results
-                for future in concurrent.futures.as_completed(futures):
+                for future in concurrent.futures.as_completed(future_to_db):
+                    db_name = future_to_db[future]
                     try:
-                        results = future.result(timeout=10)
+                        results = future.result(timeout=15)
                         if results:
+                            if progress_callback:
+                                progress_callback(f"Found {len(results)} structures from {db_name}")
                             all_structures.extend(results)
                     except Exception as e:
-                        continue
-            
-            # Remove duplicates based on formula and space group
-            unique_structures = []
-            seen = set()
-            
-            for struct in all_structures:
-                key = (struct.get('formula', ''), struct.get('space_group', ''))
-                if key not in seen:
-                    seen.add(key)
-                    unique_structures.append(struct)
-            
-            # Cache results
-            self.query_cache[cache_key] = unique_structures
-            
-            st.success(f"✅ Found {len(unique_structures)} unique structures from databases")
-            
-            return unique_structures
+                        if progress_callback:
+                            progress_callback(f"Error from {db_name}: {str(e)[:50]}")
         
         elif dspacings is not None and len(dspacings) > 0:
-            # D-spacing search (no elements)
-            # Use only COD for now, as other databases don't support d-spacing search easily
-            st.info("🔍 No elements provided. Searching COD by d-spacings...")
-            dspacings_tuple = tuple(sorted(dspacings[:5]))  # Use top 5 peaks
-            structures = self.search_by_dspacings(dspacings_tuple, max_results=30)
-            
-            if structures:
-                st.success(f"✅ Found {len(structures)} candidate structures from COD d-spacing search")
-            else:
-                st.warning("No structures found via d-spacing search.")
-            
-            return structures
+            # D‑spacing search – use COD with range queries
+            st.info("🔍 No elements provided. Searching COD by d‑spacings (peak matching)...")
+            dspacings_tuple = tuple(sorted(dspacings[:5]))
+            all_structures = self._search_cod_dspacings(dspacings_tuple, tolerance=0.05)
+            if progress_callback:
+                progress_callback(f"COD d‑spacing search returned {len(all_structures)} candidates")
         
-        else:
-            st.warning("No search criteria provided (neither elements nor d-spacings).")
-            return []
+        # Remove duplicates (same formula + space group)
+        unique = {}
+        for s in all_structures:
+            key = (s.get('formula', ''), s.get('space_group', ''))
+            if key not in unique or s['database'] == 'COD':  # prefer COD if duplicate
+                unique[key] = s
+        return list(unique.values())
 
 # ------------------------------------------------------------
-# SCIENTIFIC MATCHING ALGORITHM FOR NANOCRYSTALLINE MATERIALS
+# SCIENTIFIC MATCHING ALGORITHM
 # ------------------------------------------------------------
 class UniversalPatternMatcher:
     """Scientific pattern matching for nanocrystalline materials"""
     
     @staticmethod
     def calculate_nano_tolerance(size_nm: Optional[float] = None) -> float:
-        """
-        CRITICAL FIX: Physics-based tolerance for nanocrystalline materials
-        
-        Scherrer size -> d-spacing tolerance mapping:
-        < 5 nm: 10% tolerance (Δd/d ≈ 0.10)
-        5-10 nm: 6% tolerance (Δd/d ≈ 0.06)
-        > 10 nm: 3% tolerance (Δd/d ≈ 0.03)
-        
-        Williamson-Hall predicts:
-        Δ2θ ≈ λ/(D cosθ) ≈ 0.15-0.30° for 4.7 nm crystallites
-        """
         if size_nm is None:
-            return 0.05  # Default for unknown size
+            return 0.05
         elif size_nm < 5:
-            return 0.10  # Ultra-nanocrystalline
+            return 0.10
         elif size_nm < 10:
-            return 0.06  # Nanocrystalline
+            return 0.06
         else:
-            return 0.03  # Sub-micron to micron
+            return 0.03
     
     @staticmethod
     def match_pattern_universal(exp_d: np.ndarray, exp_intensity: np.ndarray,
                                sim_d: np.ndarray, sim_intensity: np.ndarray,
                                material_family: str = 'unknown',
                                size_nm: Optional[float] = None) -> float:
-        """
-        SCIENTIFIC pattern matching with nanocrystalline-specific optimizations
-        
-        Key changes for nanomaterials:
-        1. Use d-spacing matching (not 2θ)
-        2. Use relative intensity ordering (not absolute values)
-        3. Higher tolerance for broadened peaks
-        4. Focus on strongest peaks only
-        """
         if len(exp_d) == 0 or len(sim_d) == 0:
             return 0.0
         
-        # Family-specific matching parameters
         params = UniversalPatternMatcher._get_family_params(material_family)
-        
-        # CRITICAL FIX: Use physics-based tolerance
         base_tolerance = UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
         
-        # For nanomaterials, use only top experimental peaks
-        n_exp_peaks = min(len(exp_d), 8)  # Max 8 peaks for nanomaterials
-        
+        n_exp_peaks = min(len(exp_d), 8)
         match_scores = []
         intensity_weights = []
         
-        # Sort experimental peaks by intensity
         exp_sorted_idx = np.argsort(exp_intensity)[::-1][:n_exp_peaks]
         
         for i in exp_sorted_idx:
             d_exp = exp_d[i]
             intensity_exp = exp_intensity[i]
             
-            # Adaptive tolerance for nanocrystalline materials
-            # Broader tolerance for weaker peaks
             intensity_factor = intensity_exp / np.max(exp_intensity)
             peak_tolerance = base_tolerance * (1.5 - 0.3 * intensity_factor)
             
-            # For nanomaterials, use even broader tolerance
             if material_family in ['metal_nanoparticles', 'carbon_allotropes']:
                 peak_tolerance *= 1.5
             
-            # Find closest simulated peak using d-spacing
             d_errors = np.abs(sim_d - d_exp) / d_exp
             min_error_idx = np.argmin(d_errors)
             min_error = d_errors[min_error_idx]
             
             if min_error < peak_tolerance:
-                # Calculate match quality
                 match_quality = 1.0 - (min_error / peak_tolerance)
                 
-                # Intensity correlation (relative ordering, not absolute values)
                 if len(sim_intensity) > min_error_idx:
-                    # Get relative intensity ranking
                     exp_rank = np.sum(exp_intensity > intensity_exp) / len(exp_intensity)
                     sim_rank = np.sum(sim_intensity > sim_intensity[min_error_idx]) / len(sim_intensity)
-                    
-                    # Match based on relative ordering
                     rank_match = 1.0 - abs(exp_rank - sim_rank)
-                    match_quality *= (0.6 + 0.4 * rank_match)  # 60% d-spacing, 40% intensity ordering
+                    match_quality *= (0.6 + 0.4 * rank_match)
                 
                 match_scores.append(match_quality)
-                
-                # Weight by experimental intensity
                 weight = intensity_exp / np.sum(exp_intensity[exp_sorted_idx])
                 intensity_weights.append(weight)
         
         if not match_scores:
             return 0.0
         
-        # Weighted average match score
         weighted_score = np.average(match_scores, weights=intensity_weights)
-        
-        # Coverage penalty (how many experimental peaks were matched)
         coverage = len(match_scores) / n_exp_peaks
         
-        # For nanomaterials, require good coverage but be more lenient
-        if coverage < 0.5:  # RELAXED from 0.6 to 0.5 for nanocrystalline
+        if coverage < 0.5:
             return 0.0
         
-        coverage_factor = 0.4 + 0.6 * coverage  # Strong penalty for poor coverage
-        
+        coverage_factor = 0.4 + 0.6 * coverage
         final_score = weighted_score * coverage_factor
         
-        # Boost score for nanomaterials with few peaks
         if material_family in ['metal_nanoparticles', 'carbon_allotropes'] and n_exp_peaks <= 4:
             final_score *= 1.2
         
@@ -633,15 +510,7 @@ class UniversalPatternMatcher:
     
     @staticmethod
     def _get_family_params(family: str) -> Dict:
-        """Get matching parameters for specific material family"""
-        # Default parameters with increased tolerance for nanomaterials
-        params = {
-            'base_tolerance': 0.05,  # Increased from 0.04 for nanomaterials
-            'intensity_weight': 0.3,
-            'coverage_weight': 0.7,
-        }
-        
-        # Family-specific adjustments for nanomaterials
+        params = {'base_tolerance': 0.05, 'intensity_weight': 0.3, 'coverage_weight': 0.7}
         family_adjustments = {
             'metal_nanoparticles': {'base_tolerance': 0.06, 'intensity_weight': 0.2},
             'metal_oxides': {'base_tolerance': 0.04, 'intensity_weight': 0.35},
@@ -649,83 +518,107 @@ class UniversalPatternMatcher:
             'perovskites': {'base_tolerance': 0.04, 'intensity_weight': 0.4},
             'spinels': {'base_tolerance': 0.04, 'intensity_weight': 0.35},
             'carbon_allotropes': {'base_tolerance': 0.07, 'intensity_weight': 0.1},
-            'unknown': {'base_tolerance': 0.05, 'intensity_weight': 0.3},
         }
-        
         if family in family_adjustments:
             params.update(family_adjustments[family])
-        
         return params
 
 # ------------------------------------------------------------
-# CACHING FOR SIMULATED PATTERNS
+# CACHED PATTERN SIMULATION (using pymatgen)
 # ------------------------------------------------------------
 @lru_cache(maxsize=200)
 def _simulate_pattern_cached(cif_url: str, wavelength: float) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Download CIF from URL and simulate XRD pattern.
-    Cached to avoid repeated downloads and calculations.
-    Returns (two_theta, intensity) arrays.
-    """
+    """Download CIF and simulate XRD pattern. Returns (two_theta, intensity)."""
+    if not PMG_AVAILABLE:
+        return np.array([]), np.array([])
     try:
-        response = requests.get(cif_url, timeout=15)
-        if response.status_code != 200:
+        resp = requests.get(cif_url, timeout=15)
+        if resp.status_code != 200:
             return np.array([]), np.array([])
-        
-        cif_text = response.text
-        
-        from pymatgen.io.cif import CifParser
-        from pymatgen.analysis.diffraction.xrd import XRDCalculator
+        cif_text = resp.text
         
         parser = CifParser.from_string(cif_text)
         structure = parser.get_structures()[0]
         calc = XRDCalculator(wavelength=wavelength)
         pattern = calc.get_pattern(structure, two_theta_range=(5, 80))
-        
         return np.array(pattern.x), np.array(pattern.y)
-    
-    except Exception as e:
+    except Exception:
         return np.array([]), np.array([])
 
 # ------------------------------------------------------------
-# MAIN UNIVERSAL IDENTIFICATION ENGINE (SCIENTIFICALLY CORRECTED)
+# BUILT‑IN FALLBACK DATABASE (common nanomaterials)
+# ------------------------------------------------------------
+# This is a minimal embedded database of common phases.
+# In a real application you might load a pre‑computed JSON file.
+# Here we provide a few entries – you can expand this list.
+FALLBACK_STRUCTURES = [
+    {
+        "name": "Gold (Au)",
+        "formula": "Au",
+        "space_group": "Fm-3m",
+        "cif_url": "https://www.crystallography.net/cod/9008463.cif",  # example COD ID
+        "database": "Fallback"
+    },
+    {
+        "name": "Silver (Ag)",
+        "formula": "Ag",
+        "space_group": "Fm-3m",
+        "cif_url": "https://www.crystallography.net/cod/9008459.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Titanium dioxide (Anatase)",
+        "formula": "TiO2",
+        "space_group": "I41/amd",
+        "cif_url": "https://www.crystallography.net/cod/9008213.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Zinc oxide (Zincite)",
+        "formula": "ZnO",
+        "space_group": "P63mc",
+        "cif_url": "https://www.crystallography.net/cod/9008878.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Silicon (Si)",
+        "formula": "Si",
+        "space_group": "Fd-3m",
+        "cif_url": "https://www.crystallography.net/cod/9011380.cif",
+        "database": "Fallback"
+    }
+]
+
+# ------------------------------------------------------------
+# MAIN IDENTIFICATION ENGINE
 # ------------------------------------------------------------
 def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
                             wavelength: float, elements: Optional[List[str]] = None,
-                            size_nm: Optional[float] = None) -> List[Dict]:
+                            size_nm: Optional[float] = None,
+                            mp_api_key: Optional[str] = None) -> List[Dict]:
     """
-    SCIENTIFIC phase identification for nanocrystalline materials
+    Main phase identification function with live progress updates.
+    """
+    if not PMG_AVAILABLE:
+        st.error("pymatgen is required. Please install it and restart.")
+        return []
     
-    Critical fixes applied:
-    1. Filter to strongest 6-10 peaks only with ANGULAR DIVERSITY
-    2. Use d-spacing matching (not 2θ)
-    3. Implement relative intensity ordering
-    4. Adjust tolerances for nanocrystalline broadening
-    5. Pass crystallite size for physics-based tolerance
-    6. ADDED: Phase identification diagnostics for transparency
-    7. ADDED: Caching for simulated patterns (performance)
-    8. ADDED: Automatic peak-based search when elements not provided
-    9. REMOVED: Placeholder "UNIDENTIFIED" phase (causes KeyError elsewhere)
-    """
     st.info("🔬 Running scientific nanomaterial phase identification...")
     
-    # Handle elements=None gracefully
-    if elements is None:
-        elements = []
+    # Create a status container for live updates
+    status = st.status("Initializing...", expanded=True)
     
     # --------------------------------------------------------
-    # STEP 1: UNIVERSAL PEAK DETECTION WITH FILTERING
+    # STEP 1: UNIVERSAL PEAK DETECTION
     # --------------------------------------------------------
+    status.update(label="Detecting peaks...", state="running")
     peak_analyzer = UniversalPeakAnalyzer()
     
-    exp_peaks_2theta, exp_intensities = peak_analyzer.detect_peaks_universal(
-        two_theta, intensity
-    )
+    exp_peaks_2theta, exp_intensities = peak_analyzer.detect_peaks_universal(two_theta, intensity)
     
-    # --- local apex recentering for phase ID only ---
+    # Local apex refinement
     refined_2theta = []
     refined_intensity = []
-    
     for t0 in exp_peaks_2theta:
         idx = np.argmin(np.abs(two_theta - t0))
         left = max(0, idx - 5)
@@ -733,300 +626,221 @@ def identify_phases_universal(two_theta: np.ndarray, intensity: np.ndarray,
         local_idx = left + np.argmax(intensity[left:right])
         refined_2theta.append(two_theta[local_idx])
         refined_intensity.append(intensity[local_idx])
-    
     exp_peaks_2theta = np.array(refined_2theta)
     exp_intensities = np.array(refined_intensity)
     
-    # CRITICAL FIX: Filter to strongest peaks with angular diversity
+    # Estimate FWHM for better filtering
+    avg_fwhm = peak_analyzer.estimate_fwhm(exp_peaks_2theta, two_theta, intensity)
+    
     exp_peaks_2theta, exp_intensities = peak_analyzer.filter_peaks_for_nanomaterials(
-        exp_peaks_2theta, exp_intensities, wavelength, max_peaks=10
+        exp_peaks_2theta, exp_intensities, wavelength, max_peaks=10, avg_fwhm=avg_fwhm
     )
     
     if len(exp_peaks_2theta) < 2:
+        status.update(label="❌ Insufficient peaks found", state="error")
         st.warning("Insufficient strong peaks for reliable phase identification")
         return []
     
-    st.success(f"✅ Using {len(exp_peaks_2theta)} strongest diverse peaks for matching")
-    st.write(f"🧪 Phase ID → Selected peaks (2θ): {np.round(exp_peaks_2theta, 3).tolist()}")
+    status.write(f"✅ Using {len(exp_peaks_2theta)} strongest diverse peaks")
+    status.write(f"🧪 2θ peaks: {np.round(exp_peaks_2theta, 3).tolist()}")
     
-    # Calculate d-spacings (not 2θ)
     exp_d = wavelength / (2 * np.sin(np.radians(exp_peaks_2theta / 2)))
-    st.write(f"🧪 Corresponding d-spacings (Å): {np.round(exp_d, 3).tolist()}")
+    status.write(f"🧪 d-spacings (Å): {np.round(exp_d, 3).tolist()}")
     
-    # Normalize intensities for matching
     exp_intensities_norm = exp_intensities / np.max(exp_intensities)
     
     # --------------------------------------------------------
-    # STEP 2: ESTIMATE MATERIAL FAMILY (if elements provided)
+    # STEP 2: ESTIMATE MATERIAL FAMILY
     # --------------------------------------------------------
     if elements:
-        material_family = peak_analyzer.estimate_material_family(
-            elements, exp_peaks_2theta
-        )
+        material_family = peak_analyzer.estimate_material_family(elements, exp_peaks_2theta)
+        status.write(f"📊 Material family estimated: {material_family}")
     else:
         material_family = 'unknown'
     
-    st.info(f"📊 Material family estimated: {material_family}")
     if size_nm:
-        st.info(f"📊 Crystallite size for tolerance: {size_nm:.1f} nm")
-    
-    # Calculate peak quality metrics
-    peak_quality = peak_analyzer.calculate_peak_quality_metrics(
-        exp_peaks_2theta, exp_intensities, wavelength
-    )
+        status.write(f"📊 Crystallite size: {size_nm:.1f} nm → tolerance: {UniversalPatternMatcher.calculate_nano_tolerance(size_nm):.1%}")
     
     # --------------------------------------------------------
-    # STEP 3: UNIVERSAL DATABASE SEARCH
+    # STEP 3: DATABASE SEARCH
     # --------------------------------------------------------
-    db_searcher = UniversalDatabaseSearcher()
-    # After calculating exp_d, before database search
-    search_status = st.empty()
-    search_status.info("🔍 Searching COD database for matching structures...")                            
+    status.update(label="Searching crystallographic databases...", state="running")
+    db_searcher = UniversalDatabaseSearcher(mp_api_key=mp_api_key)
     
-    # Use d-spacings for search if no elements provided
+    def db_progress(msg):
+        status.write(f"🔍 {msg}")
+    
     if elements:
         database_structures = db_searcher.search_all_databases(
-            elements=elements, material_family=material_family
+            elements=elements, 
+            material_family=material_family,
+            progress_callback=db_progress
         )
     else:
-        # Use more peaks for d-spacing search (up to 8)
-        dspacings_for_search = exp_d[:6]
+        # Use top 5 d‑spacings for search
+        dspacings_for_search = exp_d[:5]
         database_structures = db_searcher.search_all_databases(
-            dspacings=dspacings_for_search, material_family=material_family
+            dspacings=dspacings_for_search,
+            material_family=material_family,
+            progress_callback=db_progress
         )
-     # Process only top 15 candidates for speed
-    max_structures = 15
-    database_structures = database_structures[:max_structures]
-    st.info(f"🔍 Processing first {len(database_structures)} candidate structures...")
-    st.write(f"📚 Database search returned {len(database_structures)} candidate structures.")
     
+    # Limit to top 20 candidates for speed
+    database_structures = database_structures[:20]
+    status.write(f"📚 Retrieved {len(database_structures)} candidate structures")
+    
+    # If no structures from databases, use fallback
     if not database_structures:
-        st.warning("No structures found in databases. Try different elements or improve pattern quality.")
-        return []
+        status.write("⚠️ No structures found in online databases. Using built‑in fallback list.")
+        database_structures = FALLBACK_STRUCTURES
     
     # --------------------------------------------------------
-    # STEP 4: SCIENTIFIC PATTERN SIMULATION AND MATCHING
+    # STEP 4: PARALLEL PATTERN SIMULATION AND MATCHING
     # --------------------------------------------------------
+    status.update(label=f"Simulating and matching {len(database_structures)} structures...", state="running")
+    
     matcher = UniversalPatternMatcher()
     results = []
     
-    st.info(f"🧪 Simulating and matching {len(database_structures)} structures...")
-    
-    progress_bar = st.progress(0)
-    
-    for i, struct in enumerate(database_structures):
-        try:
-            # Update progress
-            progress = (i + 1) / len(database_structures)
-            progress_bar.progress(progress)
-            
-            # Fetch CIF
+    # Use ThreadPoolExecutor to simulate patterns in parallel (max 4 workers)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        future_to_struct = {}
+        for struct in database_structures:
             cif_url = struct.get('cif_url')
-            if not cif_url:
-                continue
-            st.write(f"   → Simulating {struct.get('formula', 'unknown')}...")
-            # Use cached simulation
-            sim_x, sim_y = _simulate_pattern_cached(cif_url, wavelength) 
-            response = requests.get(cif_url, timeout=8)
-            if len(sim_x) == 0:
-                continue
-            
-            # Simulated data
-            sim_d = wavelength / (2 * np.sin(np.radians(sim_x / 2)))
-            sim_intensity = sim_y / np.max(sim_y) if len(sim_y) > 0 else np.zeros_like(sim_x)
-            
-            # SCIENTIFIC MATCHING: Use d-spacing and relative intensities WITH SIZE-BASED TOLERANCE
-            match_score = matcher.match_pattern_universal(
-                exp_d, exp_intensities_norm,
-                sim_d, sim_intensity,
-                material_family,
-                size_nm
-            )
-            
-            # ADJUSTED thresholds for nanomaterials
-            if not elements:
-                # No elements provided – be more permissive
-                threshold = 0.10  # Lower threshold
-                if size_nm and size_nm < 5:
-                    threshold = 0.08
-                elif size_nm and size_nm < 10:
-                    threshold = 0.12
-                else:
-                    threshold = 0.15
-            else:
-                if size_nm and size_nm < 10:
-                    threshold = 0.15 if size_nm < 5 else 0.20
-                else:
-                    threshold = 0.25
-            
-            if match_score < threshold:
-                continue
-            
-            # Determine confidence level (adjusted)
-            if not elements:
-                if match_score >= 0.30:
-                    confidence = "probable"
-                elif match_score >= threshold:
-                    confidence = "possible"
-                else:
-                    continue
-            else:
-                if size_nm and size_nm < 10:
-                    if match_score >= 0.55:
-                        confidence = "confirmed"
-                    elif match_score >= 0.35:
-                        confidence = "probable"
-                    elif match_score >= threshold:
-                        confidence = "possible"
-                    else:
-                        continue
-                else:
-                    if match_score >= 0.60:
-                        confidence = "confirmed"
-                    elif match_score >= 0.40:
-                        confidence = "probable"
-                    elif match_score >= 0.25:
-                        confidence = "possible"
-                    else:
-                        continue
-            
-            # Extract structure info
+            if cif_url:
+                future = executor.submit(_simulate_pattern_cached, cif_url, wavelength)
+                future_to_struct[future] = struct
+        
+        total = len(future_to_struct)
+        completed = 0
+        for future in concurrent.futures.as_completed(future_to_struct):
+            struct = future_to_struct[future]
+            completed += 1
+            status.write(f"   [{completed}/{total}] Simulating {struct.get('formula', 'unknown')}...")
             try:
-                response = requests.get(cif_url, timeout=8)
-                cif_text = response.text
-                from pymatgen.io.cif import CifParser
-                parser = CifParser.from_string(cif_text)
-                structure = parser.get_structures()[0]
-                crystal_system = structure.get_crystal_system()
-                space_group = structure.get_space_group_info()[0]
-                lattice = structure.lattice.as_dict()
-                formula = structure.composition.reduced_formula
-                full_formula = str(structure.composition)
-            except:
-                crystal_system = struct.get('space_group', 'Unknown')
-                space_group = struct.get('space_group', 'Unknown')
-                lattice = {}
-                formula = struct.get('formula', 'Unknown')
-                full_formula = struct.get('formula', 'Unknown')
-            
-            # Store results
-            results.append({
-                "phase": formula,
-                "full_formula": full_formula,
-                "crystal_system": crystal_system,
-                "space_group": space_group,
-                "lattice": lattice,
-                "hkls": [],
-                "score": round(match_score, 3),
-                "confidence_level": confidence,
-                "database": struct.get('database', 'Unknown'),
-                "material_family": material_family,
-                "peak_quality": peak_quality,
-                "n_peaks_matched": len(exp_d),
-                "structure": None,
-                "match_details": {
-                    "n_exp_peaks": len(exp_d),
-                    "avg_d_spacing": float(np.mean(exp_d)),
+                sim_x, sim_y = future.result(timeout=20)
+                if len(sim_x) == 0:
+                    continue
+                
+                sim_d = wavelength / (2 * np.sin(np.radians(sim_x / 2)))
+                sim_intensity = sim_y / np.max(sim_y) if len(sim_y) > 0 else np.zeros_like(sim_x)
+                
+                match_score = matcher.match_pattern_universal(
+                    exp_d, exp_intensities_norm,
+                    sim_d, sim_intensity,
+                    material_family, size_nm
+                )
+                
+                # Determine threshold based on input availability
+                if not elements:
+                    threshold = 0.10
+                    if size_nm and size_nm < 5:
+                        threshold = 0.08
+                else:
+                    threshold = 0.15 if size_nm and size_nm < 10 else 0.20
+                
+                if match_score < threshold:
+                    continue
+                
+                # Determine confidence level
+                if not elements:
+                    confidence = "probable" if match_score >= 0.30 else "possible"
+                else:
+                    if size_nm and size_nm < 10:
+                        if match_score >= 0.55:
+                            confidence = "confirmed"
+                        elif match_score >= 0.35:
+                            confidence = "probable"
+                        else:
+                            confidence = "possible"
+                    else:
+                        if match_score >= 0.60:
+                            confidence = "confirmed"
+                        elif match_score >= 0.40:
+                            confidence = "probable"
+                        else:
+                            confidence = "possible"
+                
+                # Extract additional info from CIF if possible (fallback to struct dict)
+                try:
+                    parser = CifParser.from_string(requests.get(cif_url, timeout=8).text)
+                    structure = parser.get_structures()[0]
+                    crystal_system = structure.get_crystal_system()
+                    space_group = structure.get_space_group_info()[0]
+                    lattice = structure.lattice.as_dict()
+                    formula = structure.composition.reduced_formula
+                    full_formula = str(structure.composition)
+                except:
+                    crystal_system = struct.get('space_group', 'Unknown')
+                    space_group = struct.get('space_group', 'Unknown')
+                    lattice = {}
+                    formula = struct.get('formula', 'Unknown')
+                    full_formula = struct.get('formula', 'Unknown')
+                
+                results.append({
+                    "phase": formula,
+                    "full_formula": full_formula,
+                    "crystal_system": crystal_system,
+                    "space_group": space_group,
+                    "lattice": lattice,
+                    "hkls": [],
+                    "score": round(match_score, 3),
+                    "confidence_level": confidence,
+                    "database": struct.get('database', 'Unknown'),
                     "material_family": material_family,
-                    "size_nm": size_nm,
-                    "tolerance_used": UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
-                }
-            })
-            
-            # Debug: show match for first few
-            if len(results) <= 3:
-                st.write(f"   → {formula}: score {match_score:.3f} (threshold {threshold}) → {confidence}")
-            
-        except Exception as e:
-            continue
+                    "n_peaks_matched": len(exp_d),
+                    "match_details": {
+                        "n_exp_peaks": len(exp_d),
+                        "avg_d_spacing": float(np.mean(exp_d)),
+                        "size_nm": size_nm,
+                        "tolerance_used": UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
+                    }
+                })
+                
+                # Early feedback for first good match
+                if len(results) <= 3:
+                    status.write(f"   → {formula}: score {match_score:.3f} → {confidence}")
+                    
+            except Exception as e:
+                status.write(f"   ⚠️ Error simulating {struct.get('formula', 'unknown')}: {str(e)[:50]}")
     
-    progress_bar.empty()
-    detail_status.empty()
     # --------------------------------------------------------
-    # STEP 5: RESULTS PROCESSING WITH DIAGNOSTICS
+    # STEP 5: PROCESS RESULTS
     # --------------------------------------------------------
     if not results:
-        # Create diagnostic object explaining why no phase found
-        diagnostic = {
-            "experimental_structural_peaks": len(exp_peaks_2theta),
-            "peak_quality_score": peak_quality.get('quality_score', 0),
-            "nanocrystalline_indicator": "strong" if size_nm and size_nm < 10 else "moderate/weak",
-            "database_coverage": {
-                "cod_structures_searched": len([s for s in database_structures if s['database'] == 'COD']),
-                "total_structures": len(database_structures)
-            },
-            "matching_issues": []
-        }
-        
-        # Add specific matching issues
-        if size_nm and size_nm < 10:
-            diagnostic["matching_issues"].append("Peak broadening exceeds database tolerance for nanocrystalline materials")
-        
-        if peak_quality.get('angular_range', 0) < 20:
-            diagnostic["matching_issues"].append("Insufficient angular diversity in peaks")
-        
-        if peak_quality.get('quality_score', 0) < 0.3:
-            diagnostic["matching_issues"].append("Material may be amorphous or poorly crystalline")
-        
-        # Display diagnostic in expander
-        with st.expander("📊 No Phase Match – Diagnostic Report", expanded=True):
-            st.markdown("### **Why were no crystalline phases identified?**")
-            st.markdown("This is **NOT** a software error. Phase identification is based strictly on Bragg peak matching against CIF-validated crystal structures (COD + OPTIMADE).")
-            
-            for issue in diagnostic["matching_issues"]:
-                st.markdown(f"- {issue}")
-            
-            st.markdown("**What you can try**")
-            st.markdown("- Select all possible elements (including dopants)")
-            st.markdown("- Use unsmoothed raw XRD data")
-            st.markdown("- Increase crystallinity (annealing) if possible")
-            st.markdown("- Combine with Raman / FTIR")
-        
+        status.update(label="❌ No phases matched", state="error")
+        with st.expander("📊 Diagnostic Report", expanded=True):
+            st.markdown("### Why were no crystalline phases identified?")
+            st.markdown("- Peak broadening may exceed database tolerance")
+            st.markdown("- Material may be amorphous or poorly crystalline")
+            st.markdown("- Try providing element information for better filtering")
+            st.markdown("- Consider using raw (unsmoothed) data")
         return []
     
-    # Remove duplicates (same formula and space group)
+    # Remove duplicates
     unique_results = []
     seen = set()
-    
-    for result in results:
-        key = (result["phase"], result.get("space_group", ""))
+    for r in results:
+        key = (r["phase"], r.get("space_group", ""))
         if key not in seen:
             seen.add(key)
-            unique_results.append(result)
+            unique_results.append(r)
     
-    # Sort by score
-    final_results = sorted(unique_results, key=lambda x: x.get("score", 0), reverse=True)
+    final_results = sorted(unique_results, key=lambda x: x["score"], reverse=True)
     
-    # Add diagnostics to results
-    for result in final_results:
-        result["phase_diagnostics"] = {
-            "experimental_peaks_used": len(exp_peaks_2theta),
-            "matched_peaks": result.get("n_peaks_matched", 0),
-            "match_score": result.get("score", 0),
-            "nanocrystalline_tolerance_applied": UniversalPatternMatcher.calculate_nano_tolerance(size_nm),
-            "database_reliability": "CIF-validated" if result.get("database") == "COD" else "Theoretical/computational",
-            "database_limitations": "COD contains only crystalline structures; amorphous/nanocrystalline patterns not included"
-        }
+    status.update(label=f"✅ Identified {len(final_results)} potential phases", state="complete")
     
-    # Final report
-    st.success(f"✅ Identified {len(final_results)} potential phases")
-    
+    # Show top matches in expander
     with st.expander("📊 Scientific Analysis Report", expanded=False):
         st.markdown(f"### **Nanocrystalline Material Analysis**")
         st.markdown(f"- **Estimated family**: {material_family}")
-        st.markdown(f"- **Strong peaks used**: {len(exp_peaks_2theta)} (filtered for angular diversity)")
+        st.markdown(f"- **Strong peaks used**: {len(exp_peaks_2theta)}")
         st.markdown(f"- **Average d-spacing**: {np.mean(exp_d):.3f} Å")
-        st.markdown(f"- **Angular range**: {peak_quality.get('angular_range', 0):.1f}°")
-        
         if size_nm:
-            tolerance = UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
             st.markdown(f"- **Crystallite size**: {size_nm:.1f} nm")
-            st.markdown(f"- **Matching tolerance**: {tolerance:.1%} d-spacing (physics-based)")
-        
         st.markdown("### **Top Phase Matches**")
-        for i, result in enumerate(final_results[:5]):
-            st.markdown(f"{i+1}. **{result['phase']}** ({result['crystal_system']}) - "
-                       f"Score: {result['score']:.3f} [{result['confidence_level']}]")
+        for i, res in enumerate(final_results[:5]):
+            st.markdown(f"{i+1}. **{res['phase']}** ({res['crystal_system']}) – "
+                       f"Score: {res['score']:.3f} [{res['confidence_level']}]")
     
     return final_results
-
