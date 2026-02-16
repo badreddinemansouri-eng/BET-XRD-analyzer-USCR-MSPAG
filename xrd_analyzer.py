@@ -1349,7 +1349,8 @@ class AdvancedXRDAnalyzer:
                             np.array(raw_positions),
                             np.array(raw_intensities),
                             wavelength=self.wavelength,
-                            elements=elements
+                            elements=elements,
+                            mp_api_key=self.mp_api_key   # <-- pass it here
                         )if elements else []
                     else:
                         # Fallback to original
@@ -1486,6 +1487,7 @@ class AdvancedXRDAnalyzer:
                 "error": str(e),
                 "xrd_results": xrd_results
             }
+
 
 
 
