@@ -810,12 +810,12 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                 else:  # Co
                     wavelength = 1.7902
                 
-             xrd_analyzer = AdvancedXRDAnalyzer(
-                   wavelength=wavelength,
-                   background_subtraction=params['xrd']['background_subtraction'],
-                   smoothing=params['xrd']['smoothing'],
-                   mp_api_key="TeFfLE7aumMjc4fMgtFXPuxnNTwp2sVg"   # <-- add this
-               )
+                xrd_analyzer = AdvancedXRDAnalyzer(
+                    wavelength=wavelength,
+                    background_subtraction=params['xrd']['background_subtraction'],
+                    smoothing=params['xrd']['smoothing'],
+                    mp_api_key="TeFfLE7aumMjc4fMgtFXPuxnNTwp2sVg"   # <-- add this
+                )
                 
                 xrd_out = xrd_analyzer.complete_analysis(
                     two_theta=analysis_results['xrd_raw']['two_theta'],
@@ -2630,6 +2630,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
