@@ -407,11 +407,11 @@ class UniversalDatabaseSearcher:
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
                 future_to_db = {}
                 if 'COD' in db_priority:
-                    future_to_db[executor.submit(self._search_cod_elements, elements_tuple, 20)] = 'COD'
+                    future_to_db[executor.submit(self._search_cod_elements, elements_tuple, 30)] = 'COD'
                 if 'AMCSD' in db_priority:
-                    future_to_db[executor.submit(self._search_amcsd, elements_tuple, 15)] = 'AMCSD'
+                    future_to_db[executor.submit(self._search_amcsd, elements_tuple, 20)] = 'AMCSD'
                 if 'MaterialsProject' in db_priority and self.mp_api_key:
-                    future_to_db[executor.submit(self._search_materials_project, elements_tuple, 15)] = 'MP'
+                    future_to_db[executor.submit(self._search_materials_project, elements_tuple, 30)] = 'MP'
                 
                 for future in concurrent.futures.as_completed(future_to_db):
                     db_name = future_to_db[future]
@@ -461,17 +461,27 @@ class UniversalPatternMatcher:
     @staticmethod
     def match_pattern_universal(exp_d: np.ndarray, exp_intensity: np.ndarray,
                                sim_d: np.ndarray, sim_intensity: np.ndarray,
+                               sim_hkls: List[List[Tuple[int,int,int]]],
                                material_family: str = 'unknown',
-                               size_nm: Optional[float] = None) -> float:
+                               size_nm: Optional[float] = None) -> Tuple[float, List[Dict]]:
+        """
+        Returns:
+            final_score: float
+            matched_peaks: list of dicts with keys:
+                'hkl', 'd_exp', 'd_calc', 'two_theta_exp', 'two_theta_calc',
+                'intensity_exp', 'intensity_calc'
+        """
         if len(exp_d) == 0 or len(sim_d) == 0:
-            return 0.0
+            return 0.0, []
         
         params = UniversalPatternMatcher._get_family_params(material_family)
         base_tolerance = UniversalPatternMatcher.calculate_nano_tolerance(size_nm)
         
-        n_exp_peaks = min(len(exp_d), 8)
+        # --- CHANGE: use ALL experimental peaks (no limit) ---
+        n_exp_peaks = len(exp_d)
         match_scores = []
         intensity_weights = []
+        matched_peaks_list = []
         
         exp_sorted_idx = np.argsort(exp_intensity)[::-1][:n_exp_peaks]
         
@@ -501,15 +511,32 @@ class UniversalPatternMatcher:
                 match_scores.append(match_quality)
                 weight = intensity_exp / np.sum(exp_intensity[exp_sorted_idx])
                 intensity_weights.append(weight)
+                
+                # Record match details
+                hkl = sim_hkls[min_error_idx] if min_error_idx < len(sim_hkls) else []
+                matched_peaks_list.append({
+                    'hkl': hkl,
+                    'd_exp': float(d_exp),
+                    'd_calc': float(sim_d[min_error_idx]),
+                    'two_theta_exp': float(2 * np.arcsin(wavelength / (2 * d_exp)) * 180 / np.pi),
+                    'two_theta_calc': float(2 * np.arcsin(wavelength / (2 * sim_d[min_error_idx])) * 180 / np.pi),
+                    'intensity_exp': float(intensity_exp),
+                    'intensity_calc': float(sim_intensity[min_error_idx])
+                })
         
         if not match_scores:
-            return 0.0
+            return 0.0, []
         
         weighted_score = np.average(match_scores, weights=intensity_weights)
         coverage = len(match_scores) / n_exp_peaks
         
-        if coverage < 0.5:
-            return 0.0
+        # Adaptive coverage threshold for nanomaterials
+        required_coverage = 0.5
+        if size_nm is not None and size_nm < 10:
+            required_coverage = 0.3
+        
+        if coverage < required_coverage:
+            return 0.0, []
         
         coverage_factor = 0.4 + 0.6 * coverage
         final_score = weighted_score * coverage_factor
@@ -517,7 +544,7 @@ class UniversalPatternMatcher:
         if material_family in ['metal_nanoparticles', 'carbon_allotropes'] and n_exp_peaks <= 4:
             final_score *= 1.2
         
-        return min(final_score, 1.0)
+        return min(final_score, 1.0), matched_peaks_list
     
     @staticmethod
     def _get_family_params(family: str) -> Dict:
@@ -535,31 +562,45 @@ class UniversalPatternMatcher:
         return params
 
 # ------------------------------------------------------------
-# CACHED PATTERN SIMULATION (using pymatgen)
+# CACHED PATTERN SIMULATION (using pymatgen) – now returns hkls
 # ------------------------------------------------------------
 @lru_cache(maxsize=200)
-def _simulate_pattern_cached(cif_url: str, wavelength: float) -> Tuple[np.ndarray, np.ndarray]:
-    """Download CIF and simulate XRD pattern. Returns (two_theta, intensity)."""
+def _simulate_pattern_cached(cif_url: str, wavelength: float) -> Tuple[np.ndarray, np.ndarray, List]:
+    """
+    Download CIF and simulate XRD pattern.
+    Returns (two_theta, intensity, hkls) where hkls is a list of lists of Miller indices.
+    """
     if not PMG_AVAILABLE:
-        return np.array([]), np.array([])
+        return np.array([]), np.array([]), []
+    
+    headers = {}
+    if "materialsproject" in cif_url:
+        mp_key = os.environ.get("MP_API_KEY", "")
+        if mp_key:
+            headers["X-API-KEY"] = mp_key
+    
     try:
-        resp = requests.get(cif_url, timeout=15)
+        resp = requests.get(cif_url, headers=headers, timeout=15)
         if resp.status_code != 200:
-            return np.array([]), np.array([])
+            st.write(f"   ⚠️ CIF download failed with status {resp.status_code} for {cif_url}")
+            return np.array([]), np.array([]), []
         cif_text = resp.text
         
         parser = CifParser.from_string(cif_text)
         structure = parser.get_structures()[0]
         calc = XRDCalculator(wavelength=wavelength)
         pattern = calc.get_pattern(structure, two_theta_range=(5, 80))
-        return np.array(pattern.x), np.array(pattern.y)
-    except Exception:
-        return np.array([]), np.array([])
+        # pattern.hkls is a list of lists of hkl tuples
+        return np.array(pattern.x), np.array(pattern.y), pattern.hkls
+    except Exception as e:
+        st.write(f"   ⚠️ Simulation error for {cif_url}: {str(e)[:100]}")
+        return np.array([]), np.array([]), []
 
 # ------------------------------------------------------------
-# BUILT‑IN FALLBACK DATABASE (common nanomaterials)
+# BUILT‑IN FALLBACK DATABASE (common nanomaterials) - EXPANDED
 # ------------------------------------------------------------
 FALLBACK_STRUCTURES = [
+    # Metals
     {
         "name": "Gold (Au)",
         "formula": "Au",
@@ -575,10 +616,60 @@ FALLBACK_STRUCTURES = [
         "database": "Fallback"
     },
     {
+        "name": "Copper (Cu)",
+        "formula": "Cu",
+        "space_group": "Fm-3m",
+        "cif_url": "https://www.crystallography.net/cod/9008461.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Platinum (Pt)",
+        "formula": "Pt",
+        "space_group": "Fm-3m",
+        "cif_url": "https://www.crystallography.net/cod/9011620.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Palladium (Pd)",
+        "formula": "Pd",
+        "space_group": "Fm-3m",
+        "cif_url": "https://www.crystallography.net/cod/1011094.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Nickel (Ni)",
+        "formula": "Ni",
+        "space_group": "Fm-3m",
+        "cif_url": "https://www.crystallography.net/cod/9008473.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Iron (α-Fe)",
+        "formula": "Fe",
+        "space_group": "Im-3m",
+        "cif_url": "https://www.crystallography.net/cod/9008536.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Cobalt (Co)",
+        "formula": "Co",
+        "space_group": "P63/mmc",
+        "cif_url": "https://www.crystallography.net/cod/9008491.cif",
+        "database": "Fallback"
+    },
+    # Oxides
+    {
         "name": "Titanium dioxide (Anatase)",
         "formula": "TiO2",
         "space_group": "I41/amd",
         "cif_url": "https://www.crystallography.net/cod/9008213.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Titanium dioxide (Rutile)",
+        "formula": "TiO2",
+        "space_group": "P42/mnm",
+        "cif_url": "https://www.crystallography.net/cod/9009082.cif",
         "database": "Fallback"
     },
     {
@@ -588,6 +679,143 @@ FALLBACK_STRUCTURES = [
         "cif_url": "https://www.crystallography.net/cod/9008878.cif",
         "database": "Fallback"
     },
+    {
+        "name": "Hematite (Fe2O3)",
+        "formula": "Fe2O3",
+        "space_group": "R-3c",
+        "cif_url": "https://www.crystallography.net/cod/9000139.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Magnetite (Fe3O4)",
+        "formula": "Fe3O4",
+        "space_group": "Fd-3m",
+        "cif_url": "https://www.crystallography.net/cod/9006941.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Bismuth ferrite (BiFeO3)",
+        "formula": "BiFeO3",
+        "space_group": "R3c",
+        "cif_url": "https://www.crystallography.net/cod/1533055.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Bismuth oxide (α-Bi2O3)",
+        "formula": "Bi2O3",
+        "space_group": "P21/c",
+        "cif_url": "https://www.crystallography.net/cod/2002920.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Copper oxide (CuO)",
+        "formula": "CuO",
+        "space_group": "C2/c",
+        "cif_url": "https://www.crystallography.net/cod/1011138.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Copper(I) oxide (Cu2O)",
+        "formula": "Cu2O",
+        "space_group": "Pn-3m",
+        "cif_url": "https://www.crystallography.net/cod/1010936.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Nickel oxide (NiO)",
+        "formula": "NiO",
+        "space_group": "Fm-3m",
+        "cif_url": "https://www.crystallography.net/cod/1010395.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Cobalt oxide (Co3O4)",
+        "formula": "Co3O4",
+        "space_group": "Fd-3m",
+        "cif_url": "https://www.crystallography.net/cod/9005913.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Alumina (α-Al2O3)",
+        "formula": "Al2O3",
+        "space_group": "R-3c",
+        "cif_url": "https://www.crystallography.net/cod/9007671.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Silica (α-Quartz)",
+        "formula": "SiO2",
+        "space_group": "P3121",
+        "cif_url": "https://www.crystallography.net/cod/9009668.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Zirconia (ZrO2)",
+        "formula": "ZrO2",
+        "space_group": "P21/c",
+        "cif_url": "https://www.crystallography.net/cod/9007504.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Cerium oxide (CeO2)",
+        "formula": "CeO2",
+        "space_group": "Fm-3m",
+        "cif_url": "https://www.crystallography.net/cod/9009009.cif",
+        "database": "Fallback"
+    },
+    # Perovskites
+    {
+        "name": "Barium titanate (BaTiO3)",
+        "formula": "BaTiO3",
+        "space_group": "P4mm",
+        "cif_url": "https://www.crystallography.net/cod/1507756.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Strontium titanate (SrTiO3)",
+        "formula": "SrTiO3",
+        "space_group": "Pm-3m",
+        "cif_url": "https://www.crystallography.net/cod/9004712.cif",
+        "database": "Fallback"
+    },
+    # Chalcogenides
+    {
+        "name": "Molybdenum disulfide (MoS2)",
+        "formula": "MoS2",
+        "space_group": "P63/mmc",
+        "cif_url": "https://www.crystallography.net/cod/9009139.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Cadmium selenide (CdSe)",
+        "formula": "CdSe",
+        "space_group": "F-43m",
+        "cif_url": "https://www.crystallography.net/cod/9008835.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Lead sulfide (PbS)",
+        "formula": "PbS",
+        "space_group": "Fm-3m",
+        "cif_url": "https://www.crystallography.net/cod/9008690.cif",
+        "database": "Fallback"
+    },
+    # Carbon
+    {
+        "name": "Graphite",
+        "formula": "C",
+        "space_group": "P63/mmc",
+        "cif_url": "https://www.crystallography.net/cod/9011897.cif",
+        "database": "Fallback"
+    },
+    {
+        "name": "Diamond",
+        "formula": "C",
+        "space_group": "Fd-3m",
+        "cif_url": "https://www.crystallography.net/cod/1010079.cif",
+        "database": "Fallback"
+    },
+    # Silicon
     {
         "name": "Silicon (Si)",
         "formula": "Si",
@@ -607,7 +835,7 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
                             precomputed_peaks_intensity: Optional[np.ndarray] = None) -> List[Dict]:
     """
     SCIENTIFIC phase identification for nanocrystalline materials.
-    Includes detailed diagnostic timestamps.
+    Includes detailed diagnostic timestamps and returns all matched phases with peak assignments.
     """
     import time
     start_time = time.time()
@@ -634,13 +862,9 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
     else:
         status.update(label="Detecting peaks from raw data...", state="running")
         st.write(f"🕐 [{time.time()-start_time:.1f}s] Starting peak detection...")
-
-        # 1a. Initial peak detection with find_peaks
         exp_peaks_2theta, exp_intensities = peak_analyzer.detect_peaks_universal(two_theta, intensity)
         st.write(f"🕐 [{time.time()-start_time:.1f}s] find_peaks found {len(exp_peaks_2theta)} raw peaks")
-
-        # 1b. Local apex refinement
-        st.write(f"🕐 [{time.time()-start_time:.1f}s] Starting apex refinement for {len(exp_peaks_2theta)} peaks...")
+        st.write(f"🕐 [{time.time()-start_time:.1f}s] Starting apex refinement...")
         refined_2theta = []
         refined_intensity = []
         for i, t0 in enumerate(exp_peaks_2theta):
@@ -656,12 +880,10 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
         exp_intensities = np.array(refined_intensity)
         st.write(f"🕐 [{time.time()-start_time:.1f}s] Apex refinement complete")
 
-        # 1c. Estimate average FWHM (rough)
         st.write(f"🕐 [{time.time()-start_time:.1f}s] Estimating FWHM...")
         avg_fwhm = peak_analyzer.estimate_fwhm(exp_peaks_2theta, two_theta, intensity)
         st.write(f"🕐 [{time.time()-start_time:.1f}s] Estimated FWHM = {avg_fwhm:.3f}°")
 
-        # 1d. Filter peaks for angular diversity
         st.write(f"🕐 [{time.time()-start_time:.1f}s] Filtering peaks for angular diversity...")
         exp_peaks_2theta, exp_intensities = peak_analyzer.filter_peaks_for_nanomaterials(
             exp_peaks_2theta, exp_intensities, wavelength, max_peaks=10, avg_fwhm=avg_fwhm
@@ -711,7 +933,7 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
         )
     else:
         st.write(f"🕐 [{time.time()-start_time:.1f}s] Starting d‑spacing‑based database search...")
-        dspacings_for_search = exp_d[:5]  # use top 5 d‑spacings
+        dspacings_for_search = exp_d[:5]
         database_structures = db_searcher.search_all_databases(
             dspacings=dspacings_for_search,
             material_family=material_family,
@@ -719,8 +941,7 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
         )
 
     st.write(f"🕐 [{time.time()-start_time:.1f}s] Database search returned {len(database_structures)} candidates")
-    # Limit to top 15 for speed
-    database_structures = database_structures[:15]
+    database_structures = database_structures[:30]
     st.write(f"🕐 [{time.time()-start_time:.1f}s] Limited to {len(database_structures)} candidates")
     status.write(f"📚 Retrieved {len(database_structures)} candidate structures")
 
@@ -754,7 +975,7 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
             status.write(f"   [{completed}/{total}] Simulating {struct.get('formula', 'unknown')}...")
             st.write(f"🕐 [{time.time()-start_time:.1f}s] Simulating {struct.get('formula', 'unknown')}...")
             try:
-                sim_x, sim_y = future.result(timeout=20)
+                sim_x, sim_y, sim_hkls = future.result(timeout=20)
                 if len(sim_x) == 0:
                     st.write(f"   ⚠️ Simulation returned empty pattern")
                     continue
@@ -762,9 +983,10 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
                 sim_d = wavelength / (2 * np.sin(np.radians(sim_x / 2)))
                 sim_intensity = sim_y / np.max(sim_y) if len(sim_y) > 0 else np.zeros_like(sim_x)
 
-                match_score = matcher.match_pattern_universal(
+                match_score, matched_peaks = matcher.match_pattern_universal(
                     exp_d, exp_intensities_norm,
                     sim_d, sim_intensity,
+                    sim_hkls,
                     material_family, size_nm
                 )
 
@@ -800,7 +1022,14 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
 
                 # Extract info from CIF
                 try:
-                    parser = CifParser.from_string(requests.get(cif_url, timeout=8).text)
+                    headers = {}
+                    if "materialsproject" in cif_url:
+                        mp_key = os.environ.get("MP_API_KEY", "")
+                        if mp_key:
+                            headers["X-API-KEY"] = mp_key
+                    cif_resp = requests.get(cif_url, headers=headers, timeout=8)
+                    cif_text = cif_resp.text
+                    parser = CifParser.from_string(cif_text)
                     structure = parser.get_structures()[0]
                     crystal_system = structure.get_crystal_system()
                     space_group = structure.get_space_group_info()[0]
@@ -820,7 +1049,7 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
                     "crystal_system": crystal_system,
                     "space_group": space_group,
                     "lattice": lattice,
-                    "hkls": [],
+                    "hkls": matched_peaks,  # <-- populated with detailed match list
                     "score": round(match_score, 3),
                     "confidence_level": confidence,
                     "database": struct.get('database', 'Unknown'),
@@ -885,4 +1114,3 @@ def identify_phases_universal(two_theta: np.ndarray = None, intensity: np.ndarra
 
     st.write(f"🕐 [{time.time()-start_time:.1f}s] Exiting identify_phases_universal")
     return final_results
-
