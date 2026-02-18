@@ -1675,6 +1675,15 @@ def display_nanomaterial_validation(xrd_results: Dict):
 @memory_safe_plot            
 def display_3d_xrd_visualization(results, scientific_params):
     """Display 3D XRD visualization with hkl indices"""
+     # At the top, after extracting xrd_res:
+    selected_phases = st.session_state.get("selected_phases_xrd", [])
+    if selected_phases:
+        # Filter structural_peaks to those with phase in selected_phases
+        # (requires that peaks have 'phase' assigned, which they do after map_peaks_to_phases)
+        filtered_peaks = [p for p in structural_peaks if p.get("phase") in selected_phases]
+    else:
+        filtered_peaks = structural_peaks  # fallback to all
+    # Then use filtered_peaks for plotting
     st.subheader("3D XRD Pattern Visualization")
     
     if not results.get('xrd_results'):
@@ -2521,6 +2530,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
