@@ -1503,7 +1503,10 @@ Phase identification failed because **no CIF structure** matched your experiment
             with st.expander(f"{phase['phase']} – {len(phase.get('hkls', []))} matched peaks"):
                 hkls = phase.get('hkls', [])
                 if hkls:
-                    # Create DataFrame with all available fields
+                    # Convert hkl tuple to string for safe display
+                    for match in hkls:
+                        if 'hkl' in match and not isinstance(match['hkl'], str):
+                            match['hkl'] = str(match['hkl'])
                     df_peaks = pd.DataFrame(hkls)
                     # Reorder columns for clarity (if they exist)
                     col_order = ['hkl', 'two_theta_exp', 'two_theta_calc', 'd_exp', 'd_calc',
@@ -1582,7 +1585,8 @@ Phase identification failed because **no CIF structure** matched your experiment
             "Intensity": round(p["intensity"], 1),
             "FWHM (°)": round(p["fwhm_deg"], 4),
             "Size (nm)": round(p.get("crystallite_size", 0), 2),
-            "HKL": p.get("hkl", ""),
+            # Convert HKL to string to avoid Arrow conversion errors
+            "HKL": str(p.get("hkl", "")),
             "Phase": p.get("phase", ""),
         } for p in peaks_sorted]
         st.dataframe(pd.DataFrame(table), use_container_width=True)
@@ -2500,6 +2504,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
