@@ -1434,11 +1434,11 @@ def display_bet_analysis(results, plotter):
             st.write(f"**Closure Pressure:** {hyst['closure_pressure']:.3f} P/P₀")
 @memory_safe_plot
 def display_xrd_analysis(results, plotter):
-    """Display detailed XRD analysis (SCIENTIFICALLY CORRECT VERSION)"""
+    """Display detailed XRD analysis with interactive phase selection."""
     st.subheader("Advanced XRD Analysis")
 
     # ============================================================
-    # SAFE EXTRACTION (NO UNWRAPPING BUGS)
+    # SAFE EXTRACTION
     # ============================================================
     xrd_res = results.get("xrd_results", {})
     xrd_raw = results.get("xrd_raw", {})
@@ -1448,7 +1448,7 @@ def display_xrd_analysis(results, plotter):
         return
 
     # ------------------------------------------------------------
-    # STRICT PEAK SEMANTICS
+    # PEAK STATISTICS
     # ------------------------------------------------------------
     structural_peaks = xrd_res.get("structural_peaks", [])
     n_detected = xrd_res.get("n_detected_maxima", 0)
@@ -1462,107 +1462,146 @@ def display_xrd_analysis(results, plotter):
         st.metric("Structural Bragg peaks", n_structural)
 
     # ============================================================
-    # WHY NO PHASE IDENTIFIED
+    # PHASE ASSIGNMENT TO PEAKS
     # ============================================================
     phases = xrd_res.get("phases", [])
-    if not phases:
-        with st.expander("❓ Why were no crystalline phases identified?", expanded=True):
-            st.markdown("""
-**This is not a software error.**  
-Phase identification failed because **no CIF structure** matched your experimental peaks within the allowed tolerance.
+    if phases:
+        # Assign phase to each peak using matched reflections
+        from scientific_integration import map_peaks_to_phases
+        structural_peaks = map_peaks_to_phases(structural_peaks, phases)
 
-**Possible reasons:**
-- Your material may be **amorphous or poorly crystalline** (crystallinity index < 0.3).
-- The crystallite size is very small (< 5 nm) → peaks are too broad for reliable matching.
-- The sample contains **mixed phases** – the matcher looks for single‑phase matches.
-- The correct phase is **not in the databases** (COD, AMCSD, Materials Project) or fallback list.
-- You did not select any elements – element‑based search is much more effective.
-
-**What you can try:**
-- Select **all elements** present in your sample (including trace dopants) in the sidebar.
-- Use **unsmoothed raw data** (avoid Savitzky‑Golay for phase ID).
-- If you suspect a specific phase, add it manually to the fallback list in `xrd_phase_identifier_nano.py`.
-- For very broad patterns, consider using **Raman spectroscopy** or **electron diffraction** as complementary techniques.
-""")
-    else:
-        # Phase table
-        df = pd.DataFrame([{
+        # Display phase summary
+        st.markdown("### 🧪 Identified Phases")
+        df_phases = pd.DataFrame([{
             "Phase": p["phase"],
             "Crystal system": p["crystal_system"],
             "Space group": p["space_group"],
             "Score": round(p["score"], 3),
-            "Confidence": p.get("confidence_level", "")
+            "Confidence": p.get("confidence_level", ""),
+            "Matched peaks": len(p.get("hkls", []))
         } for p in phases])
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df_phases, use_container_width=True)
 
-        # ============================================================
-        # DETAILED MATCHED PEAKS (PER PHASE)
-        # ============================================================
+        # Phase selection widget
+        all_phase_names = [p["phase"] for p in phases]
+        default_selection = all_phase_names  # all selected by default
+        selected_phases = st.multiselect(
+            "🎯 Select phases to display:",
+            options=all_phase_names,
+            default=default_selection,
+            key="selected_phases_xrd"
+        )
+
+        # Filter peaks based on selection
+        if selected_phases:
+            filtered_peaks = [p for p in structural_peaks if p.get("phase") in selected_phases]
+        else:
+            filtered_peaks = []  # if nothing selected, show none (or maybe show all)
+            st.info("No phases selected. Select at least one phase to see details.")
+
+        # Show filtered peak table
+        if filtered_peaks:
+            st.markdown(f"### 📌 Structural Peaks for Selected Phases ({len(filtered_peaks)} peaks)")
+            table = [{
+                "2θ (°)": round(p["position"], 3),
+                "d (Å)": round(p.get("d_spacing", 0), 4),
+                "Intensity": round(p["intensity"], 1),
+                "FWHM (°)": round(p["fwhm_deg"], 4),
+                "Size (nm)": round(p.get("crystallite_size", 0), 2),
+                "HKL": str(p.get("hkl", "")),
+                "Phase": p.get("phase", ""),
+            } for p in filtered_peaks]
+            st.dataframe(pd.DataFrame(table), use_container_width=True)
+
+        # Recalculate phase fractions for selected set
+        if len(selected_phases) > 1 and filtered_peaks:
+            # Use only peaks from selected phases
+            total_intensity = sum(p["intensity"] for p in filtered_peaks)
+            if total_intensity > 0:
+                phase_intensity = {}
+                for p in filtered_peaks:
+                    ph = p.get("phase")
+                    if ph:
+                        phase_intensity[ph] = phase_intensity.get(ph, 0) + p["intensity"]
+                fractions = []
+                for ph, inten in phase_intensity.items():
+                    fractions.append({
+                        "phase": ph,
+                        "fraction": round(100 * inten / total_intensity, 1)
+                    })
+                fractions.sort(key=lambda x: x["fraction"], reverse=True)
+                st.markdown("### ⚖️ Phase Fractions (within selection)")
+                df_frac = pd.DataFrame(fractions)
+                st.dataframe(df_frac, use_container_width=True)
+
+        # Detailed matched reflections per phase (still shows all phases, but we can also filter)
         st.subheader("🔍 Matched Reflections (HKL assignment)")
         for phase in phases:
-            with st.expander(f"{phase['phase']} – {len(phase.get('hkls', []))} matched peaks"):
-                hkls = phase.get('hkls', [])
-                if hkls:
-                    # Convert hkl tuple to string for safe display
-                    for match in hkls:
-                        if 'hkl' in match and not isinstance(match['hkl'], str):
-                            match['hkl'] = str(match['hkl'])
-                    df_peaks = pd.DataFrame(hkls)
-                    # Reorder columns for clarity (if they exist)
-                    col_order = ['hkl', 'two_theta_exp', 'two_theta_calc', 'd_exp', 'd_calc',
-                                 'intensity_exp', 'intensity_calc']
-                    existing_cols = [c for c in col_order if c in df_peaks.columns]
-                    df_peaks = df_peaks[existing_cols]
-                    st.dataframe(df_peaks, use_container_width=True)
-                else:
-                    st.info("No HKL assignments available for this phase.")
+            if phase["phase"] in selected_phases:
+                with st.expander(f"{phase['phase']} – {len(phase.get('hkls', []))} matched peaks"):
+                    hkls = phase.get('hkls', [])
+                    if hkls:
+                        # Convert hkl tuple to string
+                        for match in hkls:
+                            if 'hkl' in match and not isinstance(match['hkl'], str):
+                                match['hkl'] = str(match['hkl'])
+                        df_peaks = pd.DataFrame(hkls)
+                        col_order = ['hkl', 'two_theta_exp', 'two_theta_calc', 'd_exp', 'd_calc',
+                                     'intensity_exp', 'intensity_calc']
+                        existing_cols = [c for c in col_order if c in df_peaks.columns]
+                        df_peaks = df_peaks[existing_cols]
+                        st.dataframe(df_peaks, use_container_width=True)
+                    else:
+                        st.info("No HKL assignments available for this phase.")
+    else:
+        # No phases identified – show helpful message
+        with st.expander("❓ Why were no crystalline phases identified?", expanded=True):
+            st.markdown("""
+**No phases matched.**  
+This could be due to:
+- Amorphous or poorly crystalline material
+- Very small crystallite size (<5 nm) causing excessive broadening
+- Missing database entries or network issues
+- No elements selected (use sidebar to add elements)
+- Mixed phases that don't individually meet the coverage threshold
+""")
 
     # ============================================================
-    # XRD PATTERN (STRUCTURAL PEAKS ONLY)
+    # XRD PATTERN (always show full pattern with all structural peaks)
     # ============================================================
     if xrd_raw and xrd_res:
         fig = plotter.create_xrd_figure(xrd_raw, xrd_res)
         st.pyplot(fig)
 
     # ============================================================
-    # PEAK POSITION DIAGNOSTICS (Debug)
+    # PEAK POSITION DIAGNOSTICS (unchanged)
     # ============================================================
     with st.expander("🔍 Peak Position Diagnostics (Debug)", expanded=False):
         two_theta = results["xrd_raw"]["two_theta"]
         intensity = results["xrd_raw"]["intensity"]
 
-        # 1️⃣ TRUE RAW APEX (GROUND TRUTH)
         idx_max = np.argmax(intensity)
         true_theta = two_theta[idx_max]
         true_intensity = intensity[idx_max]
         st.markdown("### 1️⃣ True raw-data apex (ground truth)")
         st.code(f"2θ = {true_theta:.4f}°, Intensity = {true_intensity:.1f}")
 
-        # 2️⃣ STRONGEST DETECTED LOCAL MAXIMUM
         detected = xrd_res.get("detected_peaks", [])
         if detected:
             strongest_detected = max(detected, key=lambda p: p["intensity"])
             st.markdown("### 2️⃣ Strongest detected local maximum")
-            st.code(
-                f"2θ = {strongest_detected['position']:.4f}°, "
-                f"Intensity = {strongest_detected['intensity']:.1f}"
-            )
+            st.code(f"2θ = {strongest_detected['position']:.4f}°, Intensity = {strongest_detected['intensity']:.1f}")
         else:
             st.warning("No detected local maxima")
 
-        # 3️⃣ STRONGEST STRUCTURAL BRAGG PEAK (RED POINT)
         structural = xrd_res.get("structural_peaks", [])
         if structural:
             strongest_structural = max(structural, key=lambda p: p["intensity"])
             st.markdown("### 3️⃣ Strongest structural Bragg peak (RED)")
-            st.code(
-                f"2θ = {strongest_structural['position']:.4f}°, "
-                f"Intensity = {strongest_structural['intensity']:.1f}"
-            )
+            st.code(f"2θ = {strongest_structural['position']:.4f}°, Intensity = {strongest_structural['intensity']:.1f}")
         else:
             st.warning("No structural Bragg peaks")
 
-        # 4️⃣ VERDICT
         st.markdown("### 4️⃣ Diagnostic verdict")
         if structural and abs(true_theta - strongest_structural["position"]) < 0.5:
             st.success("✅ Strongest raw peak survived structural validation")
@@ -1570,29 +1609,7 @@ Phase identification failed because **no CIF structure** matched your experiment
             st.error("❌ Strongest raw peak was rejected during structural filtering")
 
     # ============================================================
-    # PEAK TABLE (STRUCTURAL ONLY)
-    # ============================================================
-    if structural_peaks:
-        st.subheader("📌 Structural Bragg Peak Analysis")
-        peaks_sorted = sorted(
-            structural_peaks,
-            key=lambda p: p["intensity"],
-            reverse=True
-        )
-        table = [{
-            "2θ (°)": round(p["position"], 3),
-            "d (Å)": round(p.get("d_spacing", 0), 4),
-            "Intensity": round(p["intensity"], 1),
-            "FWHM (°)": round(p["fwhm_deg"], 4),
-            "Size (nm)": round(p.get("crystallite_size", 0), 2),
-            # Convert HKL to string to avoid Arrow conversion errors
-            "HKL": str(p.get("hkl", "")),
-            "Phase": p.get("phase", ""),
-        } for p in peaks_sorted]
-        st.dataframe(pd.DataFrame(table), use_container_width=True)
-
-    # ============================================================
-    # CRYSTALLITE SIZE / STRAIN
+    # CRYSTALLITE SIZE / STRAIN (unchanged)
     # ============================================================
     with st.expander("🔬 Crystallite Size & Strain Analysis"):
         size = xrd_res.get("crystallite_size", {})
@@ -1611,7 +1628,7 @@ Phase identification failed because **no CIF structure** matched your experiment
             st.write("**Dislocation density:** Not determined")
 
     # ============================================================
-    # UNIVERSAL & NANO ANALYSIS
+    # UNIVERSAL & NANO ANALYSIS (unchanged)
     # ============================================================
     display_universal_material_analysis(xrd_res)
     display_nanomaterial_validation(xrd_res)
@@ -2504,6 +2521,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
