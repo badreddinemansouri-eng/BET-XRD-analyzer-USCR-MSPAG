@@ -785,7 +785,7 @@ BUILTIN_PHASES = [
             {"d": 2.42, "intensity": 8, "hkl": (2,2,2)},
             {"d": 2.10, "intensity": 20, "hkl": (4,0,0)},
             {"d": 1.71, "intensity": 10, "hkl": (4,2,2)},
-            {"d": 1.61, "intensity": 30, "hkl": (5,1,1)/(3,3,3)},
+            {"d": 1.61, "intensity": 30, "hkl": (5,1,1)},
             {"d": 1.48, "intensity": 40, "hkl": (4,4,0)},
         ],
         "reference": "Fleet, M.E. (1981). Acta Cryst. B, 37, 917-920."
@@ -1449,3 +1449,4 @@ def identify_phases_universal(two_theta: np.ndarray = None,
     
     st.write(f"🕐 [{time.time()-start_time:.1f}s] Exiting identify_phases_universal")
     return final
+
