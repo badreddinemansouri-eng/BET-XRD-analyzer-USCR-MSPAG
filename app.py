@@ -1671,19 +1671,10 @@ def display_nanomaterial_validation(xrd_results: Dict):
         st.info("Moderate nanocrystalline character")
     else:
         st.warning("Weak or bulk-like crystallinity")
-
+            
 @memory_safe_plot            
 def display_3d_xrd_visualization(results, scientific_params):
-    """Display 3D XRD visualization with hkl indices"""
-     # At the top, after extracting xrd_res:
-    selected_phases = st.session_state.get("selected_phases_xrd", [])
-    if selected_phases:
-        # Filter structural_peaks to those with phase in selected_phases
-        # (requires that peaks have 'phase' assigned, which they do after map_peaks_to_phases)
-        filtered_peaks = [p for p in structural_peaks if p.get("phase") in selected_phases]
-    else:
-        filtered_peaks = structural_peaks  # fallback to all
-    # Then use filtered_peaks for plotting
+    """Display 3D XRD visualization with hkl indices, respecting selected phases."""
     st.subheader("3D XRD Pattern Visualization")
     
     if not results.get('xrd_results'):
@@ -1691,6 +1682,7 @@ def display_3d_xrd_visualization(results, scientific_params):
         return
     
     xrd_res = results['xrd_results']
+    # Extract structural peaks (list of dicts with position, intensity, etc.)
     structural_peaks = xrd_res.get("structural_peaks", [])
     phases = xrd_res.get("phases", [])
     
@@ -1698,13 +1690,29 @@ def display_3d_xrd_visualization(results, scientific_params):
         st.warning("No peaks detected in XRD data")
         return
     
+    # Get selected phases from session state (set in display_xrd_analysis)
+    selected_phases = st.session_state.get("selected_phases_xrd", [])
+    
+    # Filter peaks to those belonging to selected phases (if any selected)
+    if selected_phases:
+        # We need to know which peaks belong to which phase.
+        # This requires that peaks have been annotated with 'phase' via map_peaks_to_phases.
+        # If not, we can build a mapping from phases' hkls to peak positions.
+        # For simplicity, assume map_peaks_to_phases has been called and peaks have 'phase'.
+        # If not, fall back to using all peaks.
+        filtered_peaks = [p for p in structural_peaks if p.get("phase") in selected_phases]
+        if not filtered_peaks:
+            st.info("No peaks from selected phases – showing all peaks.")
+            filtered_peaks = structural_peaks
+    else:
+        filtered_peaks = structural_peaks
+    
     # Create a simple 3D XRD visualization
     try:
         import plotly.graph_objects as go
-        import numpy as np
         
-        positions = [p['position'] for p in structural_peaks]
-        intensities = [p['intensity'] for p in structural_peaks]
+        positions = [p['position'] for p in filtered_peaks]
+        intensities = [p['intensity'] for p in filtered_peaks]
         
         # Normalize intensities
         max_intensity = max(intensities) if intensities else 1
@@ -1715,7 +1723,6 @@ def display_3d_xrd_visualization(results, scientific_params):
         peak_hkl_map = {}
         for phase in phases:
             for match in phase.get('hkls', []):
-                # match contains two_theta_exp and hkl
                 t_exp = match.get('two_theta_exp')
                 hkl = match.get('hkl')
                 if t_exp is not None and hkl:
@@ -1822,7 +1829,7 @@ def display_3d_xrd_visualization(results, scientific_params):
                             peak_hkl_map[pos] = hkl
                             break
         
-        for p in structural_peaks:
+        for p in filtered_peaks:
             pos = p['position']
             intensity = p['intensity']
             hkl = peak_hkl_map.get(pos, '')
@@ -2530,6 +2537,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
