@@ -815,7 +815,6 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     wavelength=wavelength,
                     background_subtraction=params['xrd']['background_subtraction'],
                     smoothing=params['xrd']['smoothing'],
-              
                 )
                 
                 xrd_out = xrd_analyzer.complete_analysis(
@@ -827,6 +826,9 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                 # ============================================================
                 # PROPER HANDLING OF XRD ANALYSIS RESULTS
                 # ============================================================
+                # Initialize xrd_results as an empty dict (safe default)
+                xrd_results = {}
+                
                 if not isinstance(xrd_out, dict):
                     st.error(f"❌ XRD analysis returned invalid type: {type(xrd_out)}")
                     # Create empty results structure
@@ -895,69 +897,14 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                                 ordered = xrd_res.get('ordered_mesopores', False)
                                 st.metric("Ordered", "Yes" if ordered else "No")
                         
-                        # ENHANCE WITH CRYSTALLOGRAPHY ENGINE FOR BETTER HKL INDEXING
-                        if (xrd_results.get("peaks") and 
-                            params['crystal']['system'] != 'Unknown' and 
-                            params['crystal']['lattice_params']):
-                            
-                            try:
-                                # Initialize crystallography engine
-                                from crystallography_engine import CrystallographyEngine
-                                ce = CrystallographyEngine()
-                                
-                                # Parse lattice parameters
-                                lattice_dict = {}
-                                import re
-                                lattice_str = params['crystal']['lattice_params']
-                                for match in re.finditer(r'([abc])\s*=\s*([\d\.]+)', lattice_str):
-                                    lattice_dict[match.group(1)] = float(match.group(2))
-                                
-                                # Index peaks using crystallography engine
-                                peak_positions = [p['position'] for p in xrd_results['structural_peaks']]
-                                indexing_result = ce.index_peaks(
-                                    peak_positions=peak_positions,
-                                    crystal_system=params['crystal']['system'],
-                                    lattice_params=lattice_dict,
-                                    wavelength=wavelength,
-                                    space_group=params['crystal']['space_group']
-                                )
-                                
-                                # Update peaks with better hkl indexing
-                                indexed_peaks = indexing_result.get('indexed_peaks', [])
-                                for peak in xrd_results["structural_peaks"]:
-                                    pos = peak["position"]
-                                
-                                    match = min(
-                                        indexed_peaks,
-                                        key=lambda ip: abs(ip["two_theta"] - pos),
-                                        default=None
-                                    )
-                                
-                                    if match and abs(match["two_theta"] - pos) < 0.1:
-                                        peak["hkl"] = f"({match['h']}{match['k']}{match['l']})"
-                                        peak["hkl_detail"] = match
-                                        peak["indexing_error"] = match["error_percent"]
-
-                                
-                                # Add indexing results to XRD results
-                                xrd_results['indexing'] = indexing_result
-                                xrd_results['indexing_method'] = 'Pawley-like refinement'
-                                
-                                # Update the stored results
-                                analysis_results['xrd_results'] = xrd_results
-                                
-                            except Exception as e:
-                                st.warning(f"Crystallography engine: {str(e)}")
-                        
                     else:
                         # Error case - but we might have partial results
                         error_msg = xrd_out.get('error', 'XRD analysis failed')
-                        
-                        # Check if we have partial results
                         partial_results = xrd_out.get('xrd_results', {})
                         
                         if partial_results and isinstance(partial_results, dict):
                             # We have some results despite the error
+                            xrd_results = partial_results
                             analysis_results['xrd_results'] = partial_results
                             
                             # Ensure required fields
@@ -977,7 +924,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                                 st.info(f"✅ Partial data available: {n_peaks} peaks found")
                         else:
                             # Complete failure - create empty structure
-                            analysis_results['xrd_results'] = {
+                            xrd_results = {
                                 'valid': False,
                                 'error': error_msg,
                                 'wavelength': wavelength,
@@ -989,15 +936,17 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                                 'phases': [],
                                 'phase_fractions': []
                             }
+                            analysis_results['xrd_results'] = xrd_results
                             st.error(f"❌ XRD analysis error: {error_msg}")
                         
                         # Keep the raw data we already have
                         if "xrd_raw" in xrd_out:
                             analysis_results["xrd_raw"] = xrd_out["xrd_raw"]
-                        # === ENFORCE STRUCTURAL PEAK CANONICALITY ===
-                        if "structural_peaks" in xrd_results:
-                            xrd_results["peaks"] = xrd_results["structural_peaks"]
-
+                    
+                    # === ENFORCE STRUCTURAL PEAK CANONICALITY (SAFE) ===
+                    # xrd_results is now guaranteed to be a dict
+                    if "structural_peaks" in xrd_results:
+                        xrd_results["peaks"] = xrd_results["structural_peaks"]
                 
                 # ============================================================
                 # POST-PROCESSING: ENSURE PROPER STRUCTURE
@@ -1025,7 +974,7 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                 st.error(f"❌ XRD analysis error: {str(e)}")
                 
                 # Create minimal valid structure even on complete failure
-                analysis_results['xrd_results'] = {
+                xrd_results = {
                     'valid': False,
                     'error': str(e),
                     'wavelength': wavelength,
@@ -1037,30 +986,13 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     'phases': [],
                     'phase_fractions': []
                 }
+                analysis_results['xrd_results'] = xrd_results
                 
                 # Show detailed error for debugging
                 with st.expander("Detailed error information", expanded=False):
                     st.code(str(e))
                     import traceback
                     st.code(traceback.format_exc())
-        # In execute_scientific_analysis function, after XRD analysis:
-
-        # Add scientific validation
-        if 'xrd_results' in analysis_results:
-            xrd_validator = AdvancedXRDAnalyzer()
-            validation_result = xrd_validator.validate_crystallographic_results(analysis_results['xrd_results'])
-            
-            analysis_results['xrd_validation'] = validation_result
-            
-            # Show validation warnings
-            if validation_result['warnings']:
-                with st.expander("⚠️ XRD Scientific Validation Warnings", expanded=False):
-                    for warning in validation_result['warnings']:
-                        st.warning(warning)
-            
-            # Show confidence score
-            if validation_result['confidence_score'] < 0.8:
-                st.warning(f"XRD analysis confidence: {validation_result['confidence_score']:.2f}")
         # ====================================================================
         # STEP 4: MORPHOLOGY FUSION (if we have any valid results)
         # ====================================================================
@@ -2568,6 +2500,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
