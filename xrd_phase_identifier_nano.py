@@ -1,24 +1,18 @@
 """
-UNIVERSAL XRD PHASE IDENTIFIER – THE GOLD STANDARD FOR NANOMATERIALS
+UNIVERSAL XRD PHASE IDENTIFICATION FOR NANOMATERIALS
 ========================================================================
-Features:
-- Automatic peak detection OR use of pre‑computed structural peaks
-- Physics‑based tolerance (Scherrer size → d‑spacing tolerance)
-- Multi‑database search (COD, AMCSD, Materials Project) + extensive fallback
-- Parallel simulation with pymatgen (CIF → pattern)
-- Matches ALL experimental peaks (no limit) with per‑peak HKL assignment
-- Adaptive coverage threshold (50% / 30% for <10 nm)
-- Mixed‑phase support – returns ALL phases above threshold
-- Phase fraction estimation (reference intensity ratio / simple area scaling)
-- Detailed output: score, confidence, lattice, space group, matched reflections
-- Built for publication‑grade reproducibility
+Scientific phase identification for nanocrystalline materials with proper
+peak filtering and d-spacing matching.
+Now supports automatic peak-based search when elements are not provided,
+multiple databases (COD, AMCSD, Materials Project), parallel simulation,
+and a built‑in fallback database.
 ========================================================================
 """
 
 import numpy as np
 import requests
 import time
-from typing import List, Dict, Tuple, Optional, Set
+from typing import List, Dict, Tuple, Optional
 import streamlit as st
 from dataclasses import dataclass
 from scipy.signal import find_peaks
@@ -88,11 +82,10 @@ class PeakAnalyzer:
             intensity,
             height=noise_level * 3,
             prominence=noise_level * min_snr,
-            distance=max(5, int(len(intensity)/200))  # angular distance ~0.5° typical
+            distance=max(5, int(len(intensity)/200))
         )
         
         if len(peaks_idx) == 0:
-            # Fallback to absolute maximum
             peaks_idx = [np.argmax(intensity)]
             
         return two_theta[peaks_idx], intensity[peaks_idx]
@@ -105,7 +98,6 @@ class PeakAnalyzer:
         refined_int = []
         for t0 in peaks_2theta:
             idx = np.argmin(np.abs(two_theta - t0))
-            # Search ±5 points for true max
             left = max(0, idx-5)
             right = min(len(two_theta), idx+6)
             local_idx = left + np.argmax(intensity[left:right])
@@ -253,7 +245,6 @@ class DatabaseSearcher:
         all_structs = []
         if elements:
             elements_tuple = tuple(sorted(elements))
-            # Determine priority databases
             if family in NanoParams.DATABASE_PRIORITY:
                 dbs = NanoParams.DATABASE_PRIORITY[family]
             else:
@@ -326,18 +317,15 @@ class PatternMatcher:
         weights = []
         matched = []
         
-        # Sort experimental by intensity descending
         order = np.argsort(exp_intensity)[::-1]
         
         for idx in order:
             d_exp = exp_d[idx]
             I_exp = exp_intensity[idx]
-            # Intensity‑dependent tolerance: weaker peaks allow slightly more error
             tol = base_tol * (1.5 - 0.3 * (I_exp / exp_intensity.max()))
             if family in ['metal', 'carbon']:
                 tol *= 1.5
             
-            # Find closest simulated peak
             errors = np.abs(sim_d - d_exp) / d_exp
             best_idx = np.argmin(errors)
             best_error = errors[best_idx]
@@ -345,7 +333,6 @@ class PatternMatcher:
             if best_error < tol:
                 match_quality = 1.0 - (best_error / tol)
                 
-                # Intensity rank matching
                 if len(sim_intensity) > best_idx:
                     exp_rank = np.sum(exp_intensity > I_exp) / len(exp_intensity)
                     sim_rank = np.sum(sim_intensity > sim_intensity[best_idx]) / len(sim_intensity)
@@ -355,7 +342,6 @@ class PatternMatcher:
                 scores.append(match_quality)
                 weights.append(I_exp)
                 
-                # Record assignment
                 matched.append({
                     'hkl': sim_hkls[best_idx] if best_idx < len(sim_hkls) else [],
                     'd_exp': float(d_exp),
@@ -372,7 +358,6 @@ class PatternMatcher:
         weighted_score = np.average(scores, weights=weights)
         coverage = len(scores) / n_exp
         
-        # Adaptive coverage threshold: 50% normally, 30% for very small crystallites
         min_coverage = 0.5 if (size_nm is None or size_nm >= 10) else 0.3
         if coverage < min_coverage:
             return 0.0, []
@@ -429,8 +414,8 @@ FALLBACK = [
     {"formula": "Fe", "space_group": "Im-3m", "cif_url": "https://www.crystallography.net/cod/9008536.cif", "database": "Fallback"},
     {"formula": "Co", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008491.cif", "database": "Fallback"},
     # Oxides
-    {"formula": "TiO2", "space_group": "I41/amd", "cif_url": "https://www.crystallography.net/cod/9008213.cif", "database": "Fallback"},  # anatase
-    {"formula": "TiO2", "space_group": "P42/mnm", "cif_url": "https://www.crystallography.net/cod/9009082.cif", "database": "Fallback"},  # rutile
+    {"formula": "TiO2", "space_group": "I41/amd", "cif_url": "https://www.crystallography.net/cod/9008213.cif", "database": "Fallback"},
+    {"formula": "TiO2", "space_group": "P42/mnm", "cif_url": "https://www.crystallography.net/cod/9009082.cif", "database": "Fallback"},
     {"formula": "ZnO", "space_group": "P63mc", "cif_url": "https://www.crystallography.net/cod/9008878.cif", "database": "Fallback"},
     {"formula": "Fe2O3", "space_group": "R-3c", "cif_url": "https://www.crystallography.net/cod/9000139.cif", "database": "Fallback"},
     {"formula": "Fe3O4", "space_group": "Fd-3m", "cif_url": "https://www.crystallography.net/cod/9006941.cif", "database": "Fallback"},
@@ -441,7 +426,7 @@ FALLBACK = [
     {"formula": "NiO", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/1010395.cif", "database": "Fallback"},
     {"formula": "Co3O4", "space_group": "Fd-3m", "cif_url": "https://www.crystallography.net/cod/9005913.cif", "database": "Fallback"},
     {"formula": "Al2O3", "space_group": "R-3c", "cif_url": "https://www.crystallography.net/cod/9007671.cif", "database": "Fallback"},
-    {"formula": "SiO2", "space_group": "P3121", "cif_url": "https://www.crystallography.net/cod/9009668.cif", "database": "Fallback"},  # quartz
+    {"formula": "SiO2", "space_group": "P3121", "cif_url": "https://www.crystallography.net/cod/9009668.cif", "database": "Fallback"},
     {"formula": "ZrO2", "space_group": "P21/c", "cif_url": "https://www.crystallography.net/cod/9007504.cif", "database": "Fallback"},
     {"formula": "CeO2", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9009009.cif", "database": "Fallback"},
     # Perovskites
@@ -452,8 +437,8 @@ FALLBACK = [
     {"formula": "CdSe", "space_group": "F-43m", "cif_url": "https://www.crystallography.net/cod/9008835.cif", "database": "Fallback"},
     {"formula": "PbS", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008690.cif", "database": "Fallback"},
     # Carbon
-    {"formula": "C", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9011897.cif", "database": "Fallback"},  # graphite
-    {"formula": "C", "space_group": "Fd-3m", "cif_url": "https://www.crystallography.net/cod/1010079.cif", "database": "Fallback"},  # diamond
+    {"formula": "C", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9011897.cif", "database": "Fallback"},
+    {"formula": "C", "space_group": "Fd-3m", "cif_url": "https://www.crystallography.net/cod/1010079.cif", "database": "Fallback"},
     # Silicon
     {"formula": "Si", "space_group": "Fd-3m", "cif_url": "https://www.crystallography.net/cod/9011380.cif", "database": "Fallback"},
 ]
@@ -462,11 +447,7 @@ FALLBACK = [
 # PHASE FRACTION ESTIMATION (simplified RIR‑like)
 # ============================================================================
 def estimate_phase_fractions(phases: List[Dict], exp_intensity: np.ndarray) -> List[Dict]:
-    """
-    Rough estimate of phase fractions based on matched peak intensities.
-    Each phase's score and number of matched peaks contribute.
-    Returns list with 'phase' and 'fraction' (sums to 100%).
-    """
+    """Rough estimate of phase fractions based on matched peak intensities."""
     if not phases:
         return []
     total_score = sum(p['score'] * len(p['hkls']) for p in phases)
@@ -479,22 +460,22 @@ def estimate_phase_fractions(phases: List[Dict], exp_intensity: np.ndarray) -> L
     return fractions
 
 # ============================================================================
-# MAIN IDENTIFICATION FUNCTION
+# MAIN IDENTIFICATION FUNCTION (EXACT NAME & SIGNATURE FOR COMPATIBILITY)
 # ============================================================================
-def identify_phases(two_theta: np.ndarray = None,
-                    intensity: np.ndarray = None,
-                    wavelength: float = 1.5406,
-                    elements: Optional[List[str]] = None,
-                    size_nm: Optional[float] = None,
-                    mp_api_key: Optional[str] = None,
-                    precomputed_peaks_2theta: Optional[np.ndarray] = None,
-                    precomputed_peaks_intensity: Optional[np.ndarray] = None) -> List[Dict]:
+def identify_phases_universal(two_theta: np.ndarray = None,
+                              intensity: np.ndarray = None,
+                              wavelength: float = 1.5406,
+                              elements: Optional[List[str]] = None,
+                              size_nm: Optional[float] = None,
+                              mp_api_key: Optional[str] = None,
+                              precomputed_peaks_2theta: Optional[np.ndarray] = None,
+                              precomputed_peaks_intensity: Optional[np.ndarray] = None) -> List[Dict]:
     """
     Ultimate XRD phase identification for nanomaterials.
     Returns list of phases with full crystallographic details.
     """
     start_time = time.time()
-    st.write(f"🕐 [{time.time()-start_time:.1f}s] Entered identify_phases")
+    st.write(f"🕐 [{time.time()-start_time:.1f}s] Entered identify_phases_universal")
     
     if not PMG_AVAILABLE:
         st.error("pymatgen required. Install: pip install pymatgen")
@@ -566,10 +547,9 @@ def identify_phases(two_theta: np.ndarray = None,
         candidates = searcher.search_all(dspacings=exp_d, progress=db_progress)
     
     st.write(f"🕐 [{time.time()-start_time:.1f}s] Found {len(candidates)} unique candidates")
-    candidates = candidates[:30]  # keep top 30
+    candidates = candidates[:30]
     status.write(f"📚 Retrieved {len(candidates)} candidate structures")
     
-    # If no online candidates, use fallback
     if not candidates:
         status.write("⚠️ No online candidates – using fallback database")
         candidates = FALLBACK
@@ -626,9 +606,8 @@ def identify_phases(two_theta: np.ndarray = None,
                     else:
                         conf = "confirmed" if score >= 0.60 else "probable" if score >= 0.40 else "possible"
                 
-                # Extract lattice info from CIF (if possible)
+                # Extract lattice info from CIF
                 try:
-                    # Re‑fetch CIF text (cached simulation didn't keep it)
                     headers = {}
                     if "materialsproject" in url:
                         mp_key = os.environ.get("MP_API_KEY", "")
@@ -683,7 +662,6 @@ def identify_phases(two_theta: np.ndarray = None,
     # --------------------------------------------------------
     if not results and candidates != FALLBACK:
         st.write("⚠️ No matches from online – retrying with fallback database")
-        # Re‑run simulation on FALLBACK only
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             future_to_struct = {}
             for struct in FALLBACK:
@@ -750,9 +728,9 @@ def identify_phases(two_theta: np.ndarray = None,
             unique[key] = r
     final = sorted(unique.values(), key=lambda x: x["score"], reverse=True)
     
-    # Estimate phase fractions (rough)
+    # Estimate phase fractions (optional, does not affect compatibility)
     fractions = estimate_phase_fractions(final, exp_intensity)
-    for i, r in enumerate(final):
+    for r in final:
         r["phase_fraction"] = next((f["fraction"] for f in fractions if f["phase"] == r["phase"]), None)
     
     status.update(label=f"✅ Identified {len(final)} phases", state="complete")
@@ -771,5 +749,5 @@ def identify_phases(two_theta: np.ndarray = None,
             st.markdown(f"{i+1}. **{r['phase']}** ({r['crystal_system']}) – "
                        f"Score: {r['score']:.3f} [{r['confidence_level']}]{frac}")
     
-    st.write(f"🕐 [{time.time()-start_time:.1f}s] Exiting identify_phases")
+    st.write(f"🕐 [{time.time()-start_time:.1f}s] Exiting identify_phases_universal")
     return final
