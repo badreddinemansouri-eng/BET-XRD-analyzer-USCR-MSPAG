@@ -1503,7 +1503,6 @@ def display_bet_analysis(results, plotter):
 @memory_safe_plot
 def display_xrd_analysis(results, plotter):
     """Display detailed XRD analysis (SCIENTIFICALLY CORRECT VERSION)"""
-
     st.subheader("Advanced XRD Analysis")
 
     # ============================================================
@@ -1519,13 +1518,8 @@ def display_xrd_analysis(results, plotter):
     # ------------------------------------------------------------
     # STRICT PEAK SEMANTICS
     # ------------------------------------------------------------
-    # STRICT PEAK SEMANTICS (CORRECT)
     structural_peaks = xrd_res.get("structural_peaks", [])
-    
-    # True number of local maxima detected by find_peaks
     n_detected = xrd_res.get("n_detected_maxima", 0)
-    
-    # Number of physically validated Bragg peaks
     n_structural = len(structural_peaks)
 
     st.markdown("### 📊 Peak Statistics")
@@ -1538,44 +1532,28 @@ def display_xrd_analysis(results, plotter):
     # ============================================================
     # WHY NO PHASE IDENTIFIED
     # ============================================================
-    if not xrd_res.get("phases"):
+    phases = xrd_res.get("phases", [])
+    if not phases:
         with st.expander("❓ Why were no crystalline phases identified?", expanded=True):
             st.markdown("""
-**This is NOT a software error.**  
-Phase identification is based strictly on **Bragg peak matching**
-against **CIF-validated crystal structures** (COD + OPTIMADE).
+**This is not a software error.**  
+Phase identification failed because **no CIF structure** matched your experimental peaks within the allowed tolerance.
+
+**Possible reasons:**
+- Your material may be **amorphous or poorly crystalline** (crystallinity index < 0.3).
+- The crystallite size is very small (< 5 nm) → peaks are too broad for reliable matching.
+- The sample contains **mixed phases** – the matcher looks for single‑phase matches.
+- The correct phase is **not in the databases** (COD, AMCSD, Materials Project) or fallback list.
+- You did not select any elements – element‑based search is much more effective.
+
+**What you can try:**
+- Select **all elements** present in your sample (including trace dopants) in the sidebar.
+- Use **unsmoothed raw data** (avoid Savitzky‑Golay for phase ID).
+- If you suspect a specific phase, add it manually to the fallback list in `xrd_phase_identifier_nano.py`.
+- For very broad patterns, consider using **Raman spectroscopy** or **electron diffraction** as complementary techniques.
 """)
-
-            reasons = []
-
-            size = xrd_res.get("crystallite_size", {}).get("scherrer", None)
-            if size is not None and size < 10:
-                reasons.append("• Strong peak broadening → nanocrystalline or partially amorphous material")
-
-            if n_structural < 5:
-                reasons.append("• Too few resolved Bragg reflections for reliable indexing")
-
-            if not st.session_state.get("xrd_elements", []):
-                reasons.append("• No elements selected → phase search disabled")
-
-            reasons.append("• No CIF structure matches experimental peaks within nanocrystalline tolerance")
-
-            for r in reasons:
-                st.markdown(r)
-
-            st.markdown("""
-### What you can try
-- Select **all possible elements** (including dopants)
-- Use **unsmoothed raw XRD data**
-- Increase crystallinity (annealing) if possible
-- Combine with **Raman / FTIR**
-""")
-
-    # ============================================================
-    # PHASE TABLE
-    # ============================================================
-    phases = xrd_res.get("phases", [])
-    if phases:
+    else:
+        # Phase table
         df = pd.DataFrame([{
             "Phase": p["phase"],
             "Crystal system": p["crystal_system"],
@@ -1584,8 +1562,25 @@ against **CIF-validated crystal structures** (COD + OPTIMADE).
             "Confidence": p.get("confidence_level", "")
         } for p in phases])
         st.dataframe(df, use_container_width=True)
-    else:
-        st.info("No crystalline phase identified with sufficient confidence.")
+
+        # ============================================================
+        # DETAILED MATCHED PEAKS (PER PHASE)
+        # ============================================================
+        st.subheader("🔍 Matched Reflections (HKL assignment)")
+        for phase in phases:
+            with st.expander(f"{phase['phase']} – {len(phase.get('hkls', []))} matched peaks"):
+                hkls = phase.get('hkls', [])
+                if hkls:
+                    # Create DataFrame with all available fields
+                    df_peaks = pd.DataFrame(hkls)
+                    # Reorder columns for clarity (if they exist)
+                    col_order = ['hkl', 'two_theta_exp', 'two_theta_calc', 'd_exp', 'd_calc',
+                                 'intensity_exp', 'intensity_calc']
+                    existing_cols = [c for c in col_order if c in df_peaks.columns]
+                    df_peaks = df_peaks[existing_cols]
+                    st.dataframe(df_peaks, use_container_width=True)
+                else:
+                    st.info("No HKL assignments available for this phase.")
 
     # ============================================================
     # XRD PATTERN (STRUCTURAL PEAKS ONLY)
@@ -1593,23 +1588,21 @@ against **CIF-validated crystal structures** (COD + OPTIMADE).
     if xrd_raw and xrd_res:
         fig = plotter.create_xrd_figure(xrd_raw, xrd_res)
         st.pyplot(fig)
-     # ============================================================
-    # 🔍 PEAK POSITION DIAGNOSTICS (AUTHORITATIVE)
+
     # ============================================================
-    
-    with st.expander("🔍 Peak Position Diagnostics (Debug)", expanded=True):
-    
+    # PEAK POSITION DIAGNOSTICS (Debug)
+    # ============================================================
+    with st.expander("🔍 Peak Position Diagnostics (Debug)", expanded=False):
         two_theta = results["xrd_raw"]["two_theta"]
         intensity = results["xrd_raw"]["intensity"]
-    
+
         # 1️⃣ TRUE RAW APEX (GROUND TRUTH)
         idx_max = np.argmax(intensity)
         true_theta = two_theta[idx_max]
         true_intensity = intensity[idx_max]
-    
         st.markdown("### 1️⃣ True raw-data apex (ground truth)")
         st.code(f"2θ = {true_theta:.4f}°, Intensity = {true_intensity:.1f}")
-    
+
         # 2️⃣ STRONGEST DETECTED LOCAL MAXIMUM
         detected = xrd_res.get("detected_peaks", [])
         if detected:
@@ -1621,7 +1614,7 @@ against **CIF-validated crystal structures** (COD + OPTIMADE).
             )
         else:
             st.warning("No detected local maxima")
-    
+
         # 3️⃣ STRONGEST STRUCTURAL BRAGG PEAK (RED POINT)
         structural = xrd_res.get("structural_peaks", [])
         if structural:
@@ -1633,7 +1626,7 @@ against **CIF-validated crystal structures** (COD + OPTIMADE).
             )
         else:
             st.warning("No structural Bragg peaks")
-    
+
         # 4️⃣ VERDICT
         st.markdown("### 4️⃣ Diagnostic verdict")
         if structural and abs(true_theta - strongest_structural["position"]) < 0.5:
@@ -1642,58 +1635,15 @@ against **CIF-validated crystal structures** (COD + OPTIMADE).
             st.error("❌ Strongest raw peak was rejected during structural filtering")
 
     # ============================================================
-    # 🔎 PEAK POSITION DIAGNOSTIC (MINIMAL & SAFE)
-    # ============================================================
-    
-    with st.expander("🔍 Peak Position Diagnostics (Debug)", expanded=True):
-    
-        two_theta = results["xrd_raw"]["two_theta"]
-        intensity = results["xrd_raw"]["intensity"]
-    
-        # 1️⃣ TRUE APEX (RAW DATA)
-        idx_max = np.argmax(intensity)
-        true_theta = two_theta[idx_max]
-        true_intensity = intensity[idx_max]
-    
-        st.write("### 1️⃣ True raw-data apex")
-        st.code(f"2θ = {true_theta:.4f}°, Intensity = {true_intensity:.1f}")
-    
-        # 2️⃣ DETECTED LOCAL MAXIMA (find_peaks output)
-        detected = xrd_res.get("detected_peaks", [])
-        if detected:
-            strongest_detected = max(detected, key=lambda p: p["intensity"])
-            st.write("### 2️⃣ Strongest detected local maximum")
-            st.code(
-                f"2θ = {strongest_detected['position']:.4f}°, "
-                f"Intensity = {strongest_detected['intensity']:.1f}"
-            )
-        else:
-            st.warning("No detected peaks available")
-    
-        # 3️⃣ STRUCTURAL BRAGG PEAKS (RED POINTS)
-        structural = xrd_res.get("structural_peaks", [])
-        if structural:
-            strongest_structural = max(structural, key=lambda p: p["intensity"])
-            st.write("### 3️⃣ Strongest structural Bragg peak (RED)")
-            st.code(
-                f"2θ = {strongest_structural['position']:.4f}°, "
-                f"Intensity = {strongest_structural['intensity']:.1f}"
-            )
-        else:
-            st.warning("No structural peaks available")
-
-    # ============================================================
     # PEAK TABLE (STRUCTURAL ONLY)
     # ============================================================
     if structural_peaks:
         st.subheader("📌 Structural Bragg Peak Analysis")
-
         peaks_sorted = sorted(
             structural_peaks,
             key=lambda p: p["intensity"],
             reverse=True
         )
-
         table = [{
             "2θ (°)": round(p["position"], 3),
             "d (Å)": round(p.get("d_spacing", 0), 4),
@@ -1703,7 +1653,6 @@ against **CIF-validated crystal structures** (COD + OPTIMADE).
             "HKL": p.get("hkl", ""),
             "Phase": p.get("phase", ""),
         } for p in peaks_sorted]
-
         st.dataframe(pd.DataFrame(table), use_container_width=True)
 
     # ============================================================
@@ -1780,7 +1729,10 @@ def display_3d_xrd_visualization(results, scientific_params):
         return
     
     xrd_res = results['xrd_results']
-    if not xrd_res.get('peaks'):
+    structural_peaks = xrd_res.get("structural_peaks", [])
+    phases = xrd_res.get("phases", [])
+    
+    if not structural_peaks:
         st.warning("No peaks detected in XRD data")
         return
     
@@ -1789,43 +1741,44 @@ def display_3d_xrd_visualization(results, scientific_params):
         import plotly.graph_objects as go
         import numpy as np
         
-        # Get peaks data
-        peaks = xrd_res.get("structural_peaks", [])
-
-        positions = [p['position'] for p in peaks]
-        intensities = [p['intensity'] for p in peaks]
+        positions = [p['position'] for p in structural_peaks]
+        intensities = [p['intensity'] for p in structural_peaks]
         
-        # Normalize intensities for visualization
-        max_intensity = max(intensities)
+        # Normalize intensities
+        max_intensity = max(intensities) if intensities else 1
         norm_intensities = [i/max_intensity for i in intensities]
         
-        # Get hkl indices
-        hkl_labels = []
-        for peak in peaks:
-            hkl = peak.get('hkl', '')
-            if not hkl and 'hkl_detail' in peak:
-                hkl_detail = peak['hkl_detail']
-                if isinstance(hkl_detail, dict):
-                    h = hkl_detail.get('h', '?')
-                    k = hkl_detail.get('k', '?')
-                    l = hkl_detail.get('l', '?')
-                    hkl = f"({h}{k}{l})"
-            hkl_labels.append(hkl)
+        # Build a mapping from peak position to HKL from all phases
+        # This collects HKL from any matched phase that includes this peak
+        peak_hkl_map = {}
+        for phase in phases:
+            for match in phase.get('hkls', []):
+                # match contains two_theta_exp and hkl
+                t_exp = match.get('two_theta_exp')
+                hkl = match.get('hkl')
+                if t_exp is not None and hkl:
+                    # Use closest peak position (tolerance 0.1°)
+                    for pos in positions:
+                        if abs(pos - t_exp) < 0.1:
+                            peak_hkl_map[pos] = hkl
+                            break
+        
+        hkl_labels = [peak_hkl_map.get(p, '') for p in positions]
         
         # Create 3D scatter plot
         fig = go.Figure()
         
         # Add peak lines (vertical lines)
         for pos, intensity, hkl in zip(positions, norm_intensities, hkl_labels):
-            # Line from base to peak
+            # Convert 2θ to scattering vector Q (optional, but nice)
+            theta = np.radians(pos / 2)
+            q = (4 * np.pi / xrd_res.get("wavelength", 1.5406)) * np.sin(theta)
+            
+            # Line from base to peak (using Q as x for better spacing)
             fig.add_trace(go.Scatter3d(
-                theta = np.radians(pos / 2),
-                q = (4 * np.pi / xrd_res["wavelength"]) * np.sin(theta),
-                
                 x=[q, q],
                 y=[0, intensity],
                 z=[0, 0],
-            
                 mode='lines',
                 line=dict(color='blue', width=3),
                 showlegend=False
@@ -1833,14 +1786,9 @@ def display_3d_xrd_visualization(results, scientific_params):
             
             # Peak marker
             fig.add_trace(go.Scatter3d(
-                theta = np.radians(pos / 2),
-                q = (4 * np.pi / xrd_res["wavelength"]) * np.sin(theta),
-                
-                x=[q, q],
-                y=[0, intensity],
-                z=[0, 0],
-                
-
+                x=[q],
+                y=[intensity],
+                z=[0],
                 mode='markers',
                 marker=dict(
                     size=8,
@@ -1855,35 +1803,30 @@ def display_3d_xrd_visualization(results, scientific_params):
         # Update layout
         fig.update_layout(
             scene=dict(
-                xaxis_title='2θ (degrees)',
+                xaxis_title='Q (Å⁻¹)',
                 yaxis_title='Normalized Intensity',
                 zaxis_title='',
                 camera=dict(
                     eye=dict(x=1.5, y=1.5, z=0.5)
                 )
             ),
-            title='3D XRD Pattern Visualization',
+            title='3D XRD Pattern with HKL Labels',
             width=800,
             height=600
         )
         
-        # Display plot
- 
         st.plotly_chart(fig, use_container_width=True)
-
         
-        # Add crystal structure if available
+        # Add crystal information if available
         crystal_system = scientific_params['crystal']['system']
         lattice_params = scientific_params['crystal']['lattice_params']
         
         if crystal_system != 'Unknown' and lattice_params:
             st.subheader("Crystal Structure Information")
-            
             col1, col2 = st.columns(2)
             with col1:
                 st.info(f"**Crystal System:** {crystal_system}")
                 st.info(f"**Lattice Parameters:** {lattice_params}")
-            
             with col2:
                 if 'indexing' in xrd_res:
                     indexing = xrd_res['indexing']
@@ -1891,41 +1834,36 @@ def display_3d_xrd_visualization(results, scientific_params):
                         fom = indexing['figures_of_merit']
                         if 'M20' in fom:
                             st.info(f"**M₂₀ Figure of Merit:** {fom['M20']:.1f}")
-            
-            # Generate simple unit cell visualization
-            if crystal_system == 'Cubic':
-                st.info("**Unit Cell:** Simple cubic structure shown")
-                # You can add more detailed visualization here
-            
+        
     except Exception as e:
         st.error(f"Could not create 3D visualization: {str(e)}")
         
-        # Fallback: Create a simple 2D plot with hkl annotations
+        # Fallback: simple 2D plot with HKL annotations
         st.subheader("2D XRD Pattern with HKL Indices")
-        
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots(figsize=(12, 6))
         
-        # Plot XRD pattern
         if results.get('xrd_raw'):
             ax.plot(results['xrd_raw']['two_theta'], 
                    results['xrd_raw']['intensity'], 
                    'k-', linewidth=1)
         
-        # Mark peaks with hkl
-        for peak in peaks:
-            pos = peak['position']
-            intensity = peak['intensity']
-            
-            # Get hkl
-            hkl = peak.get('hkl', '')
-            if not hkl and 'hkl_detail' in peak:
-                hkl_detail = peak['hkl_detail']
-                if isinstance(hkl_detail, dict):
-                    h = hkl_detail.get('h', '?')
-                    k = hkl_detail.get('k', '?')
-                    l = hkl_detail.get('l', '?')
-                    hkl = f"({h}{k}{l})"
+        # Build HKL mapping again
+        peak_hkl_map = {}
+        for phase in phases:
+            for match in phase.get('hkls', []):
+                t_exp = match.get('two_theta_exp')
+                hkl = match.get('hkl')
+                if t_exp is not None and hkl:
+                    for pos in positions:
+                        if abs(pos - t_exp) < 0.1:
+                            peak_hkl_map[pos] = hkl
+                            break
+        
+        for p in structural_peaks:
+            pos = p['position']
+            intensity = p['intensity']
+            hkl = peak_hkl_map.get(pos, '')
             
             ax.plot([pos], [intensity], 'ro', markersize=5)
             ax.text(pos, intensity * 1.05, hkl, 
@@ -1936,8 +1874,7 @@ def display_3d_xrd_visualization(results, scientific_params):
         ax.set_ylabel('Intensity')
         ax.set_title('XRD Pattern with HKL Indices')
         ax.grid(True, alpha=0.3)
-        
-        st.pyplot(fig)            
+        st.pyplot(fig)
 @memory_safe_plot            
 def display_morphology(results):
     """Display morphology visualization and interpretation"""
@@ -2631,6 +2568,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
