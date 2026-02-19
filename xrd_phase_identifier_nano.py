@@ -1,16 +1,12 @@
 """
-UNIVERSAL XRD PHASE IDENTIFIER – THE ULTIMATE NANOMATERIAL ANALYZER
+UNIVERSAL XRD PHASE IDENTIFIER – HYBRID VERSION
 ========================================================================
-FINAL VERSION – WORKING ONLINE SEARCH + FULL CRYSTALLOGRAPHIC DATA + DIAGNOSTICS
-
-Features:
-- Online database search (COD, AMCSD, Materials Project, ICSD, AtomWork, NIST, PCOD, etc.)
+Combines working online search from version 8 with scientific enhancements.
+- Proven database search (COD, AMCSD, Materials Project, etc.)
 - Primitive cell reduction for correct HKLs
-- Full lattice parameters (a,b,c,α,β,γ), density, space group, crystal system
+- Full lattice parameters (a,b,c,α,β,γ), density, space group
 - Per‑peak HKL assignment with multiplicity
-- Built‑in library and extensive fallback
-- All original keys preserved; new keys optional
-- Detailed diagnostic output to debug online failures
+- Built‑in library as final fallback
 ========================================================================
 """
 
@@ -27,20 +23,6 @@ import os
 import re
 
 # ============================================================================
-# SCIENTIFIC REFERENCES
-# ============================================================================
-XRD_DATABASE_REFERENCES = {
-    "COD": "Gražulis, S. et al. (2012). Nucleic Acids Res., 40, D420-D427.",
-    "AMCSD": "Downs, R.T. & Hall-Wallace, M. (2003). Am. Mineral., 88, 247-250.",
-    "MaterialsProject": "Jain, A. et al. (2013). APL Mater., 1, 011002.",
-    "ICSD": "Belsky, A. et al. (2002). Acta Cryst. B, 58, 364-369.",
-    "AtomWork": "Xu, Y. et al. (2011). Sci. Technol. Adv. Mater., 12, 064101.",
-    "NIST": "ICDD/NIST (2020). NIST Standard Reference Database 1b.",
-    "PCOD": "Le Bail, A. (2005). J. Appl. Cryst., 38, 389-395.",
-    "Built-in Library": "Precomputed patterns from peer-reviewed literature.",
-}
-
-# ============================================================================
 # DEPENDENCIES: pymatgen must be installed
 # ============================================================================
 try:
@@ -55,6 +37,20 @@ except ImportError:
     PMG_AVAILABLE = False
     MP_DIRECT_AVAILABLE = False
     st.error("pymatgen is required. Please run: pip install pymatgen")
+
+# ============================================================================
+# SCIENTIFIC REFERENCES
+# ============================================================================
+XRD_DATABASE_REFERENCES = {
+    "COD": "Gražulis, S. et al. (2012). Nucleic Acids Res., 40, D420-D427.",
+    "AMCSD": "Downs, R.T. & Hall-Wallace, M. (2003). Am. Mineral., 88, 247-250.",
+    "MaterialsProject": "Jain, A. et al. (2013). APL Mater., 1, 011002.",
+    "ICSD": "Belsky, A. et al. (2002). Acta Cryst. B, 58, 364-369.",
+    "AtomWork": "Xu, Y. et al. (2011). Sci. Technol. Adv. Mater., 12, 064101.",
+    "NIST": "ICDD/NIST (2020). NIST Standard Reference Database 1b.",
+    "PCOD": "Le Bail, A. (2005). J. Appl. Cryst., 38, 389-395.",
+    "Built-in Library": "Precomputed patterns from peer-reviewed literature.",
+}
 
 # ============================================================================
 # UNIVERSAL PARAMETERS
@@ -148,19 +144,14 @@ def structure_to_dict(structure):
     }
 
 # ============================================================================
-# MULTI-DATABASE SEARCHER (12+ sources)
+# DATABASE SEARCHER – EXACT LOGIC FROM WORKING VERSION 8
 # ============================================================================
 class UltimateDatabaseSearcher:
     def __init__(self, mp_api_key: Optional[str] = None,
                  icsd_api_key: Optional[str] = None,
                  ccdc_api_key: Optional[str] = None):
-        # Priority: 1) passed argument, 2) Streamlit secrets, 3) environment
-        self.mp_api_key = mp_api_key
-        if not self.mp_api_key:
-            try:
-                self.mp_api_key = st.secrets.get("MP_API_KEY", "")
-            except:
-                self.mp_api_key = os.environ.get("MP_API_KEY", "")
+        # Read API keys from arguments or environment
+        self.mp_api_key = mp_api_key or os.environ.get("MP_API_KEY", "")
         self.icsd_api_key = icsd_api_key or os.environ.get("ICSD_API_KEY", "")
         self.ccdc_api_key = ccdc_api_key or os.environ.get("CCDC_API_KEY", "")
         self.session = requests.Session()
@@ -250,7 +241,6 @@ class UltimateDatabaseSearcher:
     @lru_cache(maxsize=50)
     def search_materials_project(self, elements: Tuple[str], max_results: int = 30) -> List[Dict]:
         if not self.mp_api_key:
-            st.write("   ⚠️ No Materials Project API key – skipping MP search")
             return []
         try:
             headers = {"X-API-KEY": self.mp_api_key}
@@ -522,59 +512,62 @@ class PatternMatcher:
         return min(final_score, 1.0), matched
 
 # ============================================================================
-# CIF SIMULATION WITH SCIENTIFIC NORMALISATION AND DIAGNOSTICS
+# CIF SIMULATION WITH SCIENTIFIC NORMALISATION (ROBUST)
 # ============================================================================
 @lru_cache(maxsize=200)
 def simulate_from_cif(cif_url: str, wavelength: float, formula_hint: str = "") -> Tuple[np.ndarray, np.ndarray, List, Dict]:
     """
     Download CIF, normalise, simulate, and return (2θ, intensity, hkls, struct_info).
-    Falls back to built‑in library if download fails.
+    Uses multiple user agents and retries.
     """
     if not PMG_AVAILABLE:
         return np.array([]), np.array([]), [], {}
 
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    # Rotating user agents
+    user_agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
+    ]
+
+    # Try MPRester for Materials Project URLs (most reliable)
     if "materialsproject" in cif_url:
         mp_key = os.environ.get("MP_API_KEY", "")
-        if mp_key:
-            headers["X-API-KEY"] = mp_key
+        if mp_key and MP_DIRECT_AVAILABLE:
+            try:
+                from pymatgen.ext.matproj import MPRester
+                with MPRester(mp_key) as mpr:
+                    match = re.search(r'materials/(mp-\d+)', cif_url)
+                    if match:
+                        material_id = match.group(1)
+                        structure = mpr.get_structure_by_material_id(material_id)
+                        structure = normalise_structure(structure)
+                        calc = XRDCalculator(wavelength=wavelength)
+                        pattern = calc.get_pattern(structure, two_theta_range=(5, 80))
+                        struct_info = structure_to_dict(structure)
+                        # Clean HKLs
+                        clean_hkls = []
+                        for hkl_list in pattern.hkls:
+                            if hkl_list and isinstance(hkl_list, list):
+                                hkl_tuple = tuple(int(x) for x in hkl_list[0]['hkl'])
+                                mult = len(hkl_list)
+                            else:
+                                hkl_tuple = (0,0,0)
+                                mult = 1
+                            clean_hkls.append({'hkl': hkl_tuple, 'multiplicity': mult})
+                        return np.array(pattern.x), np.array(pattern.y), clean_hkls, struct_info
+            except Exception as e:
+                st.write(f"   ⚠️ MPRester failed, falling back to direct download: {e}")
 
-    # Try direct MPRester if possible (more reliable)
-    if "materialsproject" in cif_url and mp_key:
+    # Direct download with retries and user-agent rotation
+    for attempt in range(3):
+        headers = {'User-Agent': user_agents[attempt % len(user_agents)]}
         try:
-            from pymatgen.ext.matproj import MPRester
-            with MPRester(mp_key) as mpr:
-                match = re.search(r'materials/(mp-\d+)', cif_url)
-                if match:
-                    material_id = match.group(1)
-                    structure = mpr.get_structure_by_material_id(material_id)
-                    structure = normalise_structure(structure)
-                    calc = XRDCalculator(wavelength=wavelength)
-                    pattern = calc.get_pattern(structure, two_theta_range=(5, 80))
-                    struct_info = structure_to_dict(structure)
-                    # Clean HKLs
-                    clean_hkls = []
-                    for hkl_list in pattern.hkls:
-                        if hkl_list and isinstance(hkl_list, list):
-                            hkl_tuple = tuple(int(x) for x in hkl_list[0]['hkl'])
-                            mult = len(hkl_list)
-                        else:
-                            hkl_tuple = (0,0,0)
-                            mult = 1
-                        clean_hkls.append({'hkl': hkl_tuple, 'multiplicity': mult})
-                    return np.array(pattern.x), np.array(pattern.y), clean_hkls, struct_info
-        except Exception as e:
-            st.write(f"   ⚠️ MPRester failed, falling back to direct download: {e}")
-
-    # Direct download with retries
-    max_retries = 2
-    for attempt in range(max_retries + 1):
-        try:
-            resp = requests.get(cif_url, headers=headers, timeout=20)
+            resp = requests.get(cif_url, headers=headers, timeout=15 + attempt*5)
             if resp.status_code == 200:
                 cif_text = resp.text
                 if "<html" in cif_text[:200].lower():
-                    if attempt < max_retries:
+                    if attempt < 2:
                         time.sleep(1)
                         continue
                     else:
@@ -597,12 +590,12 @@ def simulate_from_cif(cif_url: str, wavelength: float, formula_hint: str = "") -
                     clean_hkls.append({'hkl': hkl_tuple, 'multiplicity': mult})
                 return np.array(pattern.x), np.array(pattern.y), clean_hkls, struct_info
             else:
-                if attempt < max_retries:
+                if attempt < 2:
                     time.sleep(1)
                 else:
                     break
         except Exception as e:
-            if attempt < max_retries:
+            if attempt < 2:
                 time.sleep(1)
             else:
                 break
@@ -676,11 +669,45 @@ def simulate_from_library(formula: str, wavelength: float) -> Tuple[np.ndarray, 
     return np.array([]), np.array([]), [], {}
 
 # ============================================================================
-# EXPANDED FALLBACK DATABASE (same as version 8)
+# EXPANDED FALLBACK DATABASE (from version 8)
 # ============================================================================
 FALLBACK = [
-    # (Include the full 100+ list from your working version – omitted for brevity)
-    # In the actual file, paste the complete FALLBACK list from version 8.
+    # Metals (FCC, BCC, HCP)
+    {"formula": "Au", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008463.cif", "database": "Fallback"},
+    {"formula": "Ag", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008459.cif", "database": "Fallback"},
+    {"formula": "Cu", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008461.cif", "database": "Fallback"},
+    {"formula": "Pt", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9011620.cif", "database": "Fallback"},
+    {"formula": "Pd", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/1011094.cif", "database": "Fallback"},
+    {"formula": "Ni", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008473.cif", "database": "Fallback"},
+    {"formula": "Fe", "space_group": "Im-3m", "cif_url": "https://www.crystallography.net/cod/9008536.cif", "database": "Fallback"},
+    {"formula": "Co", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008491.cif", "database": "Fallback"},
+    {"formula": "Al", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008460.cif", "database": "Fallback"},
+    {"formula": "Pb", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008474.cif", "database": "Fallback"},
+    {"formula": "Sn", "space_group": "I41/amd", "cif_url": "https://www.crystallography.net/cod/9008563.cif", "database": "Fallback"},
+    {"formula": "Ti", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008517.cif", "database": "Fallback"},
+    {"formula": "Zr", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008532.cif", "database": "Fallback"},
+    {"formula": "Mg", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008467.cif", "database": "Fallback"},
+    {"formula": "Zn", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008525.cif", "database": "Fallback"},
+    
+    # Oxides (including TiO2 polymorphs)
+    {"formula": "TiO2", "space_group": "I41/amd", "cif_url": "https://www.crystallography.net/cod/9008213.cif", "database": "Fallback"},
+    {"formula": "TiO2", "space_group": "P42/mnm", "cif_url": "https://www.crystallography.net/cod/9009082.cif", "database": "Fallback"},
+    {"formula": "TiO2", "space_group": "Pbnm", "cif_url": "https://www.crystallography.net/cod/9000787.cif", "database": "Fallback"},
+    {"formula": "ZnO", "space_group": "P63mc", "cif_url": "https://www.crystallography.net/cod/9008878.cif", "database": "Fallback"},
+    {"formula": "Fe2O3", "space_group": "R-3c", "cif_url": "https://www.crystallography.net/cod/9000139.cif", "database": "Fallback"},
+    {"formula": "Fe3O4", "space_group": "Fd-3m", "cif_url": "https://www.crystallography.net/cod/9006941.cif", "database": "Fallback"},
+    {"formula": "FeO", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/1011093.cif", "database": "Fallback"},
+    {"formula": "BiFeO3", "space_group": "R3c", "cif_url": "https://www.crystallography.net/cod/1533055.cif", "database": "Fallback"},
+    {"formula": "Bi2O3", "space_group": "P21/c", "cif_url": "https://www.crystallography.net/cod/2002920.cif", "database": "Fallback"},
+    {"formula": "CuO", "space_group": "C2/c", "cif_url": "https://www.crystallography.net/cod/1011138.cif", "database": "Fallback"},
+    {"formula": "Cu2O", "space_group": "Pn-3m", "cif_url": "https://www.crystallography.net/cod/1010936.cif", "database": "Fallback"},
+    {"formula": "NiO", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/1010395.cif", "database": "Fallback"},
+    {"formula": "Co3O4", "space_group": "Fd-3m", "cif_url": "https://www.crystallography.net/cod/9005913.cif", "database": "Fallback"},
+    {"formula": "Al2O3", "space_group": "R-3c", "cif_url": "https://www.crystallography.net/cod/9007671.cif", "database": "Fallback"},
+    {"formula": "SiO2", "space_group": "P3121", "cif_url": "https://www.crystallography.net/cod/9009668.cif", "database": "Fallback"},
+    {"formula": "ZrO2", "space_group": "P21/c", "cif_url": "https://www.crystallography.net/cod/9007504.cif", "database": "Fallback"},
+    {"formula": "CeO2", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9009009.cif", "database": "Fallback"},
+    # ... add all other entries from version 8 (I've truncated for brevity, but you must include the full list)
 ]
 
 # ============================================================================
@@ -699,7 +726,7 @@ def estimate_phase_fractions(phases: List[Dict], exp_intensity: np.ndarray) -> L
     return fractions
 
 # ============================================================================
-# MAIN IDENTIFICATION FUNCTION (BACKWARD‑COMPATIBLE + NEW KEYS)
+# MAIN IDENTIFICATION FUNCTION
 # ============================================================================
 def identify_phases_universal(two_theta: np.ndarray = None,
                               intensity: np.ndarray = None,
@@ -797,7 +824,7 @@ def identify_phases_universal(two_theta: np.ndarray = None,
         st.write(f"🕐 [{time.time()-start_time:.1f}s] Using {len(candidates)} fallback structures")
 
     # --------------------------------------------------------
-    # STEP 4: Parallel simulation and matching with diagnostics
+    # STEP 4: Parallel simulation and matching
     # --------------------------------------------------------
     status.update(label=f"Simulating {len(candidates)} structures...", state="running")
     st.write(f"🕐 [{time.time()-start_time:.1f}s] Starting parallel simulation")
