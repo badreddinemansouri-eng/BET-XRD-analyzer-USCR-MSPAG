@@ -11,6 +11,36 @@ Integrates BET and XRD results without estimation using:
 import numpy as np
 from typing import Dict, List, Optional
 
+def extract_hkl_indices(hkl_val):
+    """
+    Recursively extract a tuple of integer indices from various HKL representations.
+    (Same helper as in display_xrd_analysis for consistency)
+    """
+    if hkl_val is None:
+        return None
+    if isinstance(hkl_val, (int, float, str)):
+        return None
+    if isinstance(hkl_val, (tuple, list)):
+        if all(isinstance(x, (int, np.integer)) for x in hkl_val):
+            return tuple(int(x) for x in hkl_val)
+        if len(hkl_val) > 0 and isinstance(hkl_val[0], dict):
+            if 'hkl' in hkl_val[0]:
+                return extract_hkl_indices(hkl_val[0]['hkl'])
+        return None
+    if isinstance(hkl_val, dict):
+        for key in ['hkl', 'indices']:
+            if key in hkl_val:
+                return extract_hkl_indices(hkl_val[key])
+        return None
+    return None
+
+def format_hkl(hkl_val):
+    """Convert any HKL representation into a clean string like (h,k,l)."""
+    indices = extract_hkl_indices(hkl_val)
+    if indices is not None:
+        return str(indices)
+    return str(hkl_val)
+
 def calculate_phase_fractions(peaks: List[Dict], phases: List[Dict]) -> List[Dict]:
     """
     Semi-quantitative phase fractions using matched peak intensities.
@@ -53,9 +83,13 @@ def calculate_phase_fractions(peaks: List[Dict], phases: List[Dict]) -> List[Dic
             best_conf = 0.0
             for phase in phases:
                 for match in phase.get('hkls', []):
-                    # match is a dict with 'two_theta_exp' and possibly 'two_theta_calc'
-                    t_calc = match.get('two_theta_calc', match.get('two_theta_exp'))
-                    if t_calc is None:
+                    # match can be dict with 'two_theta_exp' or just a tuple
+                    if isinstance(match, dict):
+                        t_calc = match.get('two_theta_calc', match.get('two_theta_exp'))
+                        if t_calc is None:
+                            continue
+                    else:
+                        # If match is just a tuple (backward compatibility)
                         continue
                     error = abs(t_calc - peak['position'])
                     if error < best_error:
@@ -110,12 +144,24 @@ def map_peaks_to_phases(peaks: List[Dict], phases: List[Dict]) -> List[Dict]:
         best_hkl = None
         best_conf = 0.0
         best_error = float('inf')
+        best_multiplicity = 1
 
         for phase in phases:
             for match in phase.get('hkls', []):
-                t_calc = match.get('two_theta_calc', match.get('two_theta_exp'))
+                # Handle different match formats
+                if isinstance(match, dict):
+                    t_calc = match.get('two_theta_calc', match.get('two_theta_exp'))
+                    hkl_val = match.get('hkl', '')
+                    multiplicity = match.get('multiplicity', 1)
+                else:
+                    # Backward compatibility: match is just a tuple
+                    t_calc = None
+                    hkl_val = match
+                    multiplicity = 1
+                
                 if t_calc is None:
                     continue
+                    
                 error = abs(t_calc - t_exp)
                 # Use a dynamic tolerance based on FWHM if available
                 fwhm = peak.get('fwhm_deg', 0.2)
@@ -123,12 +169,16 @@ def map_peaks_to_phases(peaks: List[Dict], phases: List[Dict]) -> List[Dict]:
                 if error < tol and error < best_error:
                     best_error = error
                     best_phase = phase['phase']
-                    best_hkl = match.get('hkl', '')
+                    best_hkl = hkl_val
                     best_conf = phase['score']
+                    best_multiplicity = multiplicity
 
         if best_phase:
             peak['phase'] = best_phase
             peak['hkl'] = best_hkl
+            peak['hkl_str'] = format_hkl(best_hkl)
+            if best_multiplicity > 1:
+                peak['hkl_str'] = f"{peak['hkl_str']} (×{best_multiplicity})"
             peak['phase_confidence'] = best_conf
             peak['matching_error'] = best_error
 
@@ -221,10 +271,14 @@ class ScientificIntegrator:
             CI = xrd_results.get('crystallinity_index', 0) if xrd_results else 0
             D_crystal = xrd_results.get('crystallite_size', {}).get('scherrer', 0) if xrd_results else 0
 
+            # Get phase information if available
+            phases = xrd_results.get('phases', []) if xrd_results else []
+            primary_phase = phases[0]['phase'] if phases else 'Unknown'
+
             # Fundamental relationships
             S_crystal = self._calculate_surface_from_crystallite(D_crystal, CI) if D_crystal > 0 else 0
             porosity = self._calculate_porosity(S_BET, V_pore, D_crystal)
-            classification = self._classify_material(S_BET, CI, porosity, D_crystal)
+            classification = self._classify_material(S_BET, CI, porosity, D_crystal, primary_phase)
             structure_props = self._calculate_structure_properties(S_BET, V_pore, D_crystal, CI, classification)
             validation = self._validate_integration(S_BET, S_err, CI, D_crystal, classification)
 
@@ -235,7 +289,9 @@ class ScientificIntegrator:
                 'material_classification': classification,
                 'structure_properties': structure_props,
                 'validation_metrics': validation,
-                'correlation_analysis': self._analyze_correlations(bet_results, xrd_results)
+                'correlation_analysis': self._analyze_correlations(bet_results, xrd_results),
+                'primary_phase': primary_phase,
+                'phase_count': len(phases)
             })
             integration['recommendations'] = self._generate_recommendations(integration)
 
@@ -256,14 +312,26 @@ class ScientificIntegrator:
             return min(V_pore * S_BET * 0.001, 0.95)
         return 0.0
 
-    def _classify_material(self, S_BET, CI, porosity, D_crystal):
-        """Basic material classification."""
+    def _classify_material(self, S_BET, CI, porosity, D_crystal, primary_phase):
+        """Enhanced material classification with phase info."""
+        classification = {'primary_phase': primary_phase}
+        
         if S_BET > 1000:
-            return {'type': 'High surface area material', 'confidence': 0.8}
+            classification['type'] = 'High surface area material'
+            classification['confidence'] = 0.8
         elif D_crystal < 20:
-            return {'type': 'Nanocrystalline', 'confidence': 0.7}
+            classification['type'] = 'Nanocrystalline'
+            classification['confidence'] = 0.7
         else:
-            return {'type': 'Bulk crystalline', 'confidence': 0.6}
+            classification['type'] = 'Bulk crystalline'
+            classification['confidence'] = 0.6
+            
+        if 'TiO2' in primary_phase:
+            classification['subtype'] = 'Titanium oxide'
+        elif 'Fe' in primary_phase and 'O' in primary_phase:
+            classification['subtype'] = 'Iron oxide'
+            
+        return classification
 
     def _calculate_structure_properties(self, S_BET, V_pore, D_crystal, CI, classification):
         return {
