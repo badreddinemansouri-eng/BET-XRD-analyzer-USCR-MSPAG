@@ -468,9 +468,8 @@ class PublicationPlotter:
     def create_xrd_figure(self, xrd_raw: Dict, xrd_results: Dict) -> plt.Figure:
         """
         Create scientifically consistent XRD analysis figure
-        (Nanomaterial-safe, reviewer-grade)
+        (Nanomaterial-safe, reviewer-grade) with clean HKL formatting.
         """
-    
         # ===============================
         # SAFE UNWRAP
         # ===============================
@@ -486,12 +485,39 @@ class PublicationPlotter:
         intensity = np.array(xrd_raw['intensity'])
     
         # ============================================================
+        # HELPER FUNCTIONS FOR CLEAN HKL FORMATTING (same as in app)
+        # ============================================================
+        def extract_hkl_indices(hkl_val):
+            """Recursively extract a tuple of integer indices."""
+            if hkl_val is None:
+                return None
+            if isinstance(hkl_val, (int, float, str)):
+                return None
+            if isinstance(hkl_val, (tuple, list)):
+                if all(isinstance(x, (int, np.integer)) for x in hkl_val):
+                    return tuple(int(x) for x in hkl_val)
+                if len(hkl_val) > 0 and isinstance(hkl_val[0], dict):
+                    return extract_hkl_indices(hkl_val[0])
+                return None
+            if isinstance(hkl_val, dict):
+                for key in ['hkl', 'indices']:
+                    if key in hkl_val:
+                        return extract_hkl_indices(hkl_val[key])
+                return None
+            return None
+    
+        def format_hkl(hkl_val):
+            """Convert any HKL representation to clean string like (h,k,l)."""
+            indices = extract_hkl_indices(hkl_val)
+            if indices is not None:
+                return str(indices)
+            return str(hkl_val)
+    
+        # ============================================================
         # STRICT PEAK SEMANTICS
         # ============================================================
         structural_peaks = xrd_results.get("structural_peaks", [])
-    
         n_raw = xrd_results.get("n_detected_maxima", 0)
-
         n_structural = len(structural_peaks)
     
         # UI subset (display only)
@@ -499,7 +525,6 @@ class PublicationPlotter:
             sorted(structural_peaks, key=lambda p: p["intensity"], reverse=True)[:10],
             key=lambda p: p["position"]
         )
-
     
         # ============================================================
         # (A) XRD PATTERN
@@ -577,7 +602,6 @@ class PublicationPlotter:
             for p in structural_peaks
             if p.get("crystallite_size", 0) > 0
         ]
-
     
         if len(sizes) >= 3:
             ax3.hist(sizes, bins=min(10, len(sizes)), alpha=0.7)
@@ -592,7 +616,7 @@ class PublicationPlotter:
             ax3.set_yticks([])
     
         # ============================================================
-        # (D) PEAK TABLE (STRUCTURAL)
+        # (D) PEAK TABLE (STRUCTURAL) – WITH CLEAN HKL
         # ============================================================
         ax4 = fig.add_subplot(gs[2, 0])
         ax4.axis("off")
@@ -604,7 +628,7 @@ class PublicationPlotter:
                 f"{p.get('d_spacing', 0):.3f}",
                 f"{p['fwhm_deg']:.3f}",
                 f"{p.get('crystallite_size', 0):.1f}",
-                p.get("hkl", "")
+                format_hkl(p.get("hkl", ""))  # <-- CLEAN HKL
             ] for i, p in enumerate(display_peaks)]
     
             table = ax4.table(
@@ -642,7 +666,6 @@ class PublicationPlotter:
     
         plt.suptitle("X-ray Diffraction Analysis (Nanomaterial-Validated)", fontsize=self.font_size + 4)
         return fig
-
     def create_phase_fraction_plot(self, phase_fractions):
         """
         Bar chart of phase fractions (CIF-validated only)
@@ -897,6 +920,7 @@ class PublicationPlotter:
         
 
         return fig
+
 
 
 
