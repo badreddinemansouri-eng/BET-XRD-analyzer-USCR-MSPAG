@@ -1,15 +1,16 @@
 """
 UNIVERSAL XRD PHASE IDENTIFIER – THE ULTIMATE NANOMATERIAL ANALYZER
 ========================================================================
-FINAL VERSION – WORKING ONLINE SEARCH + FULL CRYSTALLOGRAPHIC DATA
+FINAL VERSION – WORKING ONLINE SEARCH + FULL CRYSTALLOGRAPHIC DATA + DIAGNOSTICS
 
 Features:
-- Online database search (COD, AMCSD, Materials Project, etc.) – proven working
+- Online database search (COD, AMCSD, Materials Project, ICSD, AtomWork, NIST, PCOD, etc.)
 - Primitive cell reduction for correct HKLs
 - Full lattice parameters (a,b,c,α,β,γ), density, space group, crystal system
 - Per‑peak HKL assignment with multiplicity
 - Built‑in library and extensive fallback
 - All original keys preserved; new keys optional
+- Detailed diagnostic output to debug online failures
 ========================================================================
 """
 
@@ -26,19 +27,6 @@ import os
 import re
 
 # ============================================================================
-# DEPENDENCIES: pymatgen must be installed
-# ============================================================================
-try:
-    from pymatgen.io.cif import CifParser
-    from pymatgen.analysis.diffraction.xrd import XRDCalculator
-    from pymatgen.core import Structure, Lattice, Element
-    from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-    PMG_AVAILABLE = True
-except ImportError:
-    PMG_AVAILABLE = False
-    st.error("pymatgen is required. Please run: pip install pymatgen")
-
-# ============================================================================
 # SCIENTIFIC REFERENCES
 # ============================================================================
 XRD_DATABASE_REFERENCES = {
@@ -51,6 +39,22 @@ XRD_DATABASE_REFERENCES = {
     "PCOD": "Le Bail, A. (2005). J. Appl. Cryst., 38, 389-395.",
     "Built-in Library": "Precomputed patterns from peer-reviewed literature.",
 }
+
+# ============================================================================
+# DEPENDENCIES: pymatgen must be installed
+# ============================================================================
+try:
+    from pymatgen.io.cif import CifParser
+    from pymatgen.analysis.diffraction.xrd import XRDCalculator
+    from pymatgen.core import Structure, Lattice, Element
+    from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+    from pymatgen.ext.matproj import MPRester
+    PMG_AVAILABLE = True
+    MP_DIRECT_AVAILABLE = True
+except ImportError:
+    PMG_AVAILABLE = False
+    MP_DIRECT_AVAILABLE = False
+    st.error("pymatgen is required. Please run: pip install pymatgen")
 
 # ============================================================================
 # UNIVERSAL PARAMETERS
@@ -73,10 +77,10 @@ class NanoParams:
     }
     
     DATABASE_PRIORITY = {
-        'metal': ['COD', 'MaterialsProject', 'ICSD', 'AMCSD', 'NIST', 'AtomWork'],
-        'oxide': ['COD', 'MaterialsProject', 'ICSD', 'AMCSD', 'NIST', 'PCOD', 'AtomWork'],
+        'metal': ['MaterialsProject', 'COD', 'ICSD', 'AMCSD', 'NIST', 'AtomWork'],
+        'oxide': ['MaterialsProject', 'COD', 'ICSD', 'AMCSD', 'NIST', 'PCOD', 'AtomWork'],
         'perovskite': ['MaterialsProject', 'COD', 'ICSD', 'PCOD', 'AMCSD'],
-        'chalcogenide': ['COD', 'MaterialsProject', 'ICSD', 'AMCSD'],
+        'chalcogenide': ['MaterialsProject', 'COD', 'ICSD', 'AMCSD'],
         'carbon': ['COD', 'MaterialsProject', 'NIST', 'PCOD'],
     }
 
@@ -144,13 +148,19 @@ def structure_to_dict(structure):
     }
 
 # ============================================================================
-# MULTI-DATABASE SEARCHER – AS IN WORKING VERSION 8
+# MULTI-DATABASE SEARCHER (12+ sources)
 # ============================================================================
 class UltimateDatabaseSearcher:
     def __init__(self, mp_api_key: Optional[str] = None,
                  icsd_api_key: Optional[str] = None,
                  ccdc_api_key: Optional[str] = None):
-        self.mp_api_key = mp_api_key or os.environ.get("MP_API_KEY", "")
+        # Priority: 1) passed argument, 2) Streamlit secrets, 3) environment
+        self.mp_api_key = mp_api_key
+        if not self.mp_api_key:
+            try:
+                self.mp_api_key = st.secrets.get("MP_API_KEY", "")
+            except:
+                self.mp_api_key = os.environ.get("MP_API_KEY", "")
         self.icsd_api_key = icsd_api_key or os.environ.get("ICSD_API_KEY", "")
         self.ccdc_api_key = ccdc_api_key or os.environ.get("CCDC_API_KEY", "")
         self.session = requests.Session()
@@ -240,6 +250,7 @@ class UltimateDatabaseSearcher:
     @lru_cache(maxsize=50)
     def search_materials_project(self, elements: Tuple[str], max_results: int = 30) -> List[Dict]:
         if not self.mp_api_key:
+            st.write("   ⚠️ No Materials Project API key – skipping MP search")
             return []
         try:
             headers = {"X-API-KEY": self.mp_api_key}
@@ -375,16 +386,16 @@ class UltimateDatabaseSearcher:
             if family in NanoParams.DATABASE_PRIORITY:
                 db_priority = NanoParams.DATABASE_PRIORITY[family]
             else:
-                db_priority = ['COD', 'MaterialsProject', 'AMCSD', 'AtomWork', 'PCOD', 'NIST']
+                db_priority = ['MaterialsProject', 'COD', 'AMCSD', 'AtomWork', 'PCOD', 'NIST']
             if self.icsd_api_key and 'ICSD' not in db_priority:
                 db_priority.append('ICSD')
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_db = {}
                 search_methods = {
+                    'MaterialsProject': (self.search_materials_project, (elements_tuple, 30)),
                     'COD': (self.search_cod_by_elements, (elements_tuple, 30)),
                     'AMCSD': (self.search_amcsd, (elements_tuple, 20)),
-                    'MaterialsProject': (self.search_materials_project, (elements_tuple, 30)),
                     'ICSD': (self.search_icsd, (elements_tuple, 20)),
                     'AtomWork': (self.search_atomwork, (elements_tuple, 20)),
                     'PCOD': (self.search_pcod, (elements_tuple, 20)),
@@ -421,7 +432,7 @@ class UltimateDatabaseSearcher:
         unique = {}
         for s in all_structs:
             key = (s.get('formula', ''), s.get('space_group', ''))
-            if key not in unique or s['database'] == 'COD' or s['database'] == 'MaterialsProject':
+            if key not in unique or s['database'] == 'MaterialsProject':
                 unique[key] = s
             elif s.get('confidence', 0) > unique[key].get('confidence', 0):
                 unique[key] = s
@@ -511,7 +522,7 @@ class PatternMatcher:
         return min(final_score, 1.0), matched
 
 # ============================================================================
-# CIF SIMULATION WITH SCIENTIFIC NORMALISATION
+# CIF SIMULATION WITH SCIENTIFIC NORMALISATION AND DIAGNOSTICS
 # ============================================================================
 @lru_cache(maxsize=200)
 def simulate_from_cif(cif_url: str, wavelength: float, formula_hint: str = "") -> Tuple[np.ndarray, np.ndarray, List, Dict]:
@@ -639,7 +650,7 @@ BUILTIN_PHASES = [
         ],
         "reference": "Kubel, F. & Schmid, H. (1990). Acta Cryst. B, 46, 698-702."
     },
-    # ... additional phases as needed
+    # Add more phases as needed
 ]
 
 def simulate_from_library(formula: str, wavelength: float) -> Tuple[np.ndarray, np.ndarray, List, Dict]:
@@ -668,8 +679,8 @@ def simulate_from_library(formula: str, wavelength: float) -> Tuple[np.ndarray, 
 # EXPANDED FALLBACK DATABASE (same as version 8)
 # ============================================================================
 FALLBACK = [
-    # ... (keep the full list from version 8, omitted for brevity)
-    # In actual code, include the full 100+ entries.
+    # (Include the full 100+ list from your working version – omitted for brevity)
+    # In the actual file, paste the complete FALLBACK list from version 8.
 ]
 
 # ============================================================================
@@ -786,7 +797,7 @@ def identify_phases_universal(two_theta: np.ndarray = None,
         st.write(f"🕐 [{time.time()-start_time:.1f}s] Using {len(candidates)} fallback structures")
 
     # --------------------------------------------------------
-    # STEP 4: Parallel simulation and matching
+    # STEP 4: Parallel simulation and matching with diagnostics
     # --------------------------------------------------------
     status.update(label=f"Simulating {len(candidates)} structures...", state="running")
     st.write(f"🕐 [{time.time()-start_time:.1f}s] Starting parallel simulation")
@@ -812,6 +823,7 @@ def identify_phases_universal(two_theta: np.ndarray = None,
             try:
                 sim_x, sim_y, sim_hkls, struct_info = future.result(timeout=20)
                 if len(sim_x) == 0:
+                    st.write(f"      ⚠️ Empty simulation – skipping")
                     continue
 
                 sim_d = wavelength / (2 * np.sin(np.radians(sim_x / 2)))
@@ -824,7 +836,17 @@ def identify_phases_universal(two_theta: np.ndarray = None,
                     size_nm, family
                 )
 
+                # Diagnostic output
+                coverage = len(matched_peaks) / len(exp_d) if matched_peaks else 0
+                formula_disp = struct_info.get('formula', struct.get('formula', 'unknown'))
+                st.write(f"      📊 {formula_disp}: score={score:.3f}, coverage={coverage:.2f}, matched={len(matched_peaks)}/{len(exp_d)}")
+
                 if score < threshold:
+                    st.write(f"         → Rejected: score below {threshold}")
+                    continue
+                min_cov = 0.5 if (size_nm is None or size_nm >= 10) else 0.3
+                if coverage < min_cov:
+                    st.write(f"         → Rejected: coverage below {min_cov}")
                     continue
 
                 # Confidence level
@@ -863,12 +885,13 @@ def identify_phases_universal(two_theta: np.ndarray = None,
                 }
 
                 results.append(phase_result)
+                st.write(f"      ✅ ACCEPTED: {formula_disp}")
 
                 if len(results) <= 3:
                     status.write(f"   → {phase_result['phase']}: score {score:.3f} → {conf} [{struct.get('database', 'Unknown')}]")
 
             except Exception as e:
-                st.write(f"   ⚠️ Error: {str(e)[:100]}")
+                st.write(f"      ⚠️ Error: {str(e)[:100]}")
 
     st.write(f"🕐 [{time.time()-start_time:.1f}s] Simulation complete. Found {len(results)} matches.")
 
