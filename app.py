@@ -1794,7 +1794,7 @@ def display_nanomaterial_validation(xrd_results: Dict):
         st.info("Moderate nanocrystalline character")
     else:
         st.warning("Weak or bulk-like crystallinity")
-                        
+
 @memory_safe_plot
 def display_3d_xrd_visualization(results, scientific_params):
     """
@@ -1814,6 +1814,42 @@ def display_3d_xrd_visualization(results, scientific_params):
     if not structural_peaks:
         st.warning("No peaks detected in XRD data")
         return
+    
+    # ============================================================
+    # HELPER FUNCTION FOR HKL EXTRACTION (DEFINED INSIDE)
+    # ============================================================
+    def extract_hkl_indices(hkl_val):
+        """
+        Recursively extract a tuple of integer indices from various HKL representations.
+        Returns a tuple of ints or None if not found.
+        """
+        if hkl_val is None:
+            return None
+        if isinstance(hkl_val, (int, float, str)):
+            return None
+        if isinstance(hkl_val, (tuple, list)):
+            # Check if it's already a tuple of ints
+            if all(isinstance(x, (int, np.integer)) for x in hkl_val):
+                return tuple(int(x) for x in hkl_val)
+            # If it's a list/tuple of dicts, try to get from first element
+            if len(hkl_val) > 0 and isinstance(hkl_val[0], dict):
+                if 'hkl' in hkl_val[0]:
+                    return extract_hkl_indices(hkl_val[0]['hkl'])
+            return None
+        if isinstance(hkl_val, dict):
+            # Try common keys
+            for key in ['hkl', 'indices']:
+                if key in hkl_val:
+                    return extract_hkl_indices(hkl_val[key])
+            return None
+        return None
+
+    def format_hkl(hkl_val):
+        """Convert any HKL representation into a clean string like (h,k,l)."""
+        indices = extract_hkl_indices(hkl_val)
+        if indices is not None:
+            return str(indices)
+        return str(hkl_val)
     
     # ============================================================
     # Get selected phases from session state
@@ -1880,8 +1916,10 @@ def display_3d_xrd_visualization(results, scientific_params):
             # Create 3D scatter plot
             fig = go.Figure()
             
-            # Add peak lines and markers
-            colors = {'TiO2': 'red', 'TiO': 'blue', 'Fe2O3': 'orange', 'ZnO': 'green', 'default': 'purple'}
+            # Color mapping for phases
+            colors = {'TiO2': 'red', 'TiO': 'blue', 'Fe2O3': 'orange', 
+                     'ZnO': 'green', 'SiO2': 'purple', 'Al2O3': 'brown',
+                     'default': 'gray'}
             
             for pos, intensity, norm_int in zip(positions, intensities, norm_intensities):
                 # Convert 2θ to scattering vector Q for better spacing
@@ -1950,11 +1988,15 @@ def display_3d_xrd_visualization(results, scientific_params):
             # Add legend for phases
             if phases:
                 legend_cols = st.columns(min(len(phases), 4))
-                for i, phase in enumerate(phases):
-                    if i < len(legend_cols):
-                        color = colors.get(phase["phase"], colors['default'])
-                        legend_cols[i].markdown(f"<span style='color:{color}'>⬤</span> {phase['phase']}", 
-                                              unsafe_allow_html=True)
+                phase_colors_display = []
+                for phase in phases:
+                    if not selected_phases or phase["phase"] in selected_phases:
+                        phase_colors_display.append(phase)
+                
+                for i, phase in enumerate(phase_colors_display[:4]):
+                    color = colors.get(phase["phase"], colors['default'])
+                    legend_cols[i].markdown(f"<span style='color:{color}'>⬤</span> {phase['phase']}", 
+                                          unsafe_allow_html=True)
             
         except Exception as e:
             st.error(f"Could not create 3D visualization: {str(e)}")
@@ -1983,8 +2025,10 @@ def display_3d_xrd_visualization(results, scientific_params):
                             else:
                                 peak_hkl_map[t_exp] = str(hkl)
             
-            colors = plt.cm.tab10(np.linspace(0, 1, len(phases)))
-            phase_colors = {p["phase"]: colors[i] for i, p in enumerate(phases)}
+            # Create color map for phases
+            unique_phases = list(set(p.get('phase', '') for p in filtered_peaks if p.get('phase')))
+            cmap = plt.cm.get_cmap('tab10', len(unique_phases))
+            phase_colors = {phase: cmap(i) for i, phase in enumerate(unique_phases)}
             
             for p in filtered_peaks:
                 pos = p['position']
@@ -1995,10 +2039,11 @@ def display_3d_xrd_visualization(results, scientific_params):
                 
                 ax.plot([pos], [intensity], 'o', color=color, markersize=6, 
                        markeredgecolor='black', markeredgewidth=0.5)
-                ax.text(pos, intensity * 1.05, hkl, 
-                       ha='center', va='bottom', fontsize=8,
-                       rotation=45, bbox=dict(boxstyle='round,pad=0.2', 
-                                             facecolor='white', alpha=0.7))
+                if hkl:
+                    ax.text(pos, intensity * 1.05, hkl, 
+                           ha='center', va='bottom', fontsize=8,
+                           rotation=45, bbox=dict(boxstyle='round,pad=0.2', 
+                                                 facecolor='white', alpha=0.7))
             
             ax.set_xlabel('2θ (degrees)')
             ax.set_ylabel('Intensity')
@@ -2067,11 +2112,13 @@ def display_3d_xrd_visualization(results, scientific_params):
                     st.pyplot(fig)
                     
                     # Interactive Plotly version if available
-                    if PLOTLY_AVAILABLE:
+                    try:
                         interactive_fig = crystal_3d.create_interactive_plot(structure)
                         if interactive_fig:
                             with st.expander("🔍 Interactive 3D View"):
                                 st.plotly_chart(interactive_fig, use_container_width=True)
+                    except:
+                        pass
                     
                     st.markdown("---")
                     
@@ -2848,6 +2895,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
