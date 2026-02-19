@@ -1434,7 +1434,10 @@ def display_bet_analysis(results, plotter):
             st.write(f"**Closure Pressure:** {hyst['closure_pressure']:.3f} P/P₀")
 @memory_safe_plot
 def display_xrd_analysis(results, plotter):
-    """Display detailed XRD analysis with interactive phase selection."""
+    """
+    Display detailed XRD analysis with clean HKL formatting, conventional HKL column,
+    and interactive phase selection without re‑running the analysis.
+    """
     st.subheader("Advanced XRD Analysis")
 
     # ============================================================
@@ -1462,11 +1465,71 @@ def display_xrd_analysis(results, plotter):
         st.metric("Structural Bragg peaks", n_structural)
 
     # ============================================================
-    # PHASE ASSIGNMENT TO PEAKS
+    # HELPER FUNCTIONS FOR HKL FORMATTING
+    # ============================================================
+    def format_hkl(hkl_val):
+        """
+        Convert any HKL representation into a clean string like (h,k,l).
+        Handles tuples, lists, and dictionaries.
+        """
+        if isinstance(hkl_val, (tuple, list)):
+            # If it's a tuple/list, assume it's the indices
+            return str(tuple(int(x) for x in hkl_val))
+        elif isinstance(hkl_val, dict):
+            # If it's a dict, try to find a key that contains indices
+            for key in ['hkl', 'indices']:
+                if key in hkl_val:
+                    return format_hkl(hkl_val[key])
+            # Otherwise, try to extract from string keys
+            for k, v in hkl_val.items():
+                if isinstance(k, str) and '(' in k and ')' in k:
+                    import re
+                    match = re.search(r'\(([^)]+)\)', k)
+                    if match:
+                        nums = match.group(1).split(',')
+                        return '(' + ','.join(nums) + ')'
+            # Fallback
+            return str(hkl_val)
+        else:
+            return str(hkl_val)
+
+    def conventional_hkl(hkl_val):
+        """
+        Convert HKL to a conventional form:
+        - Reduce by greatest common divisor (if all indices share a factor)
+        - Make the first non‑zero index positive (standard convention)
+        Note: This is a simplistic approach; for rigorous reduction you may need space‑group info.
+        """
+        # First get a clean tuple
+        clean = format_hkl(hkl_val).strip('()').split(',')
+        try:
+            hkl = tuple(int(x.strip()) for x in clean)
+        except:
+            return format_hkl(hkl_val)
+
+        # Reduce by GCD if all indices are divisible
+        from math import gcd
+        from functools import reduce
+        def gcd_list(lst):
+            return reduce(gcd, lst, 0)
+        common = gcd_list([abs(i) for i in hkl])
+        if common > 1:
+            hkl = tuple(i // common for i in hkl)
+
+        # Make first non‑zero index positive
+        for i, val in enumerate(hkl):
+            if val != 0:
+                if val < 0:
+                    hkl = tuple(-x for x in hkl)
+                break
+        return str(hkl)
+
+    # ============================================================
+    # PHASE ASSIGNMENT TO PEAKS (if phases exist)
     # ============================================================
     phases = xrd_res.get("phases", [])
     if phases:
-        # Assign phase to each peak using matched reflections
+        # Map phases to peaks (uses scientific_integration function, no re‑analysis)
         from scientific_integration import map_peaks_to_phases
         structural_peaks = map_peaks_to_phases(structural_peaks, phases)
 
@@ -1482,9 +1545,9 @@ def display_xrd_analysis(results, plotter):
         } for p in phases])
         st.dataframe(df_phases, use_container_width=True)
 
-        # Phase selection widget
+        # Phase selection widget (stored in session state)
         all_phase_names = [p["phase"] for p in phases]
-        default_selection = all_phase_names  # all selected by default
+        default_selection = all_phase_names
         selected_phases = st.multiselect(
             "🎯 Select phases to display:",
             options=all_phase_names,
@@ -1496,10 +1559,10 @@ def display_xrd_analysis(results, plotter):
         if selected_phases:
             filtered_peaks = [p for p in structural_peaks if p.get("phase") in selected_phases]
         else:
-            filtered_peaks = []  # if nothing selected, show none (or maybe show all)
+            filtered_peaks = []
             st.info("No phases selected. Select at least one phase to see details.")
 
-        # Show filtered peak table
+        # Display filtered peak table
         if filtered_peaks:
             st.markdown(f"### 📌 Structural Peaks for Selected Phases ({len(filtered_peaks)} peaks)")
             table = [{
@@ -1508,14 +1571,14 @@ def display_xrd_analysis(results, plotter):
                 "Intensity": round(p["intensity"], 1),
                 "FWHM (°)": round(p["fwhm_deg"], 4),
                 "Size (nm)": round(p.get("crystallite_size", 0), 2),
-                "HKL": str(p.get("hkl", "")),
+                "HKL": format_hkl(p.get("hkl", "")),
+                "Conv. HKL": conventional_hkl(p.get("hkl", "")),
                 "Phase": p.get("phase", ""),
             } for p in filtered_peaks]
             st.dataframe(pd.DataFrame(table), use_container_width=True)
 
-        # Recalculate phase fractions for selected set
+        # Phase fractions (renormalized for selected phases)
         if len(selected_phases) > 1 and filtered_peaks:
-            # Use only peaks from selected phases
             total_intensity = sum(p["intensity"] for p in filtered_peaks)
             if total_intensity > 0:
                 phase_intensity = {}
@@ -1534,22 +1597,28 @@ def display_xrd_analysis(results, plotter):
                 df_frac = pd.DataFrame(fractions)
                 st.dataframe(df_frac, use_container_width=True)
 
-        # Detailed matched reflections per phase (still shows all phases, but we can also filter)
+        # Detailed matched reflections per phase (expandable)
         st.subheader("🔍 Matched Reflections (HKL assignment)")
         for phase in phases:
             if phase["phase"] in selected_phases:
                 with st.expander(f"{phase['phase']} – {len(phase.get('hkls', []))} matched peaks"):
                     hkls = phase.get('hkls', [])
                     if hkls:
-                        # Convert hkl tuple to string
+                        # Prepare a clean DataFrame
+                        rows = []
                         for match in hkls:
-                            if 'hkl' in match and not isinstance(match['hkl'], str):
-                                match['hkl'] = str(match['hkl'])
-                        df_peaks = pd.DataFrame(hkls)
-                        col_order = ['hkl', 'two_theta_exp', 'two_theta_calc', 'd_exp', 'd_calc',
-                                     'intensity_exp', 'intensity_calc']
-                        existing_cols = [c for c in col_order if c in df_peaks.columns]
-                        df_peaks = df_peaks[existing_cols]
+                            row = {
+                                "HKL": format_hkl(match.get('hkl', '')),
+                                "Conv. HKL": conventional_hkl(match.get('hkl', '')),
+                                "2θ exp (°)": match.get('two_theta_exp'),
+                                "2θ calc (°)": match.get('two_theta_calc'),
+                                "d exp (Å)": match.get('d_exp'),
+                                "d calc (Å)": match.get('d_calc'),
+                                "I exp": match.get('intensity_exp'),
+                                "I calc": match.get('intensity_calc'),
+                            }
+                            rows.append(row)
+                        df_peaks = pd.DataFrame(rows)
                         st.dataframe(df_peaks, use_container_width=True)
                     else:
                         st.info("No HKL assignments available for this phase.")
@@ -1574,7 +1643,7 @@ This could be due to:
         st.pyplot(fig)
 
     # ============================================================
-    # PEAK POSITION DIAGNOSTICS (unchanged)
+    # PEAK POSITION DIAGNOSTICS (debug)
     # ============================================================
     with st.expander("🔍 Peak Position Diagnostics (Debug)", expanded=False):
         two_theta = results["xrd_raw"]["two_theta"]
@@ -1609,7 +1678,7 @@ This could be due to:
             st.error("❌ Strongest raw peak was rejected during structural filtering")
 
     # ============================================================
-    # CRYSTALLITE SIZE / STRAIN (unchanged)
+    # CRYSTALLITE SIZE / STRAIN
     # ============================================================
     with st.expander("🔬 Crystallite Size & Strain Analysis"):
         size = xrd_res.get("crystallite_size", {})
@@ -1628,7 +1697,7 @@ This could be due to:
             st.write("**Dislocation density:** Not determined")
 
     # ============================================================
-    # UNIVERSAL & NANO ANALYSIS (unchanged)
+    # UNIVERSAL & NANO ANALYSIS
     # ============================================================
     display_universal_material_analysis(xrd_res)
     display_nanomaterial_validation(xrd_res)
@@ -2537,6 +2606,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
