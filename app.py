@@ -1437,7 +1437,8 @@ def display_bet_analysis(results, plotter):
 def display_xrd_analysis(results, plotter):
     """
     Display detailed XRD analysis with clean HKL formatting, conventional HKL column,
-    and interactive phase selection without re‑running the analysis.
+    full crystallographic information, and interactive phase selection.
+    COMPATIBLE with enhanced phase identifier (new keys are optional).
     """
     st.subheader("Advanced XRD Analysis")
 
@@ -1483,44 +1484,19 @@ def display_xrd_analysis(results, plotter):
                 return tuple(int(x) for x in hkl_val)
             # If it's a list/tuple of dicts, try to get from first element
             if len(hkl_val) > 0 and isinstance(hkl_val[0], dict):
-                first = hkl_val[0]
-                if isinstance(first, dict) and 'hkl' in first:
-                    return extract_hkl_indices(first['hkl'])
-            # If it's a tuple of strings that look like '(1,-2,-2)', parse them
-            if all(isinstance(x, str) for x in hkl_val):
-                import re
-                nums = re.findall(r'-?\d+', hkl_val[0])
-                if nums:
-                    return tuple(int(n) for n in nums)
+                if 'hkl' in hkl_val[0]:
+                    return extract_hkl_indices(hkl_val[0]['hkl'])
             return None
         if isinstance(hkl_val, dict):
             # Try common keys
-            for key in ['hkl', 'indices', 'h', 'k', 'l']:
+            for key in ['hkl', 'indices']:
                 if key in hkl_val:
-                    val = hkl_val[key]
-                    if isinstance(val, (tuple, list)) and all(isinstance(x, (int, np.integer)) for x in val):
-                        return tuple(int(x) for x in val)
-                    if isinstance(val, dict):
-                        return extract_hkl_indices(val)
-                    if isinstance(val, str):
-                        import re
-                        nums = re.findall(r'-?\d+', val)
-                        if nums:
-                            return tuple(int(n) for n in nums)
-            # If the dict has a key that is a string containing parentheses
-            for k, v in hkl_val.items():
-                if isinstance(k, str) and '(' in k:
-                    import re
-                    nums = re.findall(r'-?\d+', k)
-                    if nums:
-                        return tuple(int(n) for n in nums)
+                    return extract_hkl_indices(hkl_val[key])
             return None
         return None
 
     def format_hkl(hkl_val):
-        """
-        Convert any HKL representation into a clean string like (h,k,l).
-        """
+        """Convert any HKL representation into a clean string like (h,k,l)."""
         indices = extract_hkl_indices(hkl_val)
         if indices is not None:
             return str(indices)
@@ -1529,8 +1505,8 @@ def display_xrd_analysis(results, plotter):
     def conventional_hkl(hkl_val):
         """
         Convert HKL to a conventional form:
-        - Reduce by greatest common divisor (if all indices share a factor)
-        - Make the first non‑zero index positive (standard convention)
+        - Reduce by greatest common divisor
+        - Make the first non‑zero index positive
         """
         indices = extract_hkl_indices(hkl_val)
         if indices is None:
@@ -1552,25 +1528,60 @@ def display_xrd_analysis(results, plotter):
                 break
         return str(indices)
 
+    def format_lattice(lat):
+        """Pretty‑print lattice parameters, handling non‑90° angles."""
+        if not lat or not isinstance(lat, dict):
+            return "N/A"
+        
+        a = lat.get('a', 0)
+        b = lat.get('b', a)
+        c = lat.get('c', a)
+        alpha = lat.get('alpha', 90)
+        beta = lat.get('beta', 90)
+        gamma = lat.get('gamma', 90)
+        
+        # Check if all angles are 90°
+        if abs(alpha - 90) < 0.01 and abs(beta - 90) < 0.01 and abs(gamma - 90) < 0.01:
+            return f"a={a:.3f}, b={b:.3f}, c={c:.3f} (all 90°)"
+        else:
+            return f"a={a:.3f}, b={b:.3f}, c={c:.3f}, α={alpha:.2f}°, β={beta:.2f}°, γ={gamma:.2f}°"
+
     # ============================================================
     # PHASE ASSIGNMENT TO PEAKS (if phases exist)
     # ============================================================
     phases = xrd_res.get("phases", [])
     if phases:
+        # Map phases to peaks (uses scientific_integration function)
         from scientific_integration import map_peaks_to_phases
         structural_peaks = map_peaks_to_phases(structural_peaks, phases)
 
+        # Display phase summary with FULL crystallographic information
         st.markdown("### 🧪 Identified Phases")
-        df_phases = pd.DataFrame([{
-            "Phase": p["phase"],
-            "Crystal system": p["crystal_system"],
-            "Space group": p["space_group"],
-            "Score": round(p["score"], 3),
-            "Confidence": p.get("confidence_level", ""),
-            "Matched peaks": len(p.get("hkls", []))
-        } for p in phases])
+        
+        phase_data = []
+        for p in phases:
+            # Safely get lattice info
+            lattice = p.get('lattice', {})
+            
+            # Get density (new key, optional)
+            density = p.get('density', 0)
+            density_str = f"{density:.2f}" if density else "N/A"
+            
+            phase_data.append({
+                "Phase": p["phase"],
+                "Crystal system": p.get("crystal_system", "Unknown"),
+                "Space group": p.get("space_group", "Unknown"),
+                "Lattice params": format_lattice(lattice),
+                "Density (g/cm³)": density_str,
+                "Score": round(p["score"], 3),
+                "Confidence": p.get("confidence_level", ""),
+                "Matched peaks": len(p.get("hkls", []))
+            })
+        
+        df_phases = pd.DataFrame(phase_data)
         st.dataframe(df_phases, width='stretch')
 
+        # Phase selection widget (stored in session state)
         all_phase_names = [p["phase"] for p in phases]
         default_selection = all_phase_names
         selected_phases = st.multiselect(
@@ -1580,12 +1591,14 @@ def display_xrd_analysis(results, plotter):
             key="selected_phases_xrd"
         )
 
+        # Filter peaks based on selection
         if selected_phases:
             filtered_peaks = [p for p in structural_peaks if p.get("phase") in selected_phases]
         else:
             filtered_peaks = []
             st.info("No phases selected. Select at least one phase to see details.")
 
+        # Display filtered peak table
         if filtered_peaks:
             st.markdown(f"### 📌 Structural Peaks for Selected Phases ({len(filtered_peaks)} peaks)")
             table = [{
@@ -1600,6 +1613,7 @@ def display_xrd_analysis(results, plotter):
             } for p in filtered_peaks]
             st.dataframe(pd.DataFrame(table), width='stretch')
 
+        # Phase fractions (renormalized for selected phases)
         if len(selected_phases) > 1 and filtered_peaks:
             total_intensity = sum(p["intensity"] for p in filtered_peaks)
             if total_intensity > 0:
@@ -1616,9 +1630,11 @@ def display_xrd_analysis(results, plotter):
                     })
                 fractions.sort(key=lambda x: x["fraction"], reverse=True)
                 st.markdown("### ⚖️ Phase Fractions (within selection)")
+                st.markdown("*Semi‑quantitative estimate based on peak intensities*")
                 df_frac = pd.DataFrame(fractions)
                 st.dataframe(df_frac, width='stretch')
 
+        # Detailed matched reflections per phase
         st.subheader("🔍 Matched Reflections (HKL assignment)")
         for phase in phases:
             if phase["phase"] in selected_phases:
@@ -1627,22 +1643,38 @@ def display_xrd_analysis(results, plotter):
                     if hkls:
                         rows = []
                         for match in hkls:
+                            # Handle multiplicity if present
+                            hkl_val = match.get('hkl', '')
+                            mult = match.get('multiplicity', 1)
+                            hkl_str = format_hkl(hkl_val)
+                            if mult > 1:
+                                hkl_str = f"{hkl_str} (×{mult})"
+                            
                             row = {
-                                "HKL": format_hkl(match.get('hkl', '')),
-                                "Conv. HKL": conventional_hkl(match.get('hkl', '')),
-                                "2θ exp (°)": match.get('two_theta_exp'),
-                                "2θ calc (°)": match.get('two_theta_calc'),
-                                "d exp (Å)": match.get('d_exp'),
-                                "d calc (Å)": match.get('d_calc'),
-                                "I exp": match.get('intensity_exp'),
-                                "I calc": match.get('intensity_calc'),
+                                "HKL": hkl_str,
+                                "Conv. HKL": conventional_hkl(hkl_val),
+                                "2θ exp (°)": round(match.get('two_theta_exp', 0), 3),
+                                "2θ calc (°)": round(match.get('two_theta_calc', 0), 3),
+                                "Δ2θ": round(abs(match.get('two_theta_exp', 0) - match.get('two_theta_calc', 0)), 3),
+                                "d exp (Å)": round(match.get('d_exp', 0), 4),
+                                "d calc (Å)": round(match.get('d_calc', 0), 4),
+                                "Δd": round(abs(match.get('d_exp', 0) - match.get('d_calc', 0)), 4),
+                                "I exp": round(match.get('intensity_exp', 0), 1),
+                                "I calc": round(match.get('intensity_calc', 0), 1),
                             }
                             rows.append(row)
                         df_peaks = pd.DataFrame(rows)
                         st.dataframe(df_peaks, width='stretch')
+                        
+                        # Show summary statistics for this phase
+                        if rows:
+                            avg_delta_2theta = np.mean([r['Δ2θ'] for r in rows])
+                            avg_delta_d = np.mean([r['Δd'] for r in rows])
+                            st.caption(f"Average Δ2θ: {avg_delta_2theta:.3f}° | Average Δd: {avg_delta_d:.4f} Å")
                     else:
                         st.info("No HKL assignments available for this phase.")
     else:
+        # No phases identified – show helpful message
         with st.expander("❓ Why were no crystalline phases identified?", expanded=True):
             st.markdown("""
 **No phases matched.**  
@@ -1702,6 +1734,9 @@ This could be due to:
     with st.expander("🔬 Crystallite Size & Strain Analysis"):
         size = xrd_res.get("crystallite_size", {})
         st.write(f"**Scherrer size:** {size.get('scherrer', 0):.2f} nm")
+        st.write(f"**Size distribution:** {size.get('distribution', 'Unknown')}")
+        if size.get('cv', 0) > 0:
+            st.write(f"**Coefficient of variation:** {size.get('cv', 0):.2f}")
 
         microstrain = xrd_res.get("microstrain", None)
         if microstrain is not None:
@@ -1759,18 +1794,20 @@ def display_nanomaterial_validation(xrd_results: Dict):
         st.info("Moderate nanocrystalline character")
     else:
         st.warning("Weak or bulk-like crystallinity")
-            
-@memory_safe_plot            
+                        
+@memory_safe_plot
 def display_3d_xrd_visualization(results, scientific_params):
-    """Display 3D XRD visualization with hkl indices, respecting selected phases."""
-    st.subheader("3D XRD Pattern Visualization")
+    """
+    Display 3D XRD pattern with HKL labels and crystal structure visualization.
+    Now integrates with phase selection and displays structures from XRD results.
+    """
+    st.subheader("3D XRD Pattern & Crystal Structure Visualization")
     
     if not results.get('xrd_results'):
         st.warning("XRD data is required for 3D visualization")
         return
     
     xrd_res = results['xrd_results']
-    # Extract structural peaks (list of dicts with position, intensity, etc.)
     structural_peaks = xrd_res.get("structural_peaks", [])
     phases = xrd_res.get("phases", [])
     
@@ -1778,160 +1815,346 @@ def display_3d_xrd_visualization(results, scientific_params):
         st.warning("No peaks detected in XRD data")
         return
     
-    # Get selected phases from session state (set in display_xrd_analysis)
+    # ============================================================
+    # Get selected phases from session state
+    # ============================================================
     selected_phases = st.session_state.get("selected_phases_xrd", [])
     
-    # Filter peaks to those belonging to selected phases (if any selected)
-    if selected_phases:
-        # We need to know which peaks belong to which phase.
-        # This requires that peaks have been annotated with 'phase' via map_peaks_to_phases.
-        # If not, we can build a mapping from phases' hkls to peak positions.
-        # For simplicity, assume map_peaks_to_phases has been called and peaks have 'phase'.
-        # If not, fall back to using all peaks.
-        filtered_peaks = [p for p in structural_peaks if p.get("phase") in selected_phases]
+    # Filter peaks to those belonging to selected phases
+    if selected_phases and phases:
+        # Build mapping of peak positions to phases using hkls
+        peak_to_phase = {}
+        for phase in phases:
+            if phase["phase"] in selected_phases:
+                for match in phase.get('hkls', []):
+                    t_exp = match.get('two_theta_exp')
+                    if t_exp is not None:
+                        peak_to_phase[t_exp] = phase["phase"]
+        
+        filtered_peaks = [p for p in structural_peaks if p["position"] in peak_to_phase]
         if not filtered_peaks:
             st.info("No peaks from selected phases – showing all peaks.")
             filtered_peaks = structural_peaks
     else:
         filtered_peaks = structural_peaks
     
-    # Create a simple 3D XRD visualization
-    try:
-        import plotly.graph_objects as go
-        
-        positions = [p['position'] for p in filtered_peaks]
-        intensities = [p['intensity'] for p in filtered_peaks]
-        
-        # Normalize intensities
-        max_intensity = max(intensities) if intensities else 1
-        norm_intensities = [i/max_intensity for i in intensities]
-        
-        # Build a mapping from peak position to HKL from all phases
-        # This collects HKL from any matched phase that includes this peak
-        peak_hkl_map = {}
-        for phase in phases:
-            for match in phase.get('hkls', []):
-                t_exp = match.get('two_theta_exp')
-                hkl = match.get('hkl')
-                if t_exp is not None and hkl:
-                    # Use closest peak position (tolerance 0.1°)
-                    for pos in positions:
-                        if abs(pos - t_exp) < 0.1:
-                            peak_hkl_map[pos] = hkl
-                            break
-        
-        hkl_labels = [peak_hkl_map.get(p, '') for p in positions]
-        
-        # Create 3D scatter plot
-        fig = go.Figure()
-        
-        # Add peak lines (vertical lines)
-        for pos, intensity, hkl in zip(positions, norm_intensities, hkl_labels):
-            # Convert 2θ to scattering vector Q (optional, but nice)
-            theta = np.radians(pos / 2)
-            q = (4 * np.pi / xrd_res.get("wavelength", 1.5406)) * np.sin(theta)
+    # ============================================================
+    # Create tabs for different visualizations
+    # ============================================================
+    viz_tabs = st.tabs(["📈 3D XRD Pattern", "🏛️ Crystal Structure", "📊 Combined View"])
+    
+    # ============================================================
+    # TAB 1: 3D XRD Pattern
+    # ============================================================
+    with viz_tabs[0]:
+        try:
+            import plotly.graph_objects as go
             
-            # Line from base to peak (using Q as x for better spacing)
-            fig.add_trace(go.Scatter3d(
-                x=[q, q],
-                y=[0, intensity],
-                z=[0, 0],
-                mode='lines',
-                line=dict(color='blue', width=3),
-                showlegend=False
-            ))
+            positions = [p['position'] for p in filtered_peaks]
+            intensities = [p['intensity'] for p in filtered_peaks]
             
-            # Peak marker
-            fig.add_trace(go.Scatter3d(
-                x=[q],
-                y=[intensity],
-                z=[0],
-                mode='markers',
-                marker=dict(
-                    size=8,
-                    color='red',
-                    opacity=0.8
+            # Normalize intensities
+            max_intensity = max(intensities) if intensities else 1
+            norm_intensities = [i/max_intensity for i in intensities]
+            
+            # Build HKL mapping from phases
+            peak_hkl_map = {}
+            peak_phase_map = {}
+            for phase in phases:
+                if not selected_phases or phase["phase"] in selected_phases:
+                    for match in phase.get('hkls', []):
+                        t_exp = match.get('two_theta_exp')
+                        hkl = match.get('hkl')
+                        if t_exp is not None and hkl:
+                            # Find closest peak position
+                            for pos in positions:
+                                if abs(pos - t_exp) < 0.1:
+                                    indices = extract_hkl_indices(hkl)
+                                    if indices:
+                                        peak_hkl_map[pos] = str(indices)
+                                    else:
+                                        peak_hkl_map[pos] = str(hkl)
+                                    peak_phase_map[pos] = phase["phase"]
+                                    break
+            
+            # Create 3D scatter plot
+            fig = go.Figure()
+            
+            # Add peak lines and markers
+            colors = {'TiO2': 'red', 'TiO': 'blue', 'Fe2O3': 'orange', 'ZnO': 'green', 'default': 'purple'}
+            
+            for pos, intensity, norm_int in zip(positions, intensities, norm_intensities):
+                # Convert 2θ to scattering vector Q for better spacing
+                wavelength = xrd_res.get("wavelength", 1.5406)
+                theta = np.radians(pos / 2)
+                q = (4 * np.pi / wavelength) * np.sin(theta)
+                
+                # Get HKL and phase for hover info
+                hkl_str = peak_hkl_map.get(pos, '')
+                phase_name = peak_phase_map.get(pos, '')
+                color = colors.get(phase_name, colors['default'])
+                
+                # Vertical line
+                fig.add_trace(go.Scatter3d(
+                    x=[q, q],
+                    y=[0, norm_int],
+                    z=[0, 0],
+                    mode='lines',
+                    line=dict(color=color, width=3),
+                    showlegend=False,
+                    hoverinfo='none'
+                ))
+                
+                # Peak marker
+                hover_text = f"2θ: {pos:.2f}°<br>Intensity: {intensity:.1f}<br>Q: {q:.3f} Å⁻¹"
+                if hkl_str:
+                    hover_text += f"<br>hkl: {hkl_str}"
+                if phase_name:
+                    hover_text += f"<br>Phase: {phase_name}"
+                
+                fig.add_trace(go.Scatter3d(
+                    x=[q],
+                    y=[norm_int],
+                    z=[0],
+                    mode='markers',
+                    marker=dict(
+                        size=8,
+                        color=color,
+                        opacity=0.9,
+                        line=dict(width=1, color='black')
+                    ),
+                    text=hover_text,
+                    hoverinfo='text',
+                    showlegend=False
+                ))
+            
+            # Update layout
+            fig.update_layout(
+                scene=dict(
+                    xaxis_title='Q (Å⁻¹)',
+                    yaxis_title='Normalized Intensity',
+                    zaxis_title='',
+                    camera=dict(
+                        eye=dict(x=1.5, y=1.5, z=0.5)
+                    ),
+                    bgcolor='white'
                 ),
-                text=f"2θ: {pos:.2f}°<br>Intensity: {intensity:.2f}<br>hkl: {hkl}",
-                hoverinfo='text',
+                title='3D XRD Pattern with HKL Labels',
+                width=800,
+                height=600,
                 showlegend=False
-            ))
-        
-        # Update layout
-        fig.update_layout(
-            scene=dict(
-                xaxis_title='Q (Å⁻¹)',
-                yaxis_title='Normalized Intensity',
-                zaxis_title='',
-                camera=dict(
-                    eye=dict(x=1.5, y=1.5, z=0.5)
-                )
-            ),
-            title='3D XRD Pattern with HKL Labels',
-            width=800,
-            height=600
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Add crystal information if available
-        crystal_system = scientific_params['crystal']['system']
-        lattice_params = scientific_params['crystal']['lattice_params']
-        
-        if crystal_system != 'Unknown' and lattice_params:
-            st.subheader("Crystal Structure Information")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.info(f"**Crystal System:** {crystal_system}")
-                st.info(f"**Lattice Parameters:** {lattice_params}")
-            with col2:
-                if 'indexing' in xrd_res:
-                    indexing = xrd_res['indexing']
-                    if 'figures_of_merit' in indexing:
-                        fom = indexing['figures_of_merit']
-                        if 'M20' in fom:
-                            st.info(f"**M₂₀ Figure of Merit:** {fom['M20']:.1f}")
-        
-    except Exception as e:
-        st.error(f"Could not create 3D visualization: {str(e)}")
-        
-        # Fallback: simple 2D plot with HKL annotations
-        st.subheader("2D XRD Pattern with HKL Indices")
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(12, 6))
-        
-        if results.get('xrd_raw'):
-            ax.plot(results['xrd_raw']['two_theta'], 
-                   results['xrd_raw']['intensity'], 
-                   'k-', linewidth=1)
-        
-        # Build HKL mapping again
-        peak_hkl_map = {}
-        for phase in phases:
-            for match in phase.get('hkls', []):
-                t_exp = match.get('two_theta_exp')
-                hkl = match.get('hkl')
-                if t_exp is not None and hkl:
-                    for pos in positions:
-                        if abs(pos - t_exp) < 0.1:
-                            peak_hkl_map[pos] = hkl
-                            break
-        
-        for p in filtered_peaks:
-            pos = p['position']
-            intensity = p['intensity']
-            hkl = peak_hkl_map.get(pos, '')
+            )
             
-            ax.plot([pos], [intensity], 'ro', markersize=5)
-            ax.text(pos, intensity * 1.05, hkl, 
-                   ha='center', va='bottom', fontsize=8,
-                   rotation=45)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Add legend for phases
+            if phases:
+                legend_cols = st.columns(min(len(phases), 4))
+                for i, phase in enumerate(phases):
+                    if i < len(legend_cols):
+                        color = colors.get(phase["phase"], colors['default'])
+                        legend_cols[i].markdown(f"<span style='color:{color}'>⬤</span> {phase['phase']}", 
+                                              unsafe_allow_html=True)
+            
+        except Exception as e:
+            st.error(f"Could not create 3D visualization: {str(e)}")
+            
+            # Fallback: simple 2D plot
+            st.subheader("2D XRD Pattern with HKL Indices")
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(figsize=(12, 6))
+            
+            if results.get('xrd_raw'):
+                ax.plot(results['xrd_raw']['two_theta'], 
+                       results['xrd_raw']['intensity'], 
+                       'k-', linewidth=1, alpha=0.7)
+            
+            # Rebuild HKL mapping
+            peak_hkl_map = {}
+            for phase in phases:
+                if not selected_phases or phase["phase"] in selected_phases:
+                    for match in phase.get('hkls', []):
+                        t_exp = match.get('two_theta_exp')
+                        hkl = match.get('hkl')
+                        if t_exp is not None and hkl:
+                            indices = extract_hkl_indices(hkl)
+                            if indices:
+                                peak_hkl_map[t_exp] = str(indices)
+                            else:
+                                peak_hkl_map[t_exp] = str(hkl)
+            
+            colors = plt.cm.tab10(np.linspace(0, 1, len(phases)))
+            phase_colors = {p["phase"]: colors[i] for i, p in enumerate(phases)}
+            
+            for p in filtered_peaks:
+                pos = p['position']
+                intensity = p['intensity']
+                hkl = peak_hkl_map.get(pos, '')
+                phase_name = p.get('phase', '')
+                color = phase_colors.get(phase_name, 'red') if phase_name else 'red'
+                
+                ax.plot([pos], [intensity], 'o', color=color, markersize=6, 
+                       markeredgecolor='black', markeredgewidth=0.5)
+                ax.text(pos, intensity * 1.05, hkl, 
+                       ha='center', va='bottom', fontsize=8,
+                       rotation=45, bbox=dict(boxstyle='round,pad=0.2', 
+                                             facecolor='white', alpha=0.7))
+            
+            ax.set_xlabel('2θ (degrees)')
+            ax.set_ylabel('Intensity')
+            ax.set_title('XRD Pattern with HKL Indices')
+            ax.grid(True, alpha=0.3)
+            st.pyplot(fig)
+    
+    # ============================================================
+    # TAB 2: Crystal Structure
+    # ============================================================
+    with viz_tabs[1]:
+        st.subheader("3D Crystal Structure")
         
-        ax.set_xlabel('2θ (degrees)')
-        ax.set_ylabel('Intensity')
-        ax.set_title('XRD Pattern with HKL Indices')
-        ax.grid(True, alpha=0.3)
-        st.pyplot(fig)
+        if not phases:
+            st.info("No phases identified. Cannot display crystal structure.")
+        elif not selected_phases:
+            st.info("Select at least one phase above to view its crystal structure.")
+        else:
+            try:
+                from crystal_structure_3d import CrystalStructure3D
+                crystal_3d = CrystalStructure3D()
+                
+                # Create structure for each selected phase
+                for phase_name in selected_phases:
+                    # Find phase data
+                    phase_data = next((p for p in phases if p["phase"] == phase_name), None)
+                    if not phase_data:
+                        continue
+                    
+                    st.markdown(f"### {phase_name}")
+                    
+                    # Try to generate structure from phase data
+                    structure = crystal_3d.from_phase_data(phase_data)
+                    
+                    if structure.get('error'):
+                        st.warning(f"Could not generate exact structure for {phase_name}. Showing approximate lattice.")
+                    
+                    # Display crystal information
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Crystal System", structure.get('crystal_system', 'Unknown'))
+                        st.metric("Space Group", structure.get('space_group', 'Unknown'))
+                    
+                    with col2:
+                        lattice = structure.get('lattice', {})
+                        if lattice:
+                            a = lattice.get('a', 0)
+                            b = lattice.get('b', a)
+                            c = lattice.get('c', a)
+                            st.metric("a (Å)", f"{a:.3f}")
+                            st.metric("b (Å)", f"{b:.3f}")
+                            st.metric("c (Å)", f"{c:.3f}")
+                    
+                    with col3:
+                        if 'alpha' in lattice:
+                            st.metric("α (°)", f"{lattice.get('alpha', 90):.1f}")
+                            st.metric("β (°)", f"{lattice.get('beta', 90):.1f}")
+                            st.metric("γ (°)", f"{lattice.get('gamma', 90):.1f}")
+                        else:
+                            density = structure.get('density', 0)
+                            st.metric("Density (g/cm³)", f"{density:.2f}")
+                    
+                    # Create static 3D plot
+                    fig = crystal_3d.create_3d_plot(structure, figsize=(10, 8))
+                    st.pyplot(fig)
+                    
+                    # Interactive Plotly version if available
+                    if PLOTLY_AVAILABLE:
+                        interactive_fig = crystal_3d.create_interactive_plot(structure)
+                        if interactive_fig:
+                            with st.expander("🔍 Interactive 3D View"):
+                                st.plotly_chart(interactive_fig, use_container_width=True)
+                    
+                    st.markdown("---")
+                    
+            except Exception as e:
+                st.error(f"Error generating crystal structure: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
+    
+    # ============================================================
+    # TAB 3: Combined View (XRD + Crystal)
+    # ============================================================
+    with viz_tabs[2]:
+        st.subheader("Combined XRD Pattern & Crystal Structure")
+        
+        if not phases or not selected_phases:
+            st.info("Select phases above to see combined view.")
+        else:
+            try:
+                from crystal_structure_3d import CrystalStructure3D
+                crystal_3d = CrystalStructure3D()
+                
+                # Create two columns: left for XRD, right for crystal
+                for phase_name in selected_phases:
+                    phase_data = next((p for p in phases if p["phase"] == phase_name), None)
+                    if not phase_data:
+                        continue
+                    
+                    st.markdown(f"### {phase_name}")
+                    
+                    col_left, col_right = st.columns(2)
+                    
+                    with col_left:
+                        st.markdown("**XRD Pattern Contributions**")
+                        
+                        # Get peaks for this phase
+                        phase_peaks = [p for p in structural_peaks if p.get("phase") == phase_name]
+                        
+                        if phase_peaks:
+                            # Create simple 2D plot for this phase
+                            fig, ax = plt.subplots(figsize=(6, 4))
+                            
+                            # Plot full pattern in background
+                            if results.get('xrd_raw'):
+                                ax.plot(results['xrd_raw']['two_theta'], 
+                                       results['xrd_raw']['intensity'], 
+                                       'k-', linewidth=1, alpha=0.3)
+                            
+                            # Plot peaks for this phase
+                            positions = [p['position'] for p in phase_peaks]
+                            ints = [p['intensity'] for p in phase_peaks]
+                            
+                            ax.vlines(positions, 0, ints, colors='red', linewidth=2, alpha=0.7)
+                            ax.plot(positions, ints, 'ro', markersize=4)
+                            
+                            # Add HKL labels
+                            for p in phase_peaks:
+                                hkl = format_hkl(p.get('hkl', ''))
+                                if hkl and hkl != '()':
+                                    ax.text(p['position'], p['intensity'] * 1.05, hkl,
+                                           ha='center', va='bottom', fontsize=7,
+                                           rotation=45)
+                            
+                            ax.set_xlabel('2θ (degrees)')
+                            ax.set_ylabel('Intensity')
+                            ax.set_title(f'{phase_name} - XRD Contributions')
+                            ax.grid(True, alpha=0.3)
+                            st.pyplot(fig)
+                        else:
+                            st.info(f"No peaks assigned to {phase_name}")
+                    
+                    with col_right:
+                        st.markdown("**Crystal Structure**")
+                        structure = crystal_3d.from_phase_data(phase_data)
+                        if not structure.get('error'):
+                            fig = crystal_3d.create_3d_plot(structure, figsize=(6, 5))
+                            st.pyplot(fig)
+                        else:
+                            st.warning("Could not generate crystal structure")
+                    
+                    st.markdown("---")
+                    
+            except Exception as e:
+                st.error(f"Error in combined view: {str(e)}")
 @memory_safe_plot            
 def display_morphology(results):
     """Display morphology visualization and interpretation"""
@@ -2625,6 +2848,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
