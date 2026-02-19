@@ -1432,6 +1432,7 @@ def display_bet_analysis(results, plotter):
             st.write(f"**Description:** {hyst['description']}")
             st.write(f"**Loop Area:** {hyst['loop_area']:.2f}")
             st.write(f"**Closure Pressure:** {hyst['closure_pressure']:.3f} P/P₀")
+
 @memory_safe_plot
 def display_xrd_analysis(results, plotter):
     """
@@ -1465,75 +1466,100 @@ def display_xrd_analysis(results, plotter):
         st.metric("Structural Bragg peaks", n_structural)
 
     # ============================================================
-    # HELPER FUNCTIONS FOR HKL FORMATTING
+    # ROBUST HKL EXTRACTION & FORMATTING
     # ============================================================
+    def extract_hkl_indices(hkl_val):
+        """
+        Recursively extract a tuple of integer indices from various HKL representations.
+        Returns a tuple of ints or None if not found.
+        """
+        if hkl_val is None:
+            return None
+        if isinstance(hkl_val, (int, float, str)):
+            return None
+        if isinstance(hkl_val, (tuple, list)):
+            # Check if it's already a tuple of ints
+            if all(isinstance(x, (int, np.integer)) for x in hkl_val):
+                return tuple(int(x) for x in hkl_val)
+            # If it's a list/tuple of dicts, try to get from first element
+            if len(hkl_val) > 0 and isinstance(hkl_val[0], dict):
+                first = hkl_val[0]
+                if isinstance(first, dict) and 'hkl' in first:
+                    return extract_hkl_indices(first['hkl'])
+            # If it's a tuple of strings that look like '(1,-2,-2)', parse them
+            if all(isinstance(x, str) for x in hkl_val):
+                import re
+                nums = re.findall(r'-?\d+', hkl_val[0])
+                if nums:
+                    return tuple(int(n) for n in nums)
+            return None
+        if isinstance(hkl_val, dict):
+            # Try common keys
+            for key in ['hkl', 'indices', 'h', 'k', 'l']:
+                if key in hkl_val:
+                    val = hkl_val[key]
+                    if isinstance(val, (tuple, list)) and all(isinstance(x, (int, np.integer)) for x in val):
+                        return tuple(int(x) for x in val)
+                    if isinstance(val, dict):
+                        return extract_hkl_indices(val)
+                    if isinstance(val, str):
+                        import re
+                        nums = re.findall(r'-?\d+', val)
+                        if nums:
+                            return tuple(int(n) for n in nums)
+            # If the dict has a key that is a string containing parentheses
+            for k, v in hkl_val.items():
+                if isinstance(k, str) and '(' in k:
+                    import re
+                    nums = re.findall(r'-?\d+', k)
+                    if nums:
+                        return tuple(int(n) for n in nums)
+            return None
+        return None
+
     def format_hkl(hkl_val):
         """
         Convert any HKL representation into a clean string like (h,k,l).
-        Handles tuples, lists, and dictionaries.
         """
-        if isinstance(hkl_val, (tuple, list)):
-            # If it's a tuple/list, assume it's the indices
-            return str(tuple(int(x) for x in hkl_val))
-        elif isinstance(hkl_val, dict):
-            # If it's a dict, try to find a key that contains indices
-            for key in ['hkl', 'indices']:
-                if key in hkl_val:
-                    return format_hkl(hkl_val[key])
-            # Otherwise, try to extract from string keys
-            for k, v in hkl_val.items():
-                if isinstance(k, str) and '(' in k and ')' in k:
-                    import re
-                    match = re.search(r'\(([^)]+)\)', k)
-                    if match:
-                        nums = match.group(1).split(',')
-                        return '(' + ','.join(nums) + ')'
-            # Fallback
-            return str(hkl_val)
-        else:
-            return str(hkl_val)
+        indices = extract_hkl_indices(hkl_val)
+        if indices is not None:
+            return str(indices)
+        return str(hkl_val)
 
     def conventional_hkl(hkl_val):
         """
         Convert HKL to a conventional form:
         - Reduce by greatest common divisor (if all indices share a factor)
         - Make the first non‑zero index positive (standard convention)
-        Note: This is a simplistic approach; for rigorous reduction you may need space‑group info.
         """
-        # First get a clean tuple
-        clean = format_hkl(hkl_val).strip('()').split(',')
-        try:
-            hkl = tuple(int(x.strip()) for x in clean)
-        except:
+        indices = extract_hkl_indices(hkl_val)
+        if indices is None:
             return format_hkl(hkl_val)
 
-        # Reduce by GCD if all indices are divisible
         from math import gcd
         from functools import reduce
         def gcd_list(lst):
             return reduce(gcd, lst, 0)
-        common = gcd_list([abs(i) for i in hkl])
+        common = gcd_list([abs(i) for i in indices])
         if common > 1:
-            hkl = tuple(i // common for i in hkl)
+            indices = tuple(i // common for i in indices)
 
         # Make first non‑zero index positive
-        for i, val in enumerate(hkl):
+        for i, val in enumerate(indices):
             if val != 0:
                 if val < 0:
-                    hkl = tuple(-x for x in hkl)
+                    indices = tuple(-x for x in indices)
                 break
-        return str(hkl)
+        return str(indices)
 
     # ============================================================
     # PHASE ASSIGNMENT TO PEAKS (if phases exist)
     # ============================================================
     phases = xrd_res.get("phases", [])
     if phases:
-        # Map phases to peaks (uses scientific_integration function, no re‑analysis)
         from scientific_integration import map_peaks_to_phases
         structural_peaks = map_peaks_to_phases(structural_peaks, phases)
 
-        # Display phase summary
         st.markdown("### 🧪 Identified Phases")
         df_phases = pd.DataFrame([{
             "Phase": p["phase"],
@@ -1543,9 +1569,8 @@ def display_xrd_analysis(results, plotter):
             "Confidence": p.get("confidence_level", ""),
             "Matched peaks": len(p.get("hkls", []))
         } for p in phases])
-        st.dataframe(df_phases, use_container_width=True)
+        st.dataframe(df_phases, width='stretch')
 
-        # Phase selection widget (stored in session state)
         all_phase_names = [p["phase"] for p in phases]
         default_selection = all_phase_names
         selected_phases = st.multiselect(
@@ -1555,14 +1580,12 @@ def display_xrd_analysis(results, plotter):
             key="selected_phases_xrd"
         )
 
-        # Filter peaks based on selection
         if selected_phases:
             filtered_peaks = [p for p in structural_peaks if p.get("phase") in selected_phases]
         else:
             filtered_peaks = []
             st.info("No phases selected. Select at least one phase to see details.")
 
-        # Display filtered peak table
         if filtered_peaks:
             st.markdown(f"### 📌 Structural Peaks for Selected Phases ({len(filtered_peaks)} peaks)")
             table = [{
@@ -1575,9 +1598,8 @@ def display_xrd_analysis(results, plotter):
                 "Conv. HKL": conventional_hkl(p.get("hkl", "")),
                 "Phase": p.get("phase", ""),
             } for p in filtered_peaks]
-            st.dataframe(pd.DataFrame(table), use_container_width=True)
+            st.dataframe(pd.DataFrame(table), width='stretch')
 
-        # Phase fractions (renormalized for selected phases)
         if len(selected_phases) > 1 and filtered_peaks:
             total_intensity = sum(p["intensity"] for p in filtered_peaks)
             if total_intensity > 0:
@@ -1595,16 +1617,14 @@ def display_xrd_analysis(results, plotter):
                 fractions.sort(key=lambda x: x["fraction"], reverse=True)
                 st.markdown("### ⚖️ Phase Fractions (within selection)")
                 df_frac = pd.DataFrame(fractions)
-                st.dataframe(df_frac, use_container_width=True)
+                st.dataframe(df_frac, width='stretch')
 
-        # Detailed matched reflections per phase (expandable)
         st.subheader("🔍 Matched Reflections (HKL assignment)")
         for phase in phases:
             if phase["phase"] in selected_phases:
                 with st.expander(f"{phase['phase']} – {len(phase.get('hkls', []))} matched peaks"):
                     hkls = phase.get('hkls', [])
                     if hkls:
-                        # Prepare a clean DataFrame
                         rows = []
                         for match in hkls:
                             row = {
@@ -1619,11 +1639,10 @@ def display_xrd_analysis(results, plotter):
                             }
                             rows.append(row)
                         df_peaks = pd.DataFrame(rows)
-                        st.dataframe(df_peaks, use_container_width=True)
+                        st.dataframe(df_peaks, width='stretch')
                     else:
                         st.info("No HKL assignments available for this phase.")
     else:
-        # No phases identified – show helpful message
         with st.expander("❓ Why were no crystalline phases identified?", expanded=True):
             st.markdown("""
 **No phases matched.**  
@@ -2606,6 +2625,7 @@ def generate_scientific_report(results):
 # ============================================================================
 if __name__ == "__main__":
     main()
+
 
 
 
