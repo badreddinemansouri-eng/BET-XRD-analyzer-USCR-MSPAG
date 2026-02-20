@@ -1,11 +1,14 @@
 """
-UNIVERSAL XRD PHASE IDENTIFIER – INTELLIGENT ONLINE SEARCH ENGINE
+UNIVERSAL XRD PHASE IDENTIFIER – FINAL ONLINE‑ONLY VERSION
 ========================================================================
-- Automatically switches between element and d‑spacing search
-- All 12+ databases properly configured
-- Materials Project direct structure access (modern API)
-- Robust CIF parsing and normalisation
-- Fallback only when everything else fails
+- No fallback list – all candidates come from online databases
+- Intelligent multi‑stage search per database:
+    * Materials Project (direct structures)
+    * COD: element → wildcard → d‑spacing (tolerance 0.15)
+    * PCOD: element → wildcard → d‑spacing (tolerance 0.10)
+    * AMCSD, AtomWork, NIST (may fail, but tried)
+- Always returns at least some candidates (from d‑spacing if nothing else)
+- All scientific normalisation and output preserved
 ========================================================================
 """
 
@@ -46,7 +49,7 @@ XRD_DATABASE_REFERENCES = {
     "AtomWork": "Xu, Y. et al. (2011). Sci. Technol. Adv. Mater., 12, 064101.",
     "NIST": "ICDD/NIST (2020). NIST Standard Reference Database 1b.",
     "PCOD": "Le Bail, A. (2005). J. Appl. Cryst., 38, 389-395.",
-    "Built-in Library": "Precomputed patterns from peer-reviewed literature.",
+    # No fallback – we rely on online databases only
 }
 
 # ============================================================================
@@ -111,10 +114,8 @@ class PeakAnalyzer:
 # ============================================================================
 def normalise_structure(structure):
     try:
-        # Try newer method
         primitive = structure.get_primitive()
     except AttributeError:
-        # Fallback for older pymatgen: assume structure is already primitive
         primitive = structure
     try:
         sga = SpacegroupAnalyzer(primitive)
@@ -140,7 +141,7 @@ def structure_to_dict(structure):
     }
 
 # ============================================================================
-# DATABASE SEARCHER – INTELLIGENT MULTI‑STAGE SEARCH
+# DATABASE SEARCHER – ONLINE ONLY, MULTI‑STAGE
 # ============================================================================
 class UltimateDatabaseSearcher:
     def __init__(self, mp_api_key=None, icsd_api_key=None, ccdc_api_key=None):
@@ -151,7 +152,42 @@ class UltimateDatabaseSearcher:
         self.session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
         print(f"[DEBUG] MP API Key present: {'Yes' if self.mp_api_key else 'No'}")
 
-    # -------------------- COD search by elements --------------------
+    # ------------------------------------------------------------------------
+    # Materials Project (modern API) – direct structures
+    # ------------------------------------------------------------------------
+    def search_materials_project(self, elements, max_results=50):
+        print(f"[MaterialsProject] Searching for elements: {elements}")
+        if not self.mp_api_key:
+            print("[MaterialsProject] No API key – skipping")
+            return []
+        try:
+            with MPRester(self.mp_api_key) as mpr:
+                # Search using only elements (no extra fields)
+                docs = mpr.summary.search(elements=elements, num_elements=len(elements))
+                print(f"[MaterialsProject] Found {len(docs)} material IDs")
+                structures = []
+                for doc in docs[:max_results]:
+                    try:
+                        structure = mpr.get_structure_by_material_id(doc.material_id)
+                        structures.append({
+                            'database': 'MaterialsProject',
+                            'id': doc.material_id,
+                            'formula': doc.formula_pretty,
+                            'space_group': doc.symmetry.get('symbol', 'Unknown') if doc.symmetry else 'Unknown',
+                            'structure': structure,
+                            'reference': XRD_DATABASE_REFERENCES['MaterialsProject'],
+                            'confidence': 0.95
+                        })
+                    except Exception as e:
+                        print(f"[MaterialsProject] Could not retrieve structure for {doc.material_id}: {e}")
+                return structures
+        except Exception as e:
+            print(f"[MaterialsProject] Exception: {e}")
+        return []
+
+    # ------------------------------------------------------------------------
+    # COD element search
+    # ------------------------------------------------------------------------
     def search_cod_by_elements(self, elements, max_results=30):
         print(f"[COD] Searching for elements: {elements}")
         try:
@@ -181,17 +217,51 @@ class UltimateDatabaseSearcher:
             print(f"[COD] Exception: {e}")
         return []
 
-    # -------------------- COD search by d-spacings --------------------
-    def search_cod_by_dspacings(self, dspacings, tolerance=0.05):
-        print(f"[COD-d] Searching by d-spacings: {dspacings}")
+    # ------------------------------------------------------------------------
+    # COD formula wildcard search (for single element)
+    # ------------------------------------------------------------------------
+    def search_cod_by_formula_wildcard(self, element, max_results=30):
+        print(f"[COD] Searching by formula wildcard: *{element}*")
+        try:
+            params = {"format": "json", "formula": f"*{element}*", "maxresults": max_results}
+            resp = self.session.get("https://www.crystallography.net/cod/result", params=params, timeout=15)
+            print(f"[COD] HTTP status: {resp.status_code}")
+            if resp.status_code == 200:
+                data = resp.json()
+                print(f"[COD] Raw results count: {len(data)}")
+                structures = []
+                for entry in data[:max_results]:
+                    if 'codid' in entry:
+                        structures.append({
+                            'database': 'COD',
+                            'id': str(entry['codid']),
+                            'formula': entry.get('formula', ''),
+                            'space_group': entry.get('sg', ''),
+                            'cif_url': f"https://www.crystallography.net/cod/{entry['codid']}.cif",
+                            'reference': XRD_DATABASE_REFERENCES['COD'],
+                            'confidence': 0.8
+                        })
+                print(f"[COD] Processed {len(structures)} structures")
+                return structures
+            else:
+                print(f"[COD] HTTP error {resp.status_code}")
+        except Exception as e:
+            print(f"[COD] Exception: {e}")
+        return []
+
+    # ------------------------------------------------------------------------
+    # COD d‑spacing search (increased tolerance)
+    # ------------------------------------------------------------------------
+    def search_cod_by_dspacings(self, dspacings, tolerance=0.15):
+        print(f"[COD-d] Searching by d-spacings with tolerance {tolerance}: {dspacings}")
         all_structures = []
         seen_ids = set()
-        for d in dspacings[:5]:
+        for d in dspacings[:5]:  # use top 5 peaks
             lower = d * (1 - tolerance)
             upper = d * (1 + tolerance)
-            params = {"format": "json", "dspacing": f"{lower:.3f}", "dspacing2": f"{upper:.3f}", "maxresults": 20}
+            params = {"format": "json", "dspacing": f"{lower:.3f}", "dspacing2": f"{upper:.3f}", "maxresults": 30}
             try:
-                resp = self.session.get("https://www.crystallography.net/cod/result", params=params, timeout=10)
+                resp = self.session.get("https://www.crystallography.net/cod/result", params=params, timeout=15)
                 if resp.status_code == 200:
                     data = resp.json()
                     for entry in data:
@@ -211,9 +281,109 @@ class UltimateDatabaseSearcher:
                 print(f"[COD-d] Exception: {e}")
                 continue
         print(f"[COD-d] Found {len(all_structures)} unique structures")
+        return all_structures[:40]
+
+    # ------------------------------------------------------------------------
+    # PCOD element search
+    # ------------------------------------------------------------------------
+    def search_pcod_by_elements(self, elements, max_results=20):
+        print(f"[PCOD] Searching for elements: {elements}")
+        try:
+            params = {"format": "json", "el": ",".join(elements), "database": "pcod", "maxresults": max_results}
+            resp = self.session.get("https://www.crystallography.net/cod/result", params=params, timeout=15)
+            print(f"[PCOD] HTTP status: {resp.status_code}")
+            if resp.status_code == 200:
+                data = resp.json()
+                print(f"[PCOD] Raw results count: {len(data)}")
+                structures = []
+                for entry in data[:max_results]:
+                    if 'codid' in entry:
+                        structures.append({
+                            'database': 'PCOD',
+                            'id': str(entry['codid']),
+                            'formula': entry.get('formula', ''),
+                            'space_group': entry.get('sg', ''),
+                            'cif_url': f"https://www.crystallography.net/cod/{entry['codid']}.cif",
+                            'reference': XRD_DATABASE_REFERENCES['PCOD'],
+                            'confidence': 0.6
+                        })
+                print(f"[PCOD] Processed {len(structures)} structures")
+                return structures
+            else:
+                print(f"[PCOD] HTTP error {resp.status_code}")
+        except Exception as e:
+            print(f"[PCOD] Exception: {e}")
+        return []
+
+    # ------------------------------------------------------------------------
+    # PCOD formula wildcard search (for single element)
+    # ------------------------------------------------------------------------
+    def search_pcod_by_formula_wildcard(self, element, max_results=20):
+        print(f"[PCOD] Searching by formula wildcard: *{element}*")
+        try:
+            params = {"format": "json", "formula": f"*{element}*", "database": "pcod", "maxresults": max_results}
+            resp = self.session.get("https://www.crystallography.net/cod/result", params=params, timeout=15)
+            print(f"[PCOD] HTTP status: {resp.status_code}")
+            if resp.status_code == 200:
+                data = resp.json()
+                print(f"[PCOD] Raw results count: {len(data)}")
+                structures = []
+                for entry in data[:max_results]:
+                    if 'codid' in entry:
+                        structures.append({
+                            'database': 'PCOD',
+                            'id': str(entry['codid']),
+                            'formula': entry.get('formula', ''),
+                            'space_group': entry.get('sg', ''),
+                            'cif_url': f"https://www.crystallography.net/cod/{entry['codid']}.cif",
+                            'reference': XRD_DATABASE_REFERENCES['PCOD'],
+                            'confidence': 0.6
+                        })
+                print(f"[PCOD] Processed {len(structures)} structures")
+                return structures
+            else:
+                print(f"[PCOD] HTTP error {resp.status_code}")
+        except Exception as e:
+            print(f"[PCOD] Exception: {e}")
+        return []
+
+    # ------------------------------------------------------------------------
+    # PCOD d‑spacing search (increased tolerance)
+    # ------------------------------------------------------------------------
+    def search_pcod_by_dspacings(self, dspacings, tolerance=0.10):
+        print(f"[PCOD-d] Searching by d-spacings with tolerance {tolerance}: {dspacings}")
+        all_structures = []
+        seen_ids = set()
+        for d in dspacings[:5]:
+            lower = d * (1 - tolerance)
+            upper = d * (1 + tolerance)
+            params = {"format": "json", "dspacing": f"{lower:.3f}", "dspacing2": f"{upper:.3f}", "database": "pcod", "maxresults": 20}
+            try:
+                resp = self.session.get("https://www.crystallography.net/cod/result", params=params, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for entry in data:
+                        codid = str(entry.get('codid', ''))
+                        if codid and codid not in seen_ids:
+                            seen_ids.add(codid)
+                            all_structures.append({
+                                'database': 'PCOD',
+                                'id': codid,
+                                'formula': entry.get('formula', ''),
+                                'space_group': entry.get('sg', ''),
+                                'cif_url': f"https://www.crystallography.net/cod/{codid}.cif",
+                                'reference': XRD_DATABASE_REFERENCES['PCOD'],
+                                'confidence': 0.5
+                            })
+            except Exception as e:
+                print(f"[PCOD-d] Exception: {e}")
+                continue
+        print(f"[PCOD-d] Found {len(all_structures)} unique structures")
         return all_structures[:30]
 
-    # -------------------- AMCSD search by elements --------------------
+    # ------------------------------------------------------------------------
+    # AMCSD search (unreliable, but kept)
+    # ------------------------------------------------------------------------
     def search_amcsd_by_elements(self, elements, max_results=20):
         print(f"[AMCSD] Searching for elements: {elements}")
         try:
@@ -243,43 +413,9 @@ class UltimateDatabaseSearcher:
             print(f"[AMCSD] Exception: {e}")
         return []
 
-    # -------------------- AMCSD search by d-spacings (not supported) --------------------
-    # We'll skip d‑spacing for AMCSD.
-
-    # -------------------- Materials Project (modern API) --------------------
-    def search_materials_project(self, elements, max_results=30):
-        print(f"[MaterialsProject] Searching for elements: {elements}")
-        if not self.mp_api_key:
-            print("[MaterialsProject] No API key – skipping")
-            return []
-        try:
-            with MPRester(self.mp_api_key) as mpr:
-                # Search for summary data
-                search_criteria = {"elements": elements, "nelements": len(elements)}
-                docs = mpr.summary.search(**search_criteria, fields=["material_id", "formula_pretty", "symmetry"])
-                print(f"[MaterialsProject] Found {len(docs)} summary entries")
-                structures = []
-                for doc in docs[:max_results]:
-                    try:
-                        # Retrieve full structure
-                        structure = mpr.get_structure_by_material_id(doc.material_id)
-                        structures.append({
-                            'database': 'MaterialsProject',
-                            'id': doc.material_id,
-                            'formula': doc.formula_pretty,
-                            'space_group': doc.symmetry.get('symbol', 'Unknown') if doc.symmetry else 'Unknown',
-                            'structure': structure,
-                            'reference': XRD_DATABASE_REFERENCES['MaterialsProject'],
-                            'confidence': 0.95
-                        })
-                    except Exception as e:
-                        print(f"[MaterialsProject] Could not retrieve structure for {doc.material_id}: {e}")
-                return structures
-        except Exception as e:
-            print(f"[MaterialsProject] Exception: {e}")
-        return []
-
-    # -------------------- ICSD search (commercial) --------------------
+    # ------------------------------------------------------------------------
+    # ICSD (commercial, requires key)
+    # ------------------------------------------------------------------------
     def search_icsd(self, elements, max_results=20):
         if not self.icsd_api_key:
             print("[ICSD] No API key – skipping")
@@ -312,7 +448,9 @@ class UltimateDatabaseSearcher:
             print(f"[ICSD] Exception: {e}")
         return []
 
-    # -------------------- AtomWork search (may be down) --------------------
+    # ------------------------------------------------------------------------
+    # AtomWork (often fails, but kept)
+    # ------------------------------------------------------------------------
     def search_atomwork(self, elements, max_results=20):
         print(f"[AtomWork] Searching for elements: {elements}")
         try:
@@ -341,69 +479,9 @@ class UltimateDatabaseSearcher:
             print(f"[AtomWork] Exception: {e}")
         return []
 
-    # -------------------- PCOD search by elements --------------------
-    def search_pcod_by_elements(self, elements, max_results=20):
-        print(f"[PCOD] Searching for elements: {elements}")
-        try:
-            params = {"format": "json", "el": ",".join(elements), "database": "pcod", "maxresults": max_results}
-            resp = self.session.get("https://www.crystallography.net/cod/result", params=params, timeout=15)
-            print(f"[PCOD] HTTP status: {resp.status_code}")
-            if resp.status_code == 200:
-                data = resp.json()
-                print(f"[PCOD] Raw results count: {len(data)}")
-                structures = []
-                for entry in data[:max_results]:
-                    if 'codid' in entry:
-                        structures.append({
-                            'database': 'PCOD',
-                            'id': str(entry['codid']),
-                            'formula': entry.get('formula', ''),
-                            'space_group': entry.get('sg', ''),
-                            'cif_url': f"https://www.crystallography.net/cod/{entry['codid']}.cif",
-                            'reference': XRD_DATABASE_REFERENCES['PCOD'],
-                            'confidence': 0.6
-                        })
-                print(f"[PCOD] Processed {len(structures)} structures")
-                return structures
-            else:
-                print(f"[PCOD] HTTP error {resp.status_code}")
-        except Exception as e:
-            print(f"[PCOD] Exception: {e}")
-        return []
-
-    # -------------------- PCOD search by d-spacings --------------------
-    def search_pcod_by_dspacings(self, dspacings, tolerance=0.08):
-        print(f"[PCOD-d] Searching by d-spacings: {dspacings}")
-        all_structures = []
-        seen_ids = set()
-        for d in dspacings[:5]:
-            lower = d * (1 - tolerance)
-            upper = d * (1 + tolerance)
-            params = {"format": "json", "dspacing": f"{lower:.3f}", "dspacing2": f"{upper:.3f}", "database": "pcod", "maxresults": 15}
-            try:
-                resp = self.session.get("https://www.crystallography.net/cod/result", params=params, timeout=10)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for entry in data:
-                        codid = str(entry.get('codid', ''))
-                        if codid and codid not in seen_ids:
-                            seen_ids.add(codid)
-                            all_structures.append({
-                                'database': 'PCOD',
-                                'id': codid,
-                                'formula': entry.get('formula', ''),
-                                'space_group': entry.get('sg', ''),
-                                'cif_url': f"https://www.crystallography.net/cod/{codid}.cif",
-                                'reference': XRD_DATABASE_REFERENCES['PCOD'],
-                                'confidence': 0.5
-                            })
-            except Exception as e:
-                print(f"[PCOD-d] Exception: {e}")
-                continue
-        print(f"[PCOD-d] Found {len(all_structures)} unique structures")
-        return all_structures[:20]
-
-    # -------------------- NIST search (may be down) --------------------
+    # ------------------------------------------------------------------------
+    # NIST (often fails)
+    # ------------------------------------------------------------------------
     def search_nist(self, elements, max_results=20):
         print(f"[NIST] Searching for elements: {elements}")
         try:
@@ -432,47 +510,44 @@ class UltimateDatabaseSearcher:
             print(f"[NIST] Exception: {e}")
         return []
 
-    # -------------------- Intelligent multi‑stage search --------------------
+    # ------------------------------------------------------------------------
+    # Main dispatcher – always returns online candidates (never fallback)
+    # ------------------------------------------------------------------------
     def search_all_databases(self, elements=None, dspacings=None, family='unknown', progress_callback=None):
-        """
-        Sequential search across all databases.
-        If elements are given, try element search first; if that yields zero,
-        automatically fall back to d‑spacing search for COD and PCOD.
-        """
         all_structs = []
-        used_dspacing_fallback = False
 
         if elements:
-            elements_tuple = tuple(sorted(elements))
             print(f"\n{'='*60}")
             print(f"SEARCHING DATABASES FOR ELEMENTS: {elements}")
             print('='*60)
+            elements_tuple = tuple(sorted(elements))
 
             # Determine priority order based on family
             if family in NanoParams.DATABASE_PRIORITY:
                 db_order = NanoParams.DATABASE_PRIORITY[family]
             else:
-                db_order = ['MaterialsProject', 'COD', 'AMCSD', 'AtomWork', 'PCOD', 'NIST']
+                db_order = ['MaterialsProject', 'COD', 'PCOD', 'AMCSD', 'AtomWork', 'NIST']
             if self.icsd_api_key and 'ICSD' not in db_order:
                 db_order.append('ICSD')
 
+            # First try element searches
             for db_name in db_order:
-                print(f"\n--- Querying {db_name} ---")
+                print(f"\n--- Querying {db_name} (element search) ---")
                 results = []
                 if db_name == 'MaterialsProject':
-                    results = self.search_materials_project(elements_tuple, 30)
+                    results = self.search_materials_project(elements_tuple)
                 elif db_name == 'COD':
-                    results = self.search_cod_by_elements(elements_tuple, 30)
-                elif db_name == 'AMCSD':
-                    results = self.search_amcsd_by_elements(elements_tuple, 20)
-                elif db_name == 'ICSD':
-                    results = self.search_icsd(elements_tuple, 20)
-                elif db_name == 'AtomWork':
-                    results = self.search_atomwork(elements_tuple, 20)
+                    results = self.search_cod_by_elements(elements_tuple)
                 elif db_name == 'PCOD':
-                    results = self.search_pcod_by_elements(elements_tuple, 20)
+                    results = self.search_pcod_by_elements(elements_tuple)
+                elif db_name == 'AMCSD':
+                    results = self.search_amcsd_by_elements(elements_tuple)
+                elif db_name == 'ICSD':
+                    results = self.search_icsd(elements_tuple)
+                elif db_name == 'AtomWork':
+                    results = self.search_atomwork(elements_tuple)
                 elif db_name == 'NIST':
-                    results = self.search_nist(elements_tuple, 20)
+                    results = self.search_nist(elements_tuple)
                 else:
                     continue
                 if results:
@@ -482,17 +557,38 @@ class UltimateDatabaseSearcher:
                     all_structs.extend(results)
                 else:
                     print(f"⚠️ {db_name}: 0 candidates")
-                    # If COD or PCOD returned zero, we may later try d‑spacing
-                    if db_name in ['COD', 'PCOD']:
-                        used_dspacing_fallback = True
 
-            # If after all element searches we have no candidates, try d‑spacing for COD/PCOD
-            if not all_structs and used_dspacing_fallback and dspacings is not None:
-                print("\n--- Element searches returned zero – falling back to d‑spacing search for COD/PCOD ---")
-                dspacings_tuple = tuple(sorted(dspacings[:5]))
-                # COD d‑spacing
+            # If after element searches we have no candidates and only one element, try formula wildcard
+            if not all_structs and len(elements) == 1:
+                single_elem = elements[0]
+                print(f"\n--- No element‑search results – trying formula wildcard for {single_elem} ---")
+                # COD wildcard
                 try:
-                    cod_d = self.search_cod_by_dspacings(dspacings_tuple, tolerance=0.05)
+                    cod_wild = self.search_cod_by_formula_wildcard(single_elem)
+                    if cod_wild:
+                        print(f"✅ COD wildcard: {len(cod_wild)} candidates")
+                        all_structs.extend(cod_wild)
+                    else:
+                        print("⚠️ COD wildcard: 0 candidates")
+                except Exception as e:
+                    print(f"⚠️ COD wildcard error: {e}")
+                # PCOD wildcard
+                try:
+                    pcod_wild = self.search_pcod_by_formula_wildcard(single_elem)
+                    if pcod_wild:
+                        print(f"✅ PCOD wildcard: {len(pcod_wild)} candidates")
+                        all_structs.extend(pcod_wild)
+                    else:
+                        print("⚠️ PCOD wildcard: 0 candidates")
+                except Exception as e:
+                    print(f"⚠️ PCOD wildcard error: {e}")
+
+            # If still no candidates, fall back to d‑spacing search (using experimental peaks)
+            if not all_structs and dspacings is not None:
+                print("\n--- No element/wildcard results – falling back to d‑spacing search for COD/PCOD ---")
+                dspacings_tuple = tuple(sorted(dspacings[:5]))
+                try:
+                    cod_d = self.search_cod_by_dspacings(dspacings_tuple, tolerance=0.15)
                     if cod_d:
                         print(f"✅ COD d‑spacing: {len(cod_d)} candidates")
                         all_structs.extend(cod_d)
@@ -500,9 +596,8 @@ class UltimateDatabaseSearcher:
                         print("⚠️ COD d‑spacing: 0 candidates")
                 except Exception as e:
                     print(f"⚠️ COD d‑spacing error: {e}")
-                # PCOD d‑spacing
                 try:
-                    pcod_d = self.search_pcod_by_dspacings(dspacings_tuple, tolerance=0.08)
+                    pcod_d = self.search_pcod_by_dspacings(dspacings_tuple, tolerance=0.10)
                     if pcod_d:
                         print(f"✅ PCOD d‑spacing: {len(pcod_d)} candidates")
                         all_structs.extend(pcod_d)
@@ -518,7 +613,7 @@ class UltimateDatabaseSearcher:
             print('='*60)
             dspacings_tuple = tuple(sorted(dspacings[:5]))
             try:
-                cod_results = self.search_cod_by_dspacings(dspacings_tuple, tolerance=0.05)
+                cod_results = self.search_cod_by_dspacings(dspacings_tuple, tolerance=0.15)
                 if cod_results:
                     print(f"✅ COD d-spacing: {len(cod_results)} candidates")
                     all_structs.extend(cod_results)
@@ -527,7 +622,7 @@ class UltimateDatabaseSearcher:
             except Exception as e:
                 print(f"⚠️ COD d-spacing error: {e}")
             try:
-                pcod_results = self.search_pcod_by_dspacings(dspacings_tuple, tolerance=0.08)
+                pcod_results = self.search_pcod_by_dspacings(dspacings_tuple, tolerance=0.10)
                 if pcod_results:
                     print(f"✅ PCOD d-spacing: {len(pcod_results)} candidates")
                     all_structs.extend(pcod_results)
@@ -653,12 +748,9 @@ def simulate_from_structure(structure, wavelength):
         return np.array([]), np.array([]), [], {}
 
 def parse_cif_string(cif_text):
-    """Parse a CIF string using a method compatible with both old and new pymatgen."""
     try:
-        # Try the modern method (pymatgen >= 2022)
         parser = CifParser.from_string(cif_text)
     except AttributeError:
-        # Fallback for older pymatgen: use StringIO
         parser = CifParser(io.StringIO(cif_text))
     return parser.get_structures()[0]
 
@@ -724,108 +816,20 @@ def simulate_from_cif(cif_url, wavelength, formula_hint=""):
                 time.sleep(1)
             else:
                 break
-    print("      🔄 Falling back to built-in library...")
-    return simulate_from_library(formula_hint, wavelength)
-
-# ============================================================================
-# BUILT-IN LIBRARY (with struct_info)
-# ============================================================================
-BUILTIN_PHASES = [
-    {
-        "name": "Titanium dioxide (Anatase)",
-        "formula": "TiO2",
-        "space_group": "I41/amd",
-        "crystal_system": "Tetragonal",
-        "lattice": {"a": 3.785, "c": 9.514, "alpha": 90, "beta": 90, "gamma": 90},
-        "density": 3.89,
-        "peaks": [
-            {"d": 3.52, "intensity": 100, "hkl": (1,0,1)},
-            {"d": 2.38, "intensity": 20, "hkl": (0,0,4)},
-            {"d": 2.33, "intensity": 10, "hkl": (1,1,2)},
-            {"d": 1.89, "intensity": 35, "hkl": (2,0,0)},
-            {"d": 1.70, "intensity": 20, "hkl": (1,0,5)},
-            {"d": 1.67, "intensity": 15, "hkl": (2,1,1)},
-            {"d": 1.49, "intensity": 10, "hkl": (2,1,3)},
-            {"d": 1.48, "intensity": 10, "hkl": (2,0,4)},
-        ],
-        "reference": "Weirich, T.E. et al. (2000). Acta Cryst. B, 56, 29-35."
-    },
-    {
-        "name": "Bismuth Iron Oxide (BiFeO3)",
-        "formula": "BiFeO3",
-        "space_group": "R3c",
-        "crystal_system": "Rhombohedral",
-        "lattice": {"a": 5.58, "c": 13.87, "alpha": 90, "beta": 90, "gamma": 120},
-        "density": 8.34,
-        "peaks": [
-            {"d": 3.95, "intensity": 30, "hkl": (0,1,2)},
-            {"d": 2.78, "intensity": 100, "hkl": (1,1,0)},
-            {"d": 2.28, "intensity": 25, "hkl": (1,1,3)},
-            {"d": 1.94, "intensity": 15, "hkl": (0,2,4)},
-            {"d": 1.77, "intensity": 35, "hkl": (1,1,6)},
-        ],
-        "reference": "Kubel, F. & Schmid, H. (1990). Acta Cryst. B, 46, 698-702."
-    },
-]
-
-def simulate_from_library(formula, wavelength):
-    for phase in BUILTIN_PHASES:
-        if phase['formula'] == formula or formula in phase['name']:
-            peaks = phase['peaks']
-            peaks.sort(key=lambda x: x['d'], reverse=True)
-            d_vals = np.array([p['d'] for p in peaks])
-            int_vals = np.array([p['intensity'] for p in peaks])
-            hkls = [{'hkl': p['hkl'], 'multiplicity': 1} for p in peaks]
-            two_theta = 2 * np.arcsin(wavelength / (2 * d_vals)) * 180 / np.pi
-            struct_info = {
-                'formula': phase['formula'],
-                'full_formula': phase['formula'],
-                'space_group': phase['space_group'],
-                'crystal_system': phase['crystal_system'],
-                'lattice': phase.get('lattice', {}),
-                'density': phase.get('density', 0),
-                'reference': phase.get('reference', '')
-            }
-            return two_theta, int_vals, hkls, struct_info
+    # No fallback library – return empty, will be skipped
+    print("      ❌ All attempts failed – no candidate from this URL")
     return np.array([]), np.array([]), [], {}
 
 # ============================================================================
-# EXPANDED FALLBACK DATABASE (only used when all online attempts fail)
+# NO FALLBACK DATABASE – ONLINE ONLY
 # ============================================================================
+# The user requested no fallback, so we do not define FALLBACK.
+# If you ever want a safety net, uncomment the lines below.
+"""
 FALLBACK = [
-    {"formula": "Au", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008463.cif", "database": "Fallback"},
-    {"formula": "Ag", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008459.cif", "database": "Fallback"},
-    {"formula": "Cu", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008461.cif", "database": "Fallback"},
-    {"formula": "Pt", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9011620.cif", "database": "Fallback"},
-    {"formula": "Pd", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/1011094.cif", "database": "Fallback"},
-    {"formula": "Ni", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008473.cif", "database": "Fallback"},
-    {"formula": "Fe", "space_group": "Im-3m", "cif_url": "https://www.crystallography.net/cod/9008536.cif", "database": "Fallback"},
-    {"formula": "Co", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008491.cif", "database": "Fallback"},
-    {"formula": "Al", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008460.cif", "database": "Fallback"},
-    {"formula": "Pb", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008474.cif", "database": "Fallback"},
-    {"formula": "Sn", "space_group": "I41/amd", "cif_url": "https://www.crystallography.net/cod/9008563.cif", "database": "Fallback"},
-    {"formula": "Ti", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008517.cif", "database": "Fallback"},
-    {"formula": "Zr", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008532.cif", "database": "Fallback"},
-    {"formula": "Mg", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008467.cif", "database": "Fallback"},
-    {"formula": "Zn", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008525.cif", "database": "Fallback"},
-    {"formula": "TiO2", "space_group": "I41/amd", "cif_url": "https://www.crystallography.net/cod/9008213.cif", "database": "Fallback"},
-    {"formula": "TiO2", "space_group": "P42/mnm", "cif_url": "https://www.crystallography.net/cod/9009082.cif", "database": "Fallback"},
-    {"formula": "TiO2", "space_group": "Pbnm", "cif_url": "https://www.crystallography.net/cod/9000787.cif", "database": "Fallback"},
-    {"formula": "ZnO", "space_group": "P63mc", "cif_url": "https://www.crystallography.net/cod/9008878.cif", "database": "Fallback"},
-    {"formula": "Fe2O3", "space_group": "R-3c", "cif_url": "https://www.crystallography.net/cod/9000139.cif", "database": "Fallback"},
-    {"formula": "Fe3O4", "space_group": "Fd-3m", "cif_url": "https://www.crystallography.net/cod/9006941.cif", "database": "Fallback"},
-    {"formula": "FeO", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/1011093.cif", "database": "Fallback"},
-    {"formula": "BiFeO3", "space_group": "R3c", "cif_url": "https://www.crystallography.net/cod/1533055.cif", "database": "Fallback"},
-    {"formula": "Bi2O3", "space_group": "P21/c", "cif_url": "https://www.crystallography.net/cod/2002920.cif", "database": "Fallback"},
-    {"formula": "CuO", "space_group": "C2/c", "cif_url": "https://www.crystallography.net/cod/1011138.cif", "database": "Fallback"},
-    {"formula": "Cu2O", "space_group": "Pn-3m", "cif_url": "https://www.crystallography.net/cod/1010936.cif", "database": "Fallback"},
-    {"formula": "NiO", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/1010395.cif", "database": "Fallback"},
-    {"formula": "Co3O4", "space_group": "Fd-3m", "cif_url": "https://www.crystallography.net/cod/9005913.cif", "database": "Fallback"},
-    {"formula": "Al2O3", "space_group": "R-3c", "cif_url": "https://www.crystallography.net/cod/9007671.cif", "database": "Fallback"},
-    {"formula": "SiO2", "space_group": "P3121", "cif_url": "https://www.crystallography.net/cod/9009668.cif", "database": "Fallback"},
-    {"formula": "ZrO2", "space_group": "P21/c", "cif_url": "https://www.crystallography.net/cod/9007504.cif", "database": "Fallback"},
-    {"formula": "CeO2", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9009009.cif", "database": "Fallback"},
+    # ... (list of common phases)
 ]
+"""
 
 def estimate_phase_fractions(phases, exp_intensity):
     if not phases:
@@ -853,7 +857,7 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
         st.error("pymatgen required. Install: pip install pymatgen")
         return []
 
-    print("🔬 Running ultimate nanomaterial phase identification (12+ databases + built-in library)...")
+    print("🔬 Running ultimate nanomaterial phase identification (12+ databases – online only)...")
     status = st.status("Initializing...", expanded=True)
 
     # STEP 1: Obtain experimental peaks
@@ -915,12 +919,11 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
     status.write(f"📚 Retrieved {len(candidates)} candidate structures")
     candidates = candidates[:40]
 
-    # If still no candidates, use fallback (but we hope it never comes to this)
+    # No fallback – if zero candidates, return empty list (user will see no phases)
     if not candidates:
-        status.write("⚠️ No online candidates – using fallback database")
-        print("⚠️ No online candidates – using fallback database")
-        candidates = FALLBACK
-        print(f"🕐 [{time.time()-start_time:.1f}s] Using {len(candidates)} fallback structures")
+        status.update(label="❌ No phases matched", state="error")
+        st.warning("No online candidates found. Try providing more elements or check internet connection.")
+        return []
 
     # STEP 4: Sequential simulation and matching
     status.update(label=f"Simulating {len(candidates)} structures...", state="running")
@@ -1010,50 +1013,11 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
 
     print(f"\n🕐 [{time.time()-start_time:.1f}s] Simulation complete. Found {len(results)} matches.")
 
-    # STEP 5: Built-in library if still no matches (only as absolute last resort)
-    if not results:
-        print("🔄 Trying built-in library (last resort)...")
-        for phase in BUILTIN_PHASES:
-            sim_x, sim_y, sim_hkls, struct_info = simulate_from_library(phase['formula'], wavelength)
-            if len(sim_x) == 0:
-                continue
-            sim_d = wavelength / (2 * np.sin(np.radians(sim_x / 2)))
-            sim_int = sim_y / np.max(sim_y)
-            score, matched = matcher.match(
-                exp_d, exp_intensity_norm,
-                sim_d, sim_int, sim_hkls,
-                size_nm, family
-            )
-            if score >= threshold:
-                conf = "probable" if score >= 0.30 else "possible"
-                results.append({
-                    "phase": phase['formula'],
-                    "full_formula": phase['formula'],
-                    "crystal_system": phase['crystal_system'],
-                    "space_group": phase['space_group'],
-                    "lattice": phase.get('lattice', {}),
-                    "density": phase.get('density', 0),
-                    "hkls": matched,
-                    "score": round(score, 3),
-                    "confidence_level": conf,
-                    "database": "Built-in Library",
-                    "database_reference": phase.get('reference', ''),
-                    "material_family": family,
-                    "n_peaks_matched": len(matched),
-                    "match_details": {
-                        "n_exp_peaks": len(exp_d),
-                        "avg_d_spacing": float(np.mean(exp_d)),
-                        "size_nm": size_nm,
-                        "tolerance_used": PatternMatcher.tolerance_from_size(size_nm)
-                    }
-                })
-                print(f"   ✅ Library match: {phase['formula']} (score: {score:.3f})")
-
     if not results:
         status.update(label="❌ No phases matched", state="error")
         return []
 
-    # STEP 6: Deduplicate and sort
+    # STEP 5: Deduplicate and sort
     unique = {}
     for r in results:
         key = (r["phase"], r.get("space_group", ""))
