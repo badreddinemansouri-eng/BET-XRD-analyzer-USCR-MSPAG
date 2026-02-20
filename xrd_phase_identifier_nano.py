@@ -1,5 +1,5 @@
 """
-UNIVERSAL XRD PHASE IDENTIFIER – FINAL CORRECTED VERSION
+UNIVERSAL XRD PHASE IDENTIFIER – FINAL COMPATIBLE VERSION
 ========================================================================
 - All 12+ databases with full search methods
 - Sequential diagnostics for clear error tracking
@@ -7,6 +7,7 @@ UNIVERSAL XRD PHASE IDENTIFIER – FINAL CORRECTED VERSION
 - Robust CIF downloads with retries and user-agent rotation
 - Primitive cell normalisation, full crystallographic output
 - Built-in library as final fallback
+- Compatible with older and newer pymatgen versions
 ========================================================================
 """
 
@@ -21,6 +22,7 @@ import concurrent.futures
 from functools import lru_cache
 import os
 import re
+import io
 
 try:
     from pymatgen.io.cif import CifParser
@@ -333,7 +335,7 @@ class UltimateDatabaseSearcher:
             print(f"[AtomWork] Exception: {e}")
         return []
 
-    # -------------------- PCOD search --------------------
+    # -------------------- PCOD search by elements --------------------
     def search_pcod(self, elements, max_results=20):
         print(f"[PCOD] Searching for elements: {elements}")
         try:
@@ -391,6 +393,38 @@ class UltimateDatabaseSearcher:
         except Exception as e:
             print(f"[NIST] Exception: {e}")
         return []
+
+    # -------------------- PCOD search by d-spacings (new method) --------------------
+    def search_pcod_by_dspacings(self, dspacings, tolerance=0.08):
+        print(f"[PCOD-d] Searching by d-spacings: {dspacings}")
+        all_structures = []
+        seen_ids = set()
+        for d in dspacings[:5]:
+            lower = d * (1 - tolerance)
+            upper = d * (1 + tolerance)
+            params = {"format": "json", "dspacing": f"{lower:.3f}", "dspacing2": f"{upper:.3f}", "database": "pcod", "maxresults": 15}
+            try:
+                resp = self.session.get("https://www.crystallography.net/cod/result", params=params, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for entry in data:
+                        codid = str(entry.get('codid', ''))
+                        if codid and codid not in seen_ids:
+                            seen_ids.add(codid)
+                            all_structures.append({
+                                'database': 'PCOD',
+                                'id': codid,
+                                'formula': entry.get('formula', ''),
+                                'space_group': entry.get('sg', ''),
+                                'cif_url': f"https://www.crystallography.net/cod/{codid}.cif",
+                                'reference': XRD_DATABASE_REFERENCES['PCOD'],
+                                'confidence': 0.5
+                            })
+            except Exception as e:
+                print(f"[PCOD-d] Exception: {e}")
+                continue
+        print(f"[PCOD-d] Found {len(all_structures)} unique structures")
+        return all_structures[:20]
 
     # -------------------- Main search dispatcher (sequential) --------------------
     def search_all_databases(self, elements=None, dspacings=None, family='unknown', progress_callback=None):
@@ -456,7 +490,7 @@ class UltimateDatabaseSearcher:
                 print(f"⚠️ COD d-spacing error: {e}")
             # PCOD d-spacing search
             try:
-                pcod_results = self.search_pcod(dspacings_tuple, tolerance=0.08)
+                pcod_results = self.search_pcod_by_dspacings(dspacings_tuple, tolerance=0.08)
                 if pcod_results:
                     print(f"✅ PCOD d-spacing: {len(pcod_results)} candidates")
                     all_structs.extend(pcod_results)
@@ -581,6 +615,16 @@ def simulate_from_structure(structure, wavelength):
         print(f"      ⚠️ Simulation from structure failed: {e}")
         return np.array([]), np.array([]), [], {}
 
+def parse_cif_string(cif_text):
+    """Parse a CIF string using a method compatible with both old and new pymatgen."""
+    try:
+        # Try the modern method (pymatgen >= 2022)
+        parser = CifParser.from_string(cif_text)
+    except AttributeError:
+        # Fallback for older pymatgen: use StringIO
+        parser = CifParser(io.StringIO(cif_text))
+    return parser.get_structures()[0]
+
 @lru_cache(maxsize=200)
 def simulate_from_cif(cif_url, wavelength, formula_hint=""):
     if not PMG_AVAILABLE:
@@ -608,8 +652,7 @@ def simulate_from_cif(cif_url, wavelength, formula_hint=""):
                     else:
                         break
                 try:
-                    parser = CifParser.from_string(cif_text)
-                    structure = parser.get_structures()[0]
+                    structure = parse_cif_string(cif_text)
                     print(f"      Successfully parsed CIF")
                     structure = normalise_structure(structure)
                     calc = XRDCalculator(wavelength=wavelength)
