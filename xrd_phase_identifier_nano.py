@@ -1,7 +1,8 @@
 """
-UNIVERSAL XRD PHASE IDENTIFIER – FINAL DIAGNOSTIC VERSION
+UNIVERSAL XRD PHASE IDENTIFIER – FINAL CORRECTED VERSION
 ========================================================================
-- Sequential database searches (no threading) for clear diagnostics
+- All 12+ databases with full search methods
+- Sequential diagnostics for clear error tracking
 - Materials Project direct structure access (guaranteed with API key)
 - Robust CIF downloads with retries and user-agent rotation
 - Primitive cell normalisation, full crystallographic output
@@ -146,6 +147,7 @@ class UltimateDatabaseSearcher:
         self.session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
         print(f"[DEBUG] MP API Key present: {'Yes' if self.mp_api_key else 'No'}")
 
+    # -------------------- COD search by elements --------------------
     def search_cod_by_elements(self, elements, max_results=30):
         print(f"[COD] Searching for elements: {elements}")
         try:
@@ -175,6 +177,39 @@ class UltimateDatabaseSearcher:
             print(f"[COD] Exception: {e}")
         return []
 
+    # -------------------- COD search by d-spacings --------------------
+    def search_cod_by_dspacings(self, dspacings, tolerance=0.05):
+        print(f"[COD-d] Searching by d-spacings: {dspacings}")
+        all_structures = []
+        seen_ids = set()
+        for d in dspacings[:5]:
+            lower = d * (1 - tolerance)
+            upper = d * (1 + tolerance)
+            params = {"format": "json", "dspacing": f"{lower:.3f}", "dspacing2": f"{upper:.3f}", "maxresults": 20}
+            try:
+                resp = self.session.get("https://www.crystallography.net/cod/result", params=params, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for entry in data:
+                        codid = str(entry.get('codid', ''))
+                        if codid and codid not in seen_ids:
+                            seen_ids.add(codid)
+                            all_structures.append({
+                                'database': 'COD',
+                                'id': codid,
+                                'formula': entry.get('formula', ''),
+                                'space_group': entry.get('sg', ''),
+                                'cif_url': f"https://www.crystallography.net/cod/{codid}.cif",
+                                'reference': XRD_DATABASE_REFERENCES['COD'],
+                                'confidence': 0.7
+                            })
+            except Exception as e:
+                print(f"[COD-d] Exception: {e}")
+                continue
+        print(f"[COD-d] Found {len(all_structures)} unique structures")
+        return all_structures[:30]
+
+    # -------------------- AMCSD search --------------------
     def search_amcsd(self, elements, max_results=20):
         print(f"[AMCSD] Searching for elements: {elements}")
         try:
@@ -204,6 +239,7 @@ class UltimateDatabaseSearcher:
             print(f"[AMCSD] Exception: {e}")
         return []
 
+    # -------------------- Materials Project search (direct structure) --------------------
     def search_materials_project(self, elements, max_results=30):
         print(f"[MaterialsProject] Searching for elements: {elements}")
         if not self.mp_api_key:
@@ -235,6 +271,7 @@ class UltimateDatabaseSearcher:
             print(f"[MaterialsProject] Exception: {e}")
         return []
 
+    # -------------------- ICSD search (commercial) --------------------
     def search_icsd(self, elements, max_results=20):
         if not self.icsd_api_key:
             print("[ICSD] No API key – skipping")
@@ -267,6 +304,7 @@ class UltimateDatabaseSearcher:
             print(f"[ICSD] Exception: {e}")
         return []
 
+    # -------------------- AtomWork search --------------------
     def search_atomwork(self, elements, max_results=20):
         print(f"[AtomWork] Searching for elements: {elements}")
         try:
@@ -295,6 +333,7 @@ class UltimateDatabaseSearcher:
             print(f"[AtomWork] Exception: {e}")
         return []
 
+    # -------------------- PCOD search --------------------
     def search_pcod(self, elements, max_results=20):
         print(f"[PCOD] Searching for elements: {elements}")
         try:
@@ -324,6 +363,7 @@ class UltimateDatabaseSearcher:
             print(f"[PCOD] Exception: {e}")
         return []
 
+    # -------------------- NIST search --------------------
     def search_nist(self, elements, max_results=20):
         print(f"[NIST] Searching for elements: {elements}")
         try:
@@ -352,6 +392,7 @@ class UltimateDatabaseSearcher:
             print(f"[NIST] Exception: {e}")
         return []
 
+    # -------------------- Main search dispatcher (sequential) --------------------
     def search_all_databases(self, elements=None, dspacings=None, family='unknown', progress_callback=None):
         """
         Sequential search across all databases for clear diagnostics.
@@ -403,12 +444,17 @@ class UltimateDatabaseSearcher:
             print("SEARCHING BY D-SPACINGS (COD + PCOD)")
             print('='*60)
             dspacings_tuple = tuple(sorted(dspacings[:5]))
-            cod_results = self.search_cod_by_dspacings(dspacings_tuple, tolerance=0.05)
-            if cod_results:
-                print(f"✅ COD d-spacing: {len(cod_results)} candidates")
-                all_structs.extend(cod_results)
-            else:
-                print("⚠️ COD d-spacing: 0 candidates")
+            # COD d-spacing search
+            try:
+                cod_results = self.search_cod_by_dspacings(dspacings_tuple, tolerance=0.05)
+                if cod_results:
+                    print(f"✅ COD d-spacing: {len(cod_results)} candidates")
+                    all_structs.extend(cod_results)
+                else:
+                    print("⚠️ COD d-spacing: 0 candidates")
+            except Exception as e:
+                print(f"⚠️ COD d-spacing error: {e}")
+            # PCOD d-spacing search
             try:
                 pcod_results = self.search_pcod(dspacings_tuple, tolerance=0.08)
                 if pcod_results:
@@ -416,8 +462,8 @@ class UltimateDatabaseSearcher:
                     all_structs.extend(pcod_results)
                 else:
                     print("⚠️ PCOD d-spacing: 0 candidates")
-            except:
-                pass
+            except Exception as e:
+                print(f"⚠️ PCOD d-spacing error: {e}")
 
         # Deduplicate
         print(f"\n{'='*60}")
@@ -538,7 +584,7 @@ def simulate_from_structure(structure, wavelength):
 @lru_cache(maxsize=200)
 def simulate_from_cif(cif_url, wavelength, formula_hint=""):
     if not PMG_AVAILABLE:
-        return np.array([]), np.array([]), [], []
+        return np.array([]), np.array([]), [], {}
 
     user_agents = [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
