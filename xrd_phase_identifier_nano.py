@@ -229,7 +229,7 @@ class UltimateDatabaseSearcher:
         return []
 
     # ---------- Materials Project – direct API (old method, worked) ----------
-    def search_materials_project(self, elements, max_results=50):
+    def search_materials_project(self, elements, max_results=30):
         print(f"[MaterialsProject] Searching for elements: {elements}")
         if not self.mp_api_key:
             print("[MaterialsProject] No API key – skipping")
@@ -937,5 +937,6 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
 
     status.update(label=f"✅ Identified {len(final)} phases", state="complete")
     return final
+
 
 
