@@ -230,31 +230,35 @@ class UltimateDatabaseSearcher:
 
     # ---------- Materials Project – direct API (old method, worked) ----------
     def search_materials_project(self, elements, max_results=30):
+        print(f"[MaterialsProject] Searching for elements: {elements}")
         if not self.mp_api_key:
             print("[MaterialsProject] No API key – skipping")
             return []
         try:
-            headers = {"X-API-KEY": self.mp_api_key}
-            elements_str = ",".join(elements)
-            url = f"https://api.materialsproject.org/materials/core/?elements={elements_str}&_per_page={max_results}"
-            resp = self.session.get(url, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                data = resp.json()
+            with MPRester(self.mp_api_key) as mpr:
+                # Search for material IDs using the modern API
+                docs = mpr.summary.search(elements=elements, num_elements=len(elements))
+                print(f"[MaterialsProject] Found {len(docs)} material IDs")
                 structures = []
-                for doc in data.get("data", [])[:max_results]:
-                    structures.append({
-                        'database': 'MaterialsProject',
-                        'id': doc.get("material_id", ""),
-                        'formula': doc.get("formula_pretty", ""),
-                        'space_group': doc.get("symmetry", {}).get("symbol", ""),
-                        'cif_url': f"https://next-gen.materialsproject.org/materials/{doc.get('material_id')}/cif",
-                        'reference': XRD_DATABASE_REFERENCES['MaterialsProject'],
-                        'confidence': 0.75
-                    })
+                for doc in docs[:max_results]:
+                    try:
+                        # Retrieve full structure object
+                        structure = mpr.get_structure_by_material_id(doc.material_id)
+                        structures.append({
+                            'database': 'MaterialsProject',
+                            'id': doc.material_id,
+                            'formula': doc.formula_pretty,
+                            'space_group': doc.symmetry.get('symbol', 'Unknown') if doc.symmetry else 'Unknown',
+                            'structure': structure,          # <-- store the structure
+                            'reference': XRD_DATABASE_REFERENCES['MaterialsProject'],
+                            'confidence': 0.95
+                        })
+                    except Exception as e:
+                        print(f"[MaterialsProject] Could not retrieve structure for {doc.material_id}: {e}")
                 return structures
         except Exception as e:
             print(f"[MaterialsProject] Exception: {e}")
-        return []
+            return []
 
     # ---------- ICSD (if key available) ----------
     def search_icsd(self, elements, max_results=20):
@@ -785,20 +789,29 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
         future_to_struct = {}
         for struct in candidates:
-            url = struct.get('cif_url')
-            if url:
-                future = executor.submit(simulate_from_cif, url, wavelength, struct.get('formula', ''))
-                future_to_struct[future] = struct
-
+            if 'structure' in struct:
+                # Materials Project: simulate directly from structure
+                future = executor.submit(simulate_from_structure, struct['structure'], wavelength)
+                future_to_struct[future] = (struct, 'direct')
+            elif 'cif_url' in struct:
+                # Other databases: download CIF
+                future = executor.submit(simulate_from_cif, struct['cif_url'], wavelength, struct.get('formula', ''))
+                future_to_struct[future] = (struct, 'cif')
+            else:
+                continue
+    
         total = len(future_to_struct)
         completed = 0
         for future in concurrent.futures.as_completed(future_to_struct):
-            struct = future_to_struct[future]
+            struct, mode = future_to_struct[future]
             completed += 1
             status.write(f"   [{completed}/{total}] Simulating {struct.get('formula', 'unknown')}...")
-            print(f"   [{completed}/{total}] Simulating {struct.get('formula', 'unknown')}...")
             try:
-                sim_x, sim_y, sim_hkls, struct_info = future.result(timeout=20)
+                if mode == 'direct':
+                    sim_x, sim_y, sim_hkls, struct_info = future.result()
+                else:
+                    sim_x, sim_y, sim_hkls, struct_info = future.result()
+                # ... rest of matching code
                 if len(sim_x) == 0:
                     print(f"      ❌ Empty simulation – skipping")
                     continue
@@ -925,3 +938,4 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
 
     status.update(label=f"✅ Identified {len(final)} phases", state="complete")
     return final
+
