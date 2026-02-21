@@ -229,15 +229,15 @@ class UltimateDatabaseSearcher:
         return []
 
     # ---------- Materials Project – direct API (old method, worked) ----------
-    def search_materials_project(self, elements, max_results=30):
+    def search_materials_project(self, elements, max_results=50):
         print(f"[MaterialsProject] Searching for elements: {elements}")
         if not self.mp_api_key:
             print("[MaterialsProject] No API key – skipping")
             return []
         try:
             with MPRester(self.mp_api_key) as mpr:
-                # Search for material IDs using the modern API
-                docs = mpr.summary.search(elements=elements, num_elements=len(elements))
+                # Correct modern API: use only 'elements', no 'num_elements'
+                docs = mpr.summary.search(elements=elements)
                 print(f"[MaterialsProject] Found {len(docs)} material IDs")
                 structures = []
                 for doc in docs[:max_results]:
@@ -249,7 +249,7 @@ class UltimateDatabaseSearcher:
                             'id': doc.material_id,
                             'formula': doc.formula_pretty,
                             'space_group': doc.symmetry.get('symbol', 'Unknown') if doc.symmetry else 'Unknown',
-                            'structure': structure,          # <-- store the structure
+                            'structure': structure,          # store the structure
                             'reference': XRD_DATABASE_REFERENCES['MaterialsProject'],
                             'confidence': 0.95
                         })
@@ -259,7 +259,6 @@ class UltimateDatabaseSearcher:
         except Exception as e:
             print(f"[MaterialsProject] Exception: {e}")
             return []
-
     # ---------- ICSD (if key available) ----------
     def search_icsd(self, elements, max_results=20):
         if not self.icsd_api_key:
@@ -938,4 +937,5 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
 
     status.update(label=f"✅ Identified {len(final)} phases", state="complete")
     return final
+
 
