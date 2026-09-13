@@ -14,7 +14,15 @@ References:
 import os
 import streamlit as st
 
-os.environ["MP_API_KEY"] = st.secrets.get("MP_API_KEY", "")
+# Read MP_API_KEY from environment (Hugging Face) or Streamlit secrets.
+# Works on both platforms.
+_mp_key_env = os.environ.get("MP_API_KEY", "")
+if not _mp_key_env:
+    try:
+        _mp_key_env = st.secrets.get("MP_API_KEY", "")
+    except Exception:
+        _mp_key_env = ""
+os.environ["MP_API_KEY"] = _mp_key_env
 
 import numpy as np
 import pandas as pd
@@ -93,7 +101,6 @@ def memory_safe_plot(func):
 
 
 def _safe_panel_export(fig, base_filename, key_prefix):
-    """Call panel_export_buttons only if export_utils is available."""
     if not EXPORT_UTILS_AVAILABLE:
         return
     try:
@@ -142,6 +149,31 @@ def _has_xrd_data(results: Dict) -> bool:
 def _has_multiple_xrd(results: Dict) -> bool:
     pats = results.get('xrd_patterns', [])
     return isinstance(pats, list) and len(pats) > 1
+
+
+def _fmt_hkl_short(hkl_val):
+    if hkl_val is None:
+        return ''
+    if isinstance(hkl_val, (tuple, list)):
+        try:
+            return "(" + ",".join(str(int(x)) for x in hkl_val) + ")"
+        except Exception:
+            return str(hkl_val)
+    if isinstance(hkl_val, dict):
+        for k in ('hkl', 'indices'):
+            if k in hkl_val:
+                return _fmt_hkl_short(hkl_val[k])
+    return str(hkl_val)
+
+
+def _get_wavelength(params):
+    wavelength_str = params['xrd']['wavelength']
+    if "Cu" in wavelength_str:
+        return 1.5406
+    elif "Mo" in wavelength_str:
+        return 0.7107
+    else:
+        return 1.7902
 
 
 def create_sidebar():
@@ -524,16 +556,6 @@ def perform_analysis_validation(results):
     return validation
 
 
-def _get_wavelength(params):
-    wavelength_str = params['xrd']['wavelength']
-    if "Cu" in wavelength_str:
-        return 1.5406
-    elif "Mo" in wavelength_str:
-        return 0.7107
-    else:
-        return 1.7902
-
-
 def _analyze_single_xrd_file(xrd_file, params, elements):
     """Analyze one XRD file. Returns (raw_dict, results_dict, message)."""
     try:
@@ -676,7 +698,6 @@ def execute_scientific_analysis(bet_file, xrd_files, params):
                 else:
                     st.warning(f"{label}: {msg}")
 
-            # Load raw patterns for the remaining files (no phase ID, fast)
             if not run_all and len(files_list) > 1:
                 for xf in files_list[1:]:
                     try:
@@ -1153,6 +1174,114 @@ def display_xrd_analysis(results, plotter):
     with col2:
         st.metric("Structural Bragg peaks", n_structural)
 
+    # ============================================================
+    # IDENTIFIED PHASES
+    # ============================================================
+    phases = xrd_res.get("phases", [])
+
+    if phases:
+        st.markdown("---")
+        st.markdown(f"### Identified Phases ({len(phases)})")
+
+        try:
+            from scientific_integration import map_peaks_to_phases
+            structural_peaks = map_peaks_to_phases(structural_peaks, phases)
+            xrd_res["structural_peaks"] = structural_peaks
+        except Exception as e:
+            st.warning(f"Could not map peaks to phases: {e}")
+
+        phase_data = []
+        for p in phases:
+            lattice = p.get('lattice', {}) or {}
+            density = p.get('density', 0)
+            density_str = f"{density:.2f}" if density else "N/A"
+
+            a = lattice.get('a', 0)
+            b = lattice.get('b', a)
+            c = lattice.get('c', a)
+            if a and b and c:
+                lattice_str = f"a={a:.3f}, b={b:.3f}, c={c:.3f}"
+            else:
+                lattice_str = "N/A"
+
+            phase_data.append({
+                "Phase": p.get("phase", "Unknown"),
+                "Crystal system": p.get("crystal_system", "Unknown"),
+                "Space group": p.get("space_group", "Unknown"),
+                "Lattice params": lattice_str,
+                "Density (g/cm3)": density_str,
+                "Score": round(p.get("score", 0), 3),
+                "Confidence": p.get("confidence_level", ""),
+                "Database": p.get("database", ""),
+                "Matched peaks": len(p.get("hkls", []))
+            })
+
+        df_phases = pd.DataFrame(phase_data)
+        st.dataframe(df_phases, use_container_width=True)
+
+        all_phase_names = [p.get("phase", "Unknown") for p in phases]
+        selected_phases = st.multiselect(
+            "Select phases to display in tables and 3D structure:",
+            options=all_phase_names,
+            default=all_phase_names[:5],
+            key="selected_phases_xrd"
+        )
+
+        if selected_phases:
+            filtered_peaks = [p for p in structural_peaks
+                              if p.get("phase") in selected_phases]
+        else:
+            filtered_peaks = []
+            st.info("No phases selected. Select at least one phase above.")
+
+        if filtered_peaks:
+            st.markdown(f"### Structural Peaks for Selected Phases "
+                        f"({len(filtered_peaks)} peaks)")
+            table = []
+            for p in filtered_peaks:
+                table.append({
+                    "2theta (deg)": round(p.get("position", 0), 3),
+                    "d (A)": round(p.get("d_spacing", 0), 4),
+                    "Intensity": round(p.get("intensity", 0), 1),
+                    "FWHM (deg)": round(p.get("fwhm_deg", 0), 4),
+                    "Size (nm)": round(p.get("crystallite_size", 0), 2),
+                    "HKL": _fmt_hkl_short(p.get("hkl", "")),
+                    "Phase": p.get("phase", ""),
+                })
+            st.dataframe(pd.DataFrame(table), use_container_width=True)
+
+        st.markdown("### Matched Reflections (HKL assignment)")
+        for phase in phases:
+            if phase.get("phase") in selected_phases:
+                hkls = phase.get('hkls', [])
+                with st.expander(f"{phase.get('phase', 'Unknown')} - "
+                                 f"{len(hkls)} matched peaks"):
+                    if hkls:
+                        rows = []
+                        for match in hkls:
+                            if not isinstance(match, dict):
+                                continue
+                            rows.append({
+                                "HKL": _fmt_hkl_short(match.get('hkl', '')),
+                                "2theta exp (deg)": round(match.get('two_theta_exp', 0), 3),
+                                "2theta calc (deg)": round(match.get('two_theta_calc', 0), 3),
+                                "d2theta": round(abs(match.get('two_theta_exp', 0)
+                                                     - match.get('two_theta_calc', 0)), 3),
+                                "d exp (A)": round(match.get('d_exp', 0), 4),
+                                "d calc (A)": round(match.get('d_calc', 0), 4),
+                                "I exp": round(match.get('intensity_exp', 0), 1),
+                                "I calc": round(match.get('intensity_calc', 0), 1),
+                            })
+                        if rows:
+                            st.dataframe(pd.DataFrame(rows), use_container_width=True)
+                    else:
+                        st.info("No HKL assignments available for this phase.")
+    else:
+        st.warning("No crystalline phases identified. "
+                   "Check that the expected elements are selected in the sidebar, "
+                   "then run the analysis again.")
+
+    st.markdown("---")
     st.markdown("### Full XRD Figure (all panels)")
     if xrd_raw and xrd_res:
         try:
@@ -1292,21 +1421,6 @@ def display_xrd_overlay(results, scientific_params):
                                    f"xrd_single_{idx+1}")
             except Exception as e:
                 st.warning(str(e))
-
-
-def _fmt_hkl_short(hkl_val):
-    if hkl_val is None:
-        return ''
-    if isinstance(hkl_val, (tuple, list)):
-        try:
-            return "(" + ",".join(str(int(x)) for x in hkl_val) + ")"
-        except Exception:
-            return str(hkl_val)
-    if isinstance(hkl_val, dict):
-        for k in ('hkl', 'indices'):
-            if k in hkl_val:
-                return _fmt_hkl_short(hkl_val[k])
-    return str(hkl_val)
 
 
 @memory_safe_plot
@@ -1649,9 +1763,6 @@ def display_export(results, scientific_params):
         except Exception as e:
             st.error(f"Could not build report: {str(e)}")
 
-    # ============================================================
-    # ZIP Export - lazy, memory-safe
-    # ============================================================
     st.markdown("---")
     st.subheader("Download All Figures (ZIP)")
     st.caption("Choose figure groups, then click Build. This is lazy so it "
@@ -1782,6 +1893,12 @@ def generate_scientific_report(results):
                       else "Microstrain: not determined")
         report.append(f"Structural Bragg Peaks: {len(xrd.get('structural_peaks', []))}")
         report.append(f"Detected Local Maxima: {xrd.get('n_detected_maxima', 0)}")
+        phases = xrd.get('phases', [])
+        report.append(f"Identified phases: {len(phases)}")
+        for p in phases[:10]:
+            report.append(f"  - {p.get('phase', 'Unknown')} "
+                          f"(score {p.get('score', 0):.3f}, "
+                          f"{p.get('database', '?')})")
         report.append("")
 
     patterns = results.get('xrd_patterns', [])
