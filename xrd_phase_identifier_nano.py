@@ -1,17 +1,18 @@
 """
 UNIVERSAL XRD PHASE IDENTIFIER - FINAL STABLE VERSION
 ========================================================================
-- Direct Materials Project API (structure retrieval)
+- OPTIMADE providers (Materials Cloud, OQMD, NOMAD, MP) - no API key
+- Materials Project API (structure retrieval, if key present)
+- COD (element search)
 - Sequential simulation (no threading) to avoid crash conditions
 - Candidate cap to bound runtime
 - Structured logging via the logging module (no print statements)
 - Robust network handling with per-provider timeouts
-- Session-level caching to avoid repeated heavy queries
 
 References:
 1. Jain, A. et al. (2013). APL Mater., 1, 011002 (Materials Project)
 2. Grazulis, S. et al. (2012). Nucleic Acids Res., 40, D420-D427 (COD)
-3. Downs, R.T. & Hall-Wallace, M. (2003). Am. Mineral., 88, 247-250 (AMCSD)
+3. Andersen, C. W. et al. (2021). OPTIMADE, an open standard.
 ========================================================================
 """
 
@@ -53,6 +54,17 @@ except ImportError:
 
 
 # ============================================================================
+# OPTIMADE PROVIDERS (open, no API key required)
+# ============================================================================
+OPTIMADE_PROVIDERS = [
+    ("MaterialsCloud", "https://optimade.materialscloud.org/v1/structures"),
+    ("OQMD", "https://oqmd.org/optimade/v1/structures"),
+    ("NOMAD", "https://nomad-lab.eu/prod/rae/optimade/v1/structures"),
+    ("MP-OPTIMADE", "https://optimade.materialsproject.org/v1/structures"),
+]
+
+
+# ============================================================================
 # SCIENTIFIC REFERENCES
 # ============================================================================
 XRD_DATABASE_REFERENCES = {
@@ -63,6 +75,10 @@ XRD_DATABASE_REFERENCES = {
     "AtomWork": "Xu, Y. et al. (2011). Sci. Technol. Adv. Mater., 12, 064101.",
     "NIST": "ICDD/NIST (2020). NIST Standard Reference Database 1b.",
     "PCOD": "Le Bail, A. (2005). J. Appl. Cryst., 38, 389-395.",
+    "MaterialsCloud": "OPTIMADE / Materials Cloud (2021).",
+    "OQMD": "Saal, J. E. et al. (2013). JOM, 65, 1501-1509 (OQMD).",
+    "NOMAD": "Scheidgen, M. et al. (2023). J. Appl. Cryst., 56, 1-12 (NOMAD).",
+    "MP-OPTIMADE": "OPTIMADE endpoint of Materials Project.",
     "Built-in Library": "Precomputed patterns from peer-reviewed literature.",
 }
 
@@ -94,15 +110,14 @@ class NanoParams:
         'carbon': ['COD', 'MaterialsProject', 'NIST', 'PCOD'],
     }
 
-    # Network budgets (seconds)
     MP_TIMEOUT = 20
     COD_TIMEOUT = 8
     AMCSD_TIMEOUT = 4
     CIF_TIMEOUT = 8
+    OPTIMADE_TIMEOUT = 15
 
-    # Runtime caps
     MAX_CANDIDATES_PER_DB = 10
-    MAX_TOTAL_CANDIDATES = 15
+    MAX_TOTAL_CANDIDATES = 30
     MAX_FALLBACK_STRUCTURES = 10
 
 
@@ -172,7 +187,6 @@ def structure_to_dict(structure):
 
 
 def _safe_get(obj, attr, default=None):
-    """Return obj[attr] if dict, else getattr(obj, attr, default)."""
     if obj is None:
         return default
     if isinstance(obj, dict):
@@ -210,31 +224,48 @@ class UltimateDatabaseSearcher:
 
                 structures = []
                 for doc in docs[:max_results * 3]:
-                    # Robust access: works for both dict and object
-                    material_id = _safe_get(doc, 'material_id')
+                    material_id = None
+                    if hasattr(doc, 'material_id'):
+                        material_id = doc.material_id
+                    elif isinstance(doc, dict):
+                        material_id = doc.get('material_id') or doc.get('id')
+
                     if material_id is None:
                         continue
                     if isinstance(material_id, dict):
                         material_id = material_id.get('id') or str(material_id)
 
-                    formula_pretty = _safe_get(doc, 'formula_pretty', '')
-                    symmetry = _safe_get(doc, 'symmetry', {})
-                    space_group = _safe_get(symmetry, 'symbol', 'Unknown') if symmetry else 'Unknown'
+                    formula = ''
+                    if hasattr(doc, 'formula_pretty'):
+                        formula = doc.formula_pretty
+                    elif isinstance(doc, dict):
+                        formula = doc.get('formula_pretty', '')
+
+                    space_group = 'Unknown'
+                    symmetry = None
+                    if hasattr(doc, 'symmetry'):
+                        symmetry = doc.symmetry
+                    elif isinstance(doc, dict):
+                        symmetry = doc.get('symmetry')
+                    if symmetry:
+                        if isinstance(symmetry, dict):
+                            space_group = symmetry.get('symbol', 'Unknown')
+                        else:
+                            space_group = getattr(symmetry, 'symbol', 'Unknown')
 
                     try:
                         structure = mpr.get_structure_by_material_id(str(material_id))
                         structures.append({
                             'database': 'MaterialsProject',
                             'id': str(material_id),
-                            'formula': formula_pretty or (structure.composition.reduced_formula
-                                                          if hasattr(structure, 'composition') else ''),
+                            'formula': formula or structure.composition.reduced_formula,
                             'space_group': space_group,
                             'structure': structure,
                             'reference': XRD_DATABASE_REFERENCES['MaterialsProject'],
                             'confidence': 0.95
                         })
                     except Exception as e:
-                        logger.debug("MP structure retrieval failed for %s: %s",
+                        logger.debug("MP structure fetch failed for %s: %s",
                                      material_id, e)
 
                     if len(structures) >= max_results:
@@ -246,18 +277,139 @@ class UltimateDatabaseSearcher:
         return []
 
     # ------------------------------------------------------------------
+    def search_optimade(self, elements, max_per_provider=5):
+        """
+        Query OPTIMADE providers over plain HTTP. No API key needed.
+        Returns candidate dicts with a 'cif_text' field.
+        """
+        if not elements:
+            return []
+
+        filter_str = " AND ".join([f'elements HAS "{el}"' for el in elements])
+
+        all_results = []
+        for provider_name, url in OPTIMADE_PROVIDERS:
+            try:
+                params = {
+                    "filter": filter_str,
+                    "page_limit": max_per_provider,
+                }
+                r = self.session.get(url, params=params,
+                                     timeout=NanoParams.OPTIMADE_TIMEOUT)
+                if r.status_code != 200:
+                    logger.info("OPTIMADE %s: HTTP %d", provider_name, r.status_code)
+                    continue
+
+                try:
+                    payload = r.json()
+                except Exception:
+                    logger.info("OPTIMADE %s: invalid JSON", provider_name)
+                    continue
+
+                entries = payload.get("data", []) or []
+                logger.info("OPTIMADE %s: %d entries", provider_name, len(entries))
+
+                for entry in entries:
+                    try:
+                        attrs = entry.get("attributes", {}) or {}
+                        cif_text = self._build_cif_from_optimade(attrs)
+                        if not cif_text:
+                            continue
+                        all_results.append({
+                            'database': provider_name,
+                            'id': entry.get('id', 'unknown'),
+                            'formula': attrs.get('chemical_formula_reduced', ''),
+                            'space_group': attrs.get('space_group_symmetry', 'Unknown'),
+                            'cif_text': cif_text,
+                            'reference': XRD_DATABASE_REFERENCES.get(
+                                provider_name,
+                                'OPTIMADE provider'
+                            ),
+                            'confidence': 0.85,
+                        })
+                    except Exception as e:
+                        logger.debug("OPTIMADE entry parse failed: %s", e)
+                        continue
+            except Exception as e:
+                logger.info("OPTIMADE %s unavailable: %s",
+                            provider_name, type(e).__name__)
+
+        return all_results
+
+    @staticmethod
+    def _build_cif_from_optimade(attrs):
+        """Build a minimal P1 CIF from OPTIMADE attributes."""
+        try:
+            lattice_vectors = attrs.get("lattice_vectors")
+            species = attrs.get("species_at_sites")
+            positions = attrs.get("cartesian_site_positions")
+
+            if not lattice_vectors or not species or not positions:
+                return None
+
+            a_vec = np.array(lattice_vectors[0], dtype=float)
+            b_vec = np.array(lattice_vectors[1], dtype=float)
+            c_vec = np.array(lattice_vectors[2], dtype=float)
+
+            a = float(np.linalg.norm(a_vec))
+            b = float(np.linalg.norm(b_vec))
+            c = float(np.linalg.norm(c_vec))
+            if a <= 0 or b <= 0 or c <= 0:
+                return None
+
+            alpha = float(np.degrees(np.arccos(np.clip(
+                np.dot(b_vec, c_vec) / (b * c), -1.0, 1.0))))
+            beta = float(np.degrees(np.arccos(np.clip(
+                np.dot(a_vec, c_vec) / (a * c), -1.0, 1.0))))
+            gamma = float(np.degrees(np.arccos(np.clip(
+                np.dot(a_vec, b_vec) / (a * b), -1.0, 1.0))))
+
+            M = np.column_stack([a_vec, b_vec, c_vec])
+            try:
+                M_inv = np.linalg.inv(M)
+            except Exception:
+                return None
+
+            lines = [
+                "data_optimade",
+                "_symmetry_space_group_name_H-M 'P 1'",
+                f"_cell_length_a {a}",
+                f"_cell_length_b {b}",
+                f"_cell_length_c {c}",
+                f"_cell_angle_alpha {alpha}",
+                f"_cell_angle_beta {beta}",
+                f"_cell_angle_gamma {gamma}",
+                "loop_",
+                "_atom_site_type_symbol",
+                "_atom_site_fract_x",
+                "_atom_site_fract_y",
+                "_atom_site_fract_z",
+            ]
+
+            for sym, pos in zip(species, positions):
+                frac = M_inv @ np.array(pos, dtype=float)
+                lines.append(f"{sym} {frac[0]:.8f} {frac[1]:.8f} {frac[2]:.8f}")
+
+            return "\n".join(lines)
+        except Exception as e:
+            logger.debug("CIF build failed: %s", e)
+            return None
+
+    # ------------------------------------------------------------------
     def search_cod_by_elements(self, elements, max_results=None):
         if max_results is None:
             max_results = NanoParams.MAX_CANDIDATES_PER_DB
         try:
-            # COD expects repeated el= parameters, not a comma-separated string
-            params_list = [("format", "json"), ("maxresults", str(max_results))]
-            for el in elements:
-                params_list.append(("el", el))
+            elements_str = ",".join(elements)
+            params = {
+                "format": "json",
+                "el": elements_str,
+                "maxresults": str(max_results),
+            }
 
             resp = self.session.get(
                 "https://www.crystallography.net/cod/result",
-                params=params_list,
+                params=params,
                 timeout=NanoParams.COD_TIMEOUT
             )
 
@@ -279,14 +431,14 @@ class UltimateDatabaseSearcher:
             for entry in data[:max_results]:
                 if not isinstance(entry, dict):
                     continue
-                codid = entry.get('codid')
-                if codid is None:
+                codid = entry.get('codid') or entry.get('file')
+                if not codid:
                     continue
                 structures.append({
                     'database': 'COD',
                     'id': str(codid),
                     'formula': entry.get('formula', ''),
-                    'space_group': entry.get('sg', ''),
+                    'space_group': entry.get('sg', '') or entry.get('spacegroup', ''),
                     'cif_url': f"https://www.crystallography.net/cod/{codid}.cif",
                     'reference': XRD_DATABASE_REFERENCES['COD'],
                     'confidence': 0.8
@@ -328,13 +480,16 @@ class UltimateDatabaseSearcher:
     # ------------------------------------------------------------------
     def search_pcod(self, elements, max_results=5):
         try:
-            params_list = [("format", "json"), ("database", "pcod"),
-                           ("maxresults", str(max_results))]
-            for el in elements:
-                params_list.append(("el", el))
+            elements_str = ",".join(elements)
+            params = {
+                "format": "json",
+                "el": elements_str,
+                "database": "pcod",
+                "maxresults": str(max_results),
+            }
             resp = self.session.get(
                 "https://www.crystallography.net/cod/result",
-                params=params_list,
+                params=params,
                 timeout=NanoParams.COD_TIMEOUT
             )
             if resp.status_code != 200:
@@ -380,46 +535,48 @@ class UltimateDatabaseSearcher:
 
         logger.info("Searching databases for elements: %s", elements)
 
-        if family in NanoParams.DATABASE_PRIORITY:
-            db_order = NanoParams.DATABASE_PRIORITY[family]
-        else:
-            db_order = ['MaterialsProject', 'COD', 'AMCSD']
-
-        for db_name in db_order:
-            # Stop early if we already have enough
-            if len(all_structs) >= max_total:
-                logger.info("Reached candidate cap (%d), stopping search", max_total)
-                break
-
-            try:
-                if db_name == 'MaterialsProject':
-                    results = self.search_materials_project(elements)
-                elif db_name == 'COD':
-                    results = self.search_cod_by_elements(elements)
-                elif db_name == 'AMCSD':
-                    results = self.search_amcsd(elements)
-                elif db_name == 'PCOD':
-                    results = self.search_pcod(elements)
-                elif db_name == 'ICSD':
-                    results = []
-                else:
-                    continue
-            except Exception as e:
-                logger.warning("%s failed: %s", db_name, e)
-                results = []
-
-            if results:
+        # OPTIMADE first (no key required, fast)
+        try:
+            optimade_results = self.search_optimade(elements, max_per_provider=5)
+            if optimade_results:
+                logger.info("OPTIMADE total: %d candidates", len(optimade_results))
+                all_structs.extend(optimade_results)
                 if progress_callback:
-                    progress_callback(f"Found {len(results)} from {db_name}")
-                all_structs.extend(results)
-            else:
-                logger.info("%s returned 0 candidates", db_name)
+                    progress_callback(f"OPTIMADE: {len(optimade_results)} candidates")
+        except Exception as e:
+            logger.warning("OPTIMADE aggregation failed: %s", e)
+
+        # Materials Project (if key present)
+        if len(all_structs) < max_total:
+            try:
+                mp_results = self.search_materials_project(elements)
+                if mp_results:
+                    all_structs.extend(mp_results)
+                    if progress_callback:
+                        progress_callback(f"MP: {len(mp_results)} candidates")
+                else:
+                    logger.info("MaterialsProject returned 0 candidates")
+            except Exception as e:
+                logger.warning("Materials Project failed: %s", e)
+
+        # COD
+        if len(all_structs) < max_total:
+            try:
+                cod_results = self.search_cod_by_elements(elements)
+                if cod_results:
+                    all_structs.extend(cod_results)
+                    if progress_callback:
+                        progress_callback(f"COD: {len(cod_results)} candidates")
+                else:
+                    logger.info("COD returned 0 candidates")
+            except Exception as e:
+                logger.warning("COD failed: %s", e)
 
         # Deduplicate
         unique = {}
         for s in all_structs:
             key = (s.get('formula', ''), s.get('space_group', ''))
-            if key not in unique or s['database'] == 'MaterialsProject':
+            if key not in unique:
                 unique[key] = s
 
         final_list = list(unique.values())
@@ -548,6 +705,33 @@ def simulate_from_structure(structure, wavelength):
         return np.array(pattern.x), np.array(pattern.y), clean_hkls, struct_info
     except Exception as e:
         logger.debug("Simulation from structure failed: %s", e)
+        return np.array([]), np.array([]), [], {}
+
+
+def simulate_from_cif_text(cif_text, wavelength):
+    """Simulate an XRD pattern from a CIF string (used for OPTIMADE results)."""
+    if not PMG_AVAILABLE:
+        return np.array([]), np.array([]), [], {}
+    try:
+        structure = parse_cif_string(cif_text)
+        structure = normalise_structure(structure)
+        calc = XRDCalculator(wavelength=wavelength)
+        pattern = calc.get_pattern(structure, two_theta_range=(5, 80))
+        struct_info = structure_to_dict(structure)
+
+        clean_hkls = []
+        for hkl_list in pattern.hkls:
+            if hkl_list and isinstance(hkl_list, list):
+                hkl_tuple = tuple(int(x) for x in hkl_list[0]['hkl'])
+                mult = len(hkl_list)
+            else:
+                hkl_tuple = (0, 0, 0)
+                mult = 1
+            clean_hkls.append({'hkl': hkl_tuple, 'multiplicity': mult})
+
+        return np.array(pattern.x), np.array(pattern.y), clean_hkls, struct_info
+    except Exception as e:
+        logger.debug("CIF text parse failed: %s", e)
         return np.array([]), np.array([]), [], {}
 
 
@@ -801,6 +985,10 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
                 sim_x, sim_y, sim_hkls, struct_info = simulate_from_structure(
                     struct['structure'], wavelength
                 )
+            elif 'cif_text' in struct:
+                sim_x, sim_y, sim_hkls, struct_info = simulate_from_cif_text(
+                    struct['cif_text'], wavelength
+                )
             elif 'cif_url' in struct:
                 sim_x, sim_y, sim_hkls, struct_info = simulate_from_cif(
                     struct['cif_url'], wavelength, struct.get('formula', '')
@@ -827,6 +1015,12 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
 
             if score < threshold:
                 continue
+
+            # Reject matches that are chemically inconsistent with user elements
+            if elements:
+                formula_from_db = struct.get('formula', '') or struct_info.get('formula', '')
+                if formula_from_db and not any(el in formula_from_db for el in elements):
+                    continue
 
             min_cov = 0.5 if (size_nm is None or size_nm >= 10) else 0.35
             if coverage < min_cov:
