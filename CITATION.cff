@@ -1,0 +1,7 @@
+@software{bet_xrd_analyzer_2026,
+  author       = {Mansouri, Badreddine},
+  title        = {BET--XRD Morphology Analyzer: Scientific Edition for Journal Publication},
+  year         = 2026,
+  version      = {3.0},
+  url          = {https://github.com/badreddinemansouri-eng/BET-XRD-analyzer-USCR-MSPAG}
+}
