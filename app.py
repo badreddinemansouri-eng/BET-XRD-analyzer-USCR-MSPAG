@@ -8,14 +8,13 @@ References:
 2. Thommes et al., Pure Appl. Chem., 2015, 87, 1051-1069 (Physisorption)
 3. Klug & Alexander, X-ray Diffraction Procedures, 1974 (XRD)
 4. Williamson & Hall, Acta Metall., 1953, 1, 22-31 (Microstrain)
+5. Hill & Howard, J. Appl. Cryst., 1987, 20, 467-474 (Rietveld QPA)
 ========================================================================
 """
 
 import os
 import streamlit as st
 
-# Read MP_API_KEY from environment (Hugging Face) or Streamlit secrets.
-# Works on both platforms.
 _mp_key_env = os.environ.get("MP_API_KEY", "")
 if not _mp_key_env:
     try:
@@ -32,6 +31,7 @@ import io
 import json
 import re
 import time
+import tempfile
 import traceback
 import functools
 from typing import Dict, List, Tuple, Optional, Any
@@ -81,6 +81,31 @@ try:
     EXPORT_UTILS_AVAILABLE = True
 except ImportError:
     EXPORT_UTILS_AVAILABLE = False
+
+try:
+    from phase_explorer import (
+        search_phases_by_exact_elements,
+        simulate_phase_pattern,
+        score_phase_against_experimental,
+        plot_multiphase_comparison,
+        PHASE_COLORS,
+    )
+    PHASE_EXPLORER_AVAILABLE = True
+except ImportError:
+    PHASE_EXPLORER_AVAILABLE = False
+    PHASE_COLORS = ['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#9467bd']
+
+try:
+    from rietveld_qpa import (
+        run_rietveld_refinement,
+        format_qpa_table,
+        qpa_validity_statement,
+        GSASII_AVAILABLE,
+    )
+    QPA_AVAILABLE = True
+except ImportError:
+    QPA_AVAILABLE = False
+    GSASII_AVAILABLE = False
 
 
 def memory_safe_plot(func):
@@ -300,6 +325,9 @@ def create_sidebar():
                 "**XRD Analysis:**\n"
                 "1. Klug, H. P.; Alexander, L. E. X-ray Diffraction Procedures, 2nd ed.; Wiley: 1974.\n"
                 "2. Williamson, G. K.; Hall, W. H. Acta Metall. 1953, 1, 22-31.\n\n"
+                "**Rietveld QPA:**\n"
+                "1. Rietveld, H. M. J. Appl. Cryst. 1969, 2, 65-71.\n"
+                "2. Hill, R. J.; Howard, C. J. J. Appl. Cryst. 1987, 20, 467-474.\n\n"
                 "**Porosity Analysis:**\n"
                 "1. Barrett, E. P.; Joyner, L. G.; Halenda, P. P. J. Am. Chem. Soc. 1951, 73, 373-380.\n"
                 "2. Harkins, W. D.; Jura, G. J. Am. Chem. Soc. 1944, 66, 1366-1373."
@@ -557,7 +585,6 @@ def perform_analysis_validation(results):
 
 
 def _analyze_single_xrd_file(xrd_file, params, elements):
-    """Analyze one XRD file. Returns (raw_dict, results_dict, message)."""
     try:
         xrd_file.seek(0)
         two_theta, intensity, msg = extract_xrd_data(xrd_file)
@@ -664,9 +691,6 @@ def execute_scientific_analysis(bet_file, xrd_files, params):
             else:
                 st.error(f"BET extraction failed: {extraction_msg}")
 
-        # ============================================================
-        # XRD: handle multiple files with optional full analysis
-        # ============================================================
         xrd_patterns = []
         if xrd_files:
             files_list = xrd_files if isinstance(xrd_files, list) else [xrd_files]
@@ -725,9 +749,6 @@ def execute_scientific_analysis(bet_file, xrd_files, params):
             else:
                 st.error("No XRD file could be analyzed successfully")
 
-        # ============================================================
-        # BET analysis
-        # ============================================================
         if 'bet_raw' in analysis_results:
             status_text.text("Performing IUPAC-compliant BET analysis...")
             progress_bar.progress(30)
@@ -779,9 +800,6 @@ def execute_scientific_analysis(bet_file, xrd_files, params):
                     'mean_pore_diameter': 0.0
                 }
 
-        # ============================================================
-        # Fusion + Integration
-        # ============================================================
         bet_valid = analysis_results.get('bet_results', {}).get('overall_valid', False)
         xrd_valid = analysis_results.get('xrd_results', {}).get('valid', False)
 
@@ -921,6 +939,8 @@ def display_scientific_results(results, scientific_params):
         all_tabs.append("Crystal Structure")
     if has_bet and has_xrd:
         all_tabs.append("Morphology")
+    if has_xrd:
+        all_tabs.append("Quantitative Phase Analysis")
     if has_bet or has_xrd:
         all_tabs.append("Validation")
         all_tabs.append("Methods")
@@ -999,6 +1019,11 @@ def display_scientific_results(results, scientific_params):
     if has_bet and has_xrd:
         with tabs[tab_index]:
             display_morphology(results)
+        tab_index += 1
+
+    if has_xrd:
+        with tabs[tab_index]:
+            display_qpa_rietveld(results, scientific_params)
         tab_index += 1
 
     if has_bet or has_xrd:
@@ -1174,9 +1199,6 @@ def display_xrd_analysis(results, plotter):
     with col2:
         st.metric("Structural Bragg peaks", n_structural)
 
-    # ============================================================
-    # IDENTIFIED PHASES
-    # ============================================================
     phases = xrd_res.get("phases", [])
 
     if phases:
@@ -1334,6 +1356,10 @@ def display_xrd_analysis(results, plotter):
             _safe_panel_export(f, "xrd_E_summary_table", "xrd_E")
         except Exception as e:
             st.warning(str(e))
+
+    st.markdown("---")
+    with st.expander("Phase Explorer — Manual per-phase element search", expanded=False):
+        display_phase_explorer(results, scientific_params)
 
 
 @memory_safe_plot
@@ -1625,6 +1651,431 @@ def display_morphology(results):
         st.warning(f"Could not generate morphology figure: {str(e)}")
 
 
+def display_phase_explorer(results, scientific_params):
+    st.subheader("Phase Explorer — Per-Phase Element Search")
+    st.caption(
+        "Pick the elements of a phase, search for structures with exactly "
+        "those elements, and overlay the reference pattern against the "
+        "experimental data. The match value is a peak-position indicator. "
+        "It is not a quantitative phase fraction."
+    )
+
+    if not PHASE_EXPLORER_AVAILABLE:
+        st.warning("phase_explorer.py is not available.")
+        return
+
+    if not _has_xrd_data(results):
+        st.info("Upload an XRD pattern first.")
+        return
+
+    xrd_raw = results.get('xrd_raw', {})
+    exp_tt = xrd_raw.get('two_theta', [])
+    exp_ii = xrd_raw.get('intensity', [])
+    if len(exp_tt) == 0 or len(exp_ii) == 0:
+        st.warning("No experimental pattern available.")
+        return
+
+    wavelength = _get_wavelength(scientific_params)
+
+    if 'phase_explorer_phases' not in st.session_state:
+        st.session_state.phase_explorer_phases = []
+
+    from pymatgen.core import Element as PmgElement
+    ALL_ELEMENTS = sorted([el.symbol for el in PmgElement])
+
+    n_existing = len(st.session_state.phase_explorer_phases)
+
+    with st.expander(f"Add a new phase (currently {n_existing} defined)",
+                     expanded=(n_existing == 0)):
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            name = st.text_input(
+                "Phase name",
+                value=f"Phase {n_existing + 1}",
+                key=f"new_phase_name_{n_existing}",
+            )
+        with col2:
+            elements = st.multiselect(
+                "Elements of this phase",
+                options=ALL_ELEMENTS,
+                default=[],
+                key=f"new_phase_elems_{n_existing}",
+            )
+
+        if st.button("Search", key=f"add_phase_btn_{n_existing}"):
+            if not elements:
+                st.error("Select at least one element.")
+            else:
+                with st.spinner(f"Searching structures with exactly {elements}..."):
+                    candidates = search_phases_by_exact_elements(elements)
+
+                if not candidates:
+                    st.warning(
+                        f"No structures found with exactly {elements}. "
+                        "Adjust the element set and try again."
+                    )
+                else:
+                    scored = []
+                    progress = st.progress(0)
+                    total = len(candidates)
+                    for i, cand in enumerate(candidates):
+                        pat = simulate_phase_pattern(
+                            cand['cif_text'], wavelength=wavelength
+                        )
+                        if pat is not None:
+                            sc = score_phase_against_experimental(
+                                pat, exp_tt, exp_ii, tol_deg=0.20
+                            )
+                            scored.append({
+                                'formula': cand['formula'],
+                                'provider': cand['provider'],
+                                'pattern': pat,
+                                'score': sc,
+                                'cif_text': cand['cif_text'],
+                            })
+                        progress.progress((i + 1) / total)
+
+                    scored.sort(key=lambda x: x['score']['score'], reverse=True)
+
+                    if not scored:
+                        st.error("No candidate pattern could be simulated.")
+                    else:
+                        st.session_state.phase_explorer_phases.append({
+                            'name': name,
+                            'elements': list(elements),
+                            'candidates': scored,
+                            'chosen_formula': scored[0]['formula'],
+                            'color': PHASE_COLORS[n_existing % len(PHASE_COLORS)],
+                        })
+                        st.rerun()
+
+    phases = st.session_state.phase_explorer_phases
+
+    if phases:
+        st.markdown("---")
+        st.markdown(f"### Defined Phases ({len(phases)})")
+
+        summary = []
+        for phase in phases:
+            chosen = phase.get('chosen_formula')
+            match = next(
+                (c for c in phase['candidates'] if c['formula'] == chosen),
+                phase['candidates'][0] if phase['candidates'] else None,
+            )
+            sc = match['score'] if match else {}
+            summary.append({
+                'Phase': phase['name'],
+                'Elements': ', '.join(phase['elements']),
+                'Candidates': len(phase['candidates']),
+                'Reference': chosen or '-',
+                'Match (%)': sc.get('score', 0),
+                'Peaks': f"{sc.get('matched', 0)} / {sc.get('total_exp_peaks', 0)}",
+            })
+        st.dataframe(pd.DataFrame(summary), use_container_width=True)
+
+        for p_idx, phase in enumerate(phases):
+            with st.expander(
+                f"{phase['name']}  —  {', '.join(phase['elements'])}  "
+                f"—  {len(phase['candidates'])} candidates",
+                expanded=False,
+            ):
+                if not phase['candidates']:
+                    st.info("No candidates were found.")
+                    continue
+
+                cand_rows = []
+                for c in phase['candidates']:
+                    cand_rows.append({
+                        'Formula': c['formula'],
+                        'Provider': c['provider'],
+                        'Space group': c['pattern'].get('space_group', '?'),
+                        'Crystal system': c['pattern'].get('crystal_system', '?'),
+                        'Match (%)': c['score']['score'],
+                        'Peaks': f"{c['score']['matched']} / {c['score']['total_exp_peaks']}",
+                    })
+                st.dataframe(pd.DataFrame(cand_rows), use_container_width=True)
+
+                formula_options = [c['formula'] for c in phase['candidates']]
+                current = phase.get('chosen_formula') or formula_options[0]
+                if current not in formula_options:
+                    current = formula_options[0]
+                idx_default = formula_options.index(current)
+
+                chosen = st.selectbox(
+                    "Reference for this phase",
+                    options=formula_options,
+                    index=idx_default,
+                    key=f"chosen_{p_idx}",
+                )
+                phase['chosen_formula'] = chosen
+
+                if st.button("Remove this phase", key=f"remove_{p_idx}"):
+                    st.session_state.phase_explorer_phases.pop(p_idx)
+                    st.rerun()
+
+        st.markdown("---")
+        st.markdown("### Comparison Plot")
+
+        if st.button("Generate comparison plot", key="gen_comparison"):
+            plot_inputs = []
+            for i, phase in enumerate(phases):
+                chosen = phase.get('chosen_formula')
+                if not chosen:
+                    continue
+                match = next(
+                    (c for c in phase['candidates'] if c['formula'] == chosen),
+                    phase['candidates'][0] if phase['candidates'] else None,
+                )
+                if match is None:
+                    continue
+                plot_inputs.append({
+                    'label': f"{phase['name']} ({chosen})",
+                    'pattern': match['pattern'],
+                    'score': match['score'],
+                    'color': phase.get('color',
+                                       PHASE_COLORS[i % len(PHASE_COLORS)]),
+                })
+
+            if not plot_inputs:
+                st.warning("Define at least one phase.")
+            else:
+                try:
+                    fig = plot_multiphase_comparison(
+                        exp_tt, exp_ii,
+                        phase_patterns=plot_inputs,
+                        wavelength=wavelength,
+                        font_size=scientific_params['export']['font_size'],
+                        title='Phase comparison (qualitative)',
+                    )
+                    st.pyplot(fig)
+                    _safe_panel_export(fig, "phase_comparison", "phase_cmp")
+                except Exception as e:
+                    st.error(f"Plot failed: {e}")
+
+        if st.button("Clear all phases", key="clear_all_phases"):
+            st.session_state.phase_explorer_phases = []
+            st.rerun()
+    else:
+        st.info("Add a phase above to begin.")
+
+
+@memory_safe_plot
+def display_qpa_rietveld(results, scientific_params):
+    st.subheader("Quantitative Phase Analysis (Rietveld)")
+
+    if not QPA_AVAILABLE or not GSASII_AVAILABLE:
+        st.error(
+            "GSAS-II is not installed. Quantitative phase analysis "
+            "requires GSAS-II. Install with: pip install GSAS-II"
+        )
+        return
+
+    if not _has_xrd_data(results):
+        st.info("Upload an XRD pattern first.")
+        return
+
+    xrd_raw = results.get('xrd_raw', {})
+    exp_tt = xrd_raw.get('two_theta', [])
+    exp_ii = xrd_raw.get('intensity', [])
+    if len(exp_tt) == 0 or len(exp_ii) == 0:
+        st.warning("No experimental pattern available.")
+        return
+
+    xrd_res = results.get('xrd_results', {})
+    identified = xrd_res.get('phases', [])
+
+    st.markdown(
+        "**Method:** Hill & Howard (1987) ZMV formula applied to GSAS-II "
+        "Rietveld scale factors."
+    )
+    st.caption(qpa_validity_statement())
+
+    st.markdown("---")
+    st.markdown("### Step 1 — Choose phases for Rietveld refinement")
+
+    if not identified:
+        st.warning(
+            "No phases have been identified yet. Run phase identification "
+            "first."
+        )
+        return
+
+    phase_options = []
+    for p in identified:
+        formula = p.get('phase', 'Unknown')
+        cif_url = p.get('cif_url', '')
+        phase_options.append({
+            'label': f"{formula} ({p.get('database', '?')})",
+            'formula': formula,
+            'cif_url': cif_url,
+            'crystal_system': p.get('crystal_system', '?'),
+            'space_group': p.get('space_group', '?'),
+        })
+
+    selected_labels = st.multiselect(
+        "Select phases to include in the refinement",
+        options=[p['label'] for p in phase_options],
+        default=[p['label'] for p in phase_options[:3]],
+        key="qpa_phase_selection",
+    )
+
+    if not selected_labels:
+        st.info("Select at least one phase.")
+        return
+
+    selected_phases = [p for p in phase_options if p['label'] in selected_labels]
+
+    st.markdown("### Step 2 — Selected phases preview")
+    preview_rows = []
+    for p in selected_phases:
+        preview_rows.append({
+            'Phase': p['formula'],
+            'Crystal system': p['crystal_system'],
+            'Space group': p['space_group'],
+            'CIF URL': p['cif_url'][:60] + ('...' if len(p['cif_url']) > 60 else ''),
+        })
+    st.dataframe(pd.DataFrame(preview_rows), use_container_width=True)
+
+    st.caption(
+        "ZMV values are computed from each phase's CIF. "
+        "Z = formula units/cell, M = formula mass, V = cell volume."
+    )
+
+    st.markdown("### Step 3 — Run Rietveld refinement")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        max_cycles = st.number_input(
+            "Max refinement cycles", min_value=3, max_value=50, value=10
+        )
+    with col2:
+        refine_background = st.checkbox("Refine background", value=True)
+    with col3:
+        refine_cell = st.checkbox("Refine unit cell", value=True)
+
+    if st.button("Run Rietveld refinement", key="run_rietveld"):
+        import requests as _rq
+        work_dir = tempfile.mkdtemp(prefix="qpa_cifs_")
+        phase_dicts = []
+
+        progress = st.progress(0)
+        for i, p in enumerate(selected_phases):
+            cif_url = p.get('cif_url', '')
+            if not cif_url:
+                st.warning(f"No CIF URL for {p['formula']}. Skipping.")
+                progress.progress((i + 1) / len(selected_phases))
+                continue
+
+            try:
+                r = _rq.get(cif_url, timeout=20)
+                if r.status_code != 200:
+                    st.warning(f"Could not download CIF for {p['formula']}")
+                    progress.progress((i + 1) / len(selected_phases))
+                    continue
+                cif_path = os.path.join(work_dir, f"phase_{i}.cif")
+                with open(cif_path, 'w') as f:
+                    f.write(r.text)
+                phase_dicts.append({
+                    'name': p['formula'],
+                    'cif_path': cif_path,
+                })
+            except Exception as e:
+                st.warning(f"Download error for {p['formula']}: {e}")
+            progress.progress((i + 1) / len(selected_phases))
+
+        if not phase_dicts:
+            st.error("No CIF files could be downloaded.")
+            return
+
+        with st.spinner(f"Running Rietveld refinement on "
+                        f"{len(phase_dicts)} phases. This may take 1-3 minutes..."):
+            result = run_rietveld_refinement(
+                two_theta=np.asarray(exp_tt, dtype=float),
+                intensity=np.asarray(exp_ii, dtype=float),
+                phases=phase_dicts,
+                wavelength=_get_wavelength(scientific_params),
+                max_cycles=int(max_cycles),
+                refine_background=refine_background,
+                refine_cell=refine_cell,
+            )
+
+        if not result.get('success'):
+            st.error(f"Rietveld refinement failed: "
+                     f"{result.get('error', 'Unknown error')}")
+            return
+
+        st.success("Rietveld refinement completed successfully.")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            rwp = result.get('Rwp')
+            st.metric("Rwp (%)", f"{rwp:.2f}" if rwp else "N/A")
+        with col2:
+            rp = result.get('Rp')
+            st.metric("Rp (%)", f"{rp:.2f}" if rp else "N/A")
+        with col3:
+            chi2 = result.get('chi2')
+            st.metric("chi2", f"{chi2:.3f}" if chi2 else "N/A")
+
+        st.markdown("### Quantitative Phase Analysis (Hill & Howard ZMV)")
+
+        table_rows = format_qpa_table(result['phase_fractions'])
+        df_qpa = pd.DataFrame(table_rows)
+        st.dataframe(df_qpa, use_container_width=True)
+
+        try:
+            import matplotlib.pyplot as plt
+            valid = [pf for pf in result['phase_fractions']
+                     if pf.get('weight_fraction') is not None]
+            if valid:
+                names = [pf['name'] for pf in valid]
+                fracs = [pf['weight_fraction'] for pf in valid]
+
+                fig, ax = plt.subplots(figsize=(8, 4.5))
+                bars = ax.bar(names, fracs,
+                              color=[PHASE_COLORS[i % len(PHASE_COLORS)]
+                                     for i in range(len(names))],
+                              edgecolor='black')
+                for bar, f in zip(bars, fracs):
+                    ax.text(bar.get_x() + bar.get_width() / 2,
+                            bar.get_height() + 0.5,
+                            f"{f:.2f}%", ha='center', va='bottom',
+                            fontsize=10)
+                ax.set_ylabel('Weight fraction (%)')
+                ax.set_title('Quantitative Phase Analysis (Rietveld / ZMV)')
+                ax.set_ylim(0, max(fracs) * 1.25 if fracs else 100)
+                ax.grid(True, axis='y', alpha=0.3)
+                ax.text(0.5, -0.18, qpa_validity_statement(),
+                        transform=ax.transAxes, ha='center', va='top',
+                        fontsize=7, style='italic', color='#555555')
+                plt.tight_layout(rect=[0, 0.05, 1, 1])
+                st.pyplot(fig)
+                _safe_panel_export(fig, "qpa_weight_fractions", "qpa_bar")
+        except Exception as e:
+            st.warning(f"Could not draw bar chart: {e}")
+
+        if result.get('gpx_bytes'):
+            st.download_button(
+                label="Download GSAS-II project (.gpx) for verification",
+                data=result['gpx_bytes'],
+                file_name="rietveld_refinement.gpx",
+                mime="application/octet-stream",
+                use_container_width=True,
+            )
+
+        try:
+            csv_str = df_qpa.to_csv(index=False)
+            st.download_button(
+                label="Download QPA table (CSV)",
+                data=csv_str,
+                file_name="qpa_results.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        except Exception:
+            pass
+
+
 def display_methods(results, scientific_params):
     st.subheader("Scientific Methods and Calculations")
 
@@ -1660,6 +2111,29 @@ def display_methods(results, scientific_params):
             "1. Klug, H. P., and Alexander, L. E. (1974). X-ray Diffraction Procedures.\n"
             "2. Williamson, G. K., and Hall, W. H. (1953). Acta Metall., 1, 22-31.\n"
             "3. Ruland, W. (1961). Acta Cryst., 14, 1180."
+        )
+
+    with st.expander("D. Quantitative Phase Analysis (Rietveld)", expanded=False):
+        st.markdown(
+            "### Hill & Howard (1987) ZMV Method\n\n"
+            "Weight fraction of phase alpha in an n-phase mixture:\n\n"
+            "    w_alpha = S_alpha * (ZMV)_alpha / sum_j S_j * (ZMV)_j\n\n"
+            "where:\n"
+            "- **S_alpha** = refined Rietveld scale factor for phase alpha\n"
+            "- **Z** = formula units per unit cell\n"
+            "- **M** = formula unit mass (g/mol)\n"
+            "- **V** = unit cell volume (Angstrom^3)\n\n"
+            "**Validity conditions:**\n"
+            "1. All phases are crystalline.\n"
+            "2. All phases have been identified and included in the refinement.\n"
+            "3. A structural model (CIF) exists for each phase.\n"
+            "4. The refinement has converged to a good fit (Rwp low, chi2 ~ 1).\n\n"
+            "If any condition is violated, the fractions are still normalized "
+            "but will overestimate the crystalline phases relative to the true sample.\n\n"
+            "**References:**\n"
+            "1. Rietveld, H. M. (1969). J. Appl. Cryst., 2, 65-71.\n"
+            "2. Hill, R. J., and Howard, C. J. (1987). J. Appl. Cryst., 20, 467-474.\n"
+            "3. Bish, D. L., and Howard, S. A. (1988). J. Appl. Cryst., 21, 86-91."
         )
 
 
@@ -1926,6 +2400,7 @@ def generate_scientific_report(results):
     report.append("BET Analysis: IUPAC Rouquerol criteria")
     report.append("XRD Analysis: Scherrer, Williamson-Hall methods")
     report.append("Porosity: t-plot, BJH methods")
+    report.append("QPA: Rietveld + Hill & Howard (1987) ZMV formula")
     report.append("")
 
     report.append("REFERENCES")
@@ -1933,6 +2408,8 @@ def generate_scientific_report(results):
     report.append("1. Rouquerol et al., Pure Appl. Chem., 1994, 66, 1739")
     report.append("2. Thommes et al., Pure Appl. Chem., 2015, 87, 1051")
     report.append("3. Klug & Alexander, X-ray Diffraction Procedures, 1974")
+    report.append("4. Rietveld, J. Appl. Cryst., 1969, 2, 65")
+    report.append("5. Hill & Howard, J. Appl. Cryst., 1987, 20, 467")
 
     return "\n".join(report)
 
