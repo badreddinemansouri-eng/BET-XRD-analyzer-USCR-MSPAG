@@ -5,7 +5,8 @@ UNIVERSAL XRD PHASE IDENTIFIER - FINAL STABLE VERSION
 - Sequential simulation (no threading) to avoid crash conditions
 - Candidate cap to bound runtime
 - Structured logging via the logging module (no print statements)
-- Fallback to built-in library only when online search returns zero
+- Robust network handling with per-provider timeouts
+- Session-level caching to avoid repeated heavy queries
 
 References:
 1. Jain, A. et al. (2013). APL Mater., 1, 011002 (Materials Project)
@@ -28,7 +29,6 @@ import requests
 import streamlit as st
 from scipy.signal import find_peaks
 
-# Configure module logger (no print statements anywhere)
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -38,9 +38,6 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
-# ---------------------------------------------------------------------------
-# Pymatgen availability
-# ---------------------------------------------------------------------------
 try:
     from pymatgen.io.cif import CifParser
     from pymatgen.analysis.diffraction.xrd import XRDCalculator
@@ -76,10 +73,10 @@ XRD_DATABASE_REFERENCES = {
 @dataclass
 class NanoParams:
     SIZE_TOLERANCE = {
-        'ultra_nano': 0.10,   # <5 nm
-        'nano': 0.06,         # 5-10 nm
-        'submicron': 0.03,    # 10-100 nm
-        'micron': 0.02,       # >100 nm
+        'ultra_nano': 0.10,
+        'nano': 0.06,
+        'submicron': 0.03,
+        'micron': 0.02,
     }
     FAMILIES = {
         'metal': ['Au', 'Ag', 'Cu', 'Pt', 'Pd', 'Ni', 'Fe', 'Co'],
@@ -96,6 +93,17 @@ class NanoParams:
         'chalcogenide': ['MaterialsProject', 'COD', 'ICSD', 'AMCSD'],
         'carbon': ['COD', 'MaterialsProject', 'NIST', 'PCOD'],
     }
+
+    # Network budgets (seconds)
+    MP_TIMEOUT = 20
+    COD_TIMEOUT = 8
+    AMCSD_TIMEOUT = 4
+    CIF_TIMEOUT = 8
+
+    # Runtime caps
+    MAX_CANDIDATES_PER_DB = 10
+    MAX_TOTAL_CANDIDATES = 15
+    MAX_FALLBACK_STRUCTURES = 10
 
 
 # ============================================================================
@@ -163,6 +171,15 @@ def structure_to_dict(structure):
     }
 
 
+def _safe_get(obj, attr, default=None):
+    """Return obj[attr] if dict, else getattr(obj, attr, default)."""
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(attr, default)
+    return getattr(obj, attr, default)
+
+
 # ============================================================================
 # DATABASE SEARCHER (SEQUENTIAL)
 # ============================================================================
@@ -178,140 +195,203 @@ class UltimateDatabaseSearcher:
         logger.info("Database searcher initialized. MP key present: %s",
                     'yes' if self.mp_api_key else 'no')
 
-    def search_materials_project(self, elements, max_results=15):
+    # ------------------------------------------------------------------
+    def search_materials_project(self, elements, max_results=None):
+        if max_results is None:
+            max_results = NanoParams.MAX_CANDIDATES_PER_DB
         if not self.mp_api_key:
             logger.info("Materials Project: no API key, skipping")
             return []
+
         try:
             with MPRester(self.mp_api_key) as mpr:
                 docs = mpr.summary.search(elements=elements)
                 logger.info("Materials Project: %d candidates", len(docs))
+
                 structures = []
-                for doc in docs[:max_results]:
+                for doc in docs[:max_results * 3]:
+                    # Robust access: works for both dict and object
+                    material_id = _safe_get(doc, 'material_id')
+                    if material_id is None:
+                        continue
+                    if isinstance(material_id, dict):
+                        material_id = material_id.get('id') or str(material_id)
+
+                    formula_pretty = _safe_get(doc, 'formula_pretty', '')
+                    symmetry = _safe_get(doc, 'symmetry', {})
+                    space_group = _safe_get(symmetry, 'symbol', 'Unknown') if symmetry else 'Unknown'
+
                     try:
-                        structure = mpr.get_structure_by_material_id(doc.material_id)
+                        structure = mpr.get_structure_by_material_id(str(material_id))
                         structures.append({
                             'database': 'MaterialsProject',
-                            'id': doc.material_id,
-                            'formula': doc.formula_pretty,
-                            'space_group': (doc.symmetry.get('symbol', 'Unknown')
-                                            if doc.symmetry else 'Unknown'),
+                            'id': str(material_id),
+                            'formula': formula_pretty or (structure.composition.reduced_formula
+                                                          if hasattr(structure, 'composition') else ''),
+                            'space_group': space_group,
                             'structure': structure,
                             'reference': XRD_DATABASE_REFERENCES['MaterialsProject'],
                             'confidence': 0.95
                         })
                     except Exception as e:
-                        logger.warning("Materials Project structure retrieval failed "
-                                       "for %s: %s", doc.material_id, e)
+                        logger.debug("MP structure retrieval failed for %s: %s",
+                                     material_id, e)
+
+                    if len(structures) >= max_results:
+                        break
+
                 return structures
         except Exception as e:
             logger.warning("Materials Project exception: %s", e)
         return []
 
-    def search_cod_by_elements(self, elements, max_results=15):
+    # ------------------------------------------------------------------
+    def search_cod_by_elements(self, elements, max_results=None):
+        if max_results is None:
+            max_results = NanoParams.MAX_CANDIDATES_PER_DB
         try:
-            params = {
-                "format": "json",
-                "el": ",".join(elements),
-                "maxresults": max_results
-            }
+            # COD expects repeated el= parameters, not a comma-separated string
+            params_list = [("format", "json"), ("maxresults", str(max_results))]
+            for el in elements:
+                params_list.append(("el", el))
+
             resp = self.session.get(
                 "https://www.crystallography.net/cod/result",
-                params=params, timeout=10
+                params=params_list,
+                timeout=NanoParams.COD_TIMEOUT
             )
-            if resp.status_code == 200:
+
+            if resp.status_code != 200:
+                logger.info("COD returned status %d", resp.status_code)
+                return []
+
+            try:
                 data = resp.json()
-                structures = []
-                for entry in data[:max_results]:
-                    if 'codid' in entry:
-                        structures.append({
-                            'database': 'COD',
-                            'id': str(entry['codid']),
-                            'formula': entry.get('formula', ''),
-                            'space_group': entry.get('sg', ''),
-                            'cif_url': f"https://www.crystallography.net/cod/{entry['codid']}.cif",
-                            'reference': XRD_DATABASE_REFERENCES['COD'],
-                            'confidence': 0.8
-                        })
-                logger.info("COD: %d candidates", len(structures))
-                return structures
+            except Exception as e:
+                logger.warning("COD JSON decode failed: %s", e)
+                return []
+
+            if not isinstance(data, list):
+                logger.info("COD returned non-list payload")
+                return []
+
+            structures = []
+            for entry in data[:max_results]:
+                if not isinstance(entry, dict):
+                    continue
+                codid = entry.get('codid')
+                if codid is None:
+                    continue
+                structures.append({
+                    'database': 'COD',
+                    'id': str(codid),
+                    'formula': entry.get('formula', ''),
+                    'space_group': entry.get('sg', ''),
+                    'cif_url': f"https://www.crystallography.net/cod/{codid}.cif",
+                    'reference': XRD_DATABASE_REFERENCES['COD'],
+                    'confidence': 0.8
+                })
+
+            logger.info("COD: %d candidates", len(structures))
+            return structures
         except Exception as e:
             logger.warning("COD exception: %s", e)
         return []
 
+    # ------------------------------------------------------------------
     def search_amcsd(self, elements, max_results=5):
         try:
             formula = "".join(elements)
             url = f"http://rruff.geo.arizona.edu/AMS/result.php?formula={formula}"
-            resp = self.session.get(url, timeout=10)
-            if resp.status_code == 200:
-                cif_links = re.findall(r'href="([^"]+\.cif)"', resp.text)
-                structures = []
-                for link in cif_links[:max_results]:
-                    full_url = link if link.startswith("http") else f"http://rruff.geo.arizona.edu/AMS/{link}"
-                    structures.append({
-                        'database': 'AMCSD',
-                        'id': link.split('/')[-1].replace('.cif', ''),
-                        'formula': formula,
-                        'space_group': 'Unknown',
-                        'cif_url': full_url,
-                        'reference': XRD_DATABASE_REFERENCES['AMCSD'],
-                        'confidence': 0.7
-                    })
-                logger.info("AMCSD: %d candidates", len(structures))
-                return structures
+            resp = self.session.get(url, timeout=NanoParams.AMCSD_TIMEOUT)
+            if resp.status_code != 200:
+                return []
+            cif_links = re.findall(r'href="([^"]+\.cif)"', resp.text)
+            structures = []
+            for link in cif_links[:max_results]:
+                full_url = link if link.startswith("http") else f"http://rruff.geo.arizona.edu/AMS/{link}"
+                structures.append({
+                    'database': 'AMCSD',
+                    'id': link.split('/')[-1].replace('.cif', ''),
+                    'formula': formula,
+                    'space_group': 'Unknown',
+                    'cif_url': full_url,
+                    'reference': XRD_DATABASE_REFERENCES['AMCSD'],
+                    'confidence': 0.7
+                })
+            logger.info("AMCSD: %d candidates", len(structures))
+            return structures
         except Exception as e:
-            logger.warning("AMCSD exception: %s", e)
+            logger.info("AMCSD unavailable (skipping): %s", type(e).__name__)
         return []
 
+    # ------------------------------------------------------------------
     def search_pcod(self, elements, max_results=5):
         try:
-            params = {
-                "format": "json",
-                "el": ",".join(elements),
-                "database": "pcod",
-                "maxresults": max_results
-            }
+            params_list = [("format", "json"), ("database", "pcod"),
+                           ("maxresults", str(max_results))]
+            for el in elements:
+                params_list.append(("el", el))
             resp = self.session.get(
                 "https://www.crystallography.net/cod/result",
-                params=params, timeout=10
+                params=params_list,
+                timeout=NanoParams.COD_TIMEOUT
             )
-            if resp.status_code == 200:
+            if resp.status_code != 200:
+                return []
+            try:
                 data = resp.json()
-                structures = []
-                for entry in data[:max_results]:
-                    if 'codid' in entry:
-                        structures.append({
-                            'database': 'PCOD',
-                            'id': str(entry['codid']),
-                            'formula': entry.get('formula', ''),
-                            'space_group': entry.get('sg', ''),
-                            'cif_url': f"https://www.crystallography.net/cod/{entry['codid']}.cif",
-                            'reference': XRD_DATABASE_REFERENCES['PCOD'],
-                            'confidence': 0.6
-                        })
-                logger.info("PCOD: %d candidates", len(structures))
-                return structures
+            except Exception:
+                return []
+            if not isinstance(data, list):
+                return []
+            structures = []
+            for entry in data[:max_results]:
+                if not isinstance(entry, dict):
+                    continue
+                codid = entry.get('codid')
+                if codid is None:
+                    continue
+                structures.append({
+                    'database': 'PCOD',
+                    'id': str(codid),
+                    'formula': entry.get('formula', ''),
+                    'space_group': entry.get('sg', ''),
+                    'cif_url': f"https://www.crystallography.net/cod/{codid}.cif",
+                    'reference': XRD_DATABASE_REFERENCES['PCOD'],
+                    'confidence': 0.6
+                })
+            logger.info("PCOD: %d candidates", len(structures))
+            return structures
         except Exception as e:
-            logger.warning("PCOD exception: %s", e)
+            logger.info("PCOD skipped: %s", type(e).__name__)
         return []
 
+    # ------------------------------------------------------------------
     def search_all_databases(self, elements=None, dspacings=None,
-                             family='unknown', progress_callback=None):
+                             family='unknown', progress_callback=None,
+                             max_total=None):
+        if max_total is None:
+            max_total = NanoParams.MAX_TOTAL_CANDIDATES
+
         all_structs = []
-        if elements:
-            logger.info("Searching databases for elements: %s", elements)
+        if not elements:
+            return []
 
-            if family in NanoParams.DATABASE_PRIORITY:
-                db_order = NanoParams.DATABASE_PRIORITY[family]
-            else:
-                db_order = ['MaterialsProject', 'COD', 'AMCSD', 'PCOD']
+        logger.info("Searching databases for elements: %s", elements)
 
-            if self.icsd_api_key and 'ICSD' not in db_order:
-                db_order.append('ICSD')
+        if family in NanoParams.DATABASE_PRIORITY:
+            db_order = NanoParams.DATABASE_PRIORITY[family]
+        else:
+            db_order = ['MaterialsProject', 'COD', 'AMCSD']
 
-            for db_name in db_order:
-                results = []
+        for db_name in db_order:
+            # Stop early if we already have enough
+            if len(all_structs) >= max_total:
+                logger.info("Reached candidate cap (%d), stopping search", max_total)
+                break
+
+            try:
                 if db_name == 'MaterialsProject':
                     results = self.search_materials_project(elements)
                 elif db_name == 'COD':
@@ -321,26 +401,30 @@ class UltimateDatabaseSearcher:
                 elif db_name == 'PCOD':
                     results = self.search_pcod(elements)
                 elif db_name == 'ICSD':
-                    # Placeholder branch retained for future ICSD integration
                     results = []
                 else:
                     continue
+            except Exception as e:
+                logger.warning("%s failed: %s", db_name, e)
+                results = []
 
-                if results:
-                    if progress_callback:
-                        progress_callback(f"Found {len(results)} from {db_name}")
-                    all_structs.extend(results)
-                else:
-                    logger.info("%s returned 0 candidates", db_name)
+            if results:
+                if progress_callback:
+                    progress_callback(f"Found {len(results)} from {db_name}")
+                all_structs.extend(results)
+            else:
+                logger.info("%s returned 0 candidates", db_name)
 
+        # Deduplicate
         unique = {}
         for s in all_structs:
             key = (s.get('formula', ''), s.get('space_group', ''))
             if key not in unique or s['database'] == 'MaterialsProject':
                 unique[key] = s
+
         final_list = list(unique.values())
         logger.info("Total unique candidates: %d", len(final_list))
-        return final_list
+        return final_list[:max_total]
 
 
 # ============================================================================
@@ -362,10 +446,6 @@ class PatternMatcher:
     @classmethod
     def match(cls, exp_d, exp_intensity, sim_d, sim_intensity,
               sim_hkls, size_nm=None, family='unknown'):
-        """
-        Match experimental and simulated patterns using d-spacing
-        with intensity-weighted ranking and coverage checks.
-        """
         if len(exp_d) == 0 or len(sim_d) == 0:
             return 0.0, []
 
@@ -389,7 +469,6 @@ class PatternMatcher:
 
             if best_error < tol:
                 match_quality = 1.0 - (best_error / tol)
-
                 if len(sim_intensity) > best_idx:
                     exp_rank = np.sum(exp_intensity > I_exp) / len(exp_intensity)
                     sim_rank = np.sum(sim_intensity > sim_intensity[best_idx]) / len(sim_intensity)
@@ -430,8 +509,6 @@ class PatternMatcher:
 
         weighted_score = float(np.average(scores, weights=weights))
         coverage = len(scores) / n_exp
-
-        # Coverage threshold tightened for nanomaterial sensitivity
         min_coverage = 0.5 if (size_nm is None or size_nm >= 10) else 0.35
         if coverage < min_coverage:
             return 0.0, []
@@ -470,7 +547,7 @@ def simulate_from_structure(structure, wavelength):
 
         return np.array(pattern.x), np.array(pattern.y), clean_hkls, struct_info
     except Exception as e:
-        logger.warning("Simulation from structure failed: %s", e)
+        logger.debug("Simulation from structure failed: %s", e)
         return np.array([]), np.array([]), [], {}
 
 
@@ -479,49 +556,53 @@ def simulate_from_cif(cif_url, wavelength, formula_hint=""):
         return np.array([]), np.array([]), [], {}
 
     user_agents = [
-        'Mozilla/5.0 (compatible; BET-XRD-Analyzer/3.0; +https://github.com/)',
+        'Mozilla/5.0 (compatible; BET-XRD-Analyzer/3.0)',
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'
     ]
     for attempt in range(2):
         headers = {'User-Agent': user_agents[attempt % len(user_agents)]}
         try:
-            resp = requests.get(cif_url, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                cif_text = resp.text
-                if ("<html" in cif_text[:200].lower()
-                        or "<!doctype" in cif_text[:200].lower()):
-                    continue
-                try:
-                    structure = parse_cif_string(cif_text)
-                    structure = normalise_structure(structure)
-                    calc = XRDCalculator(wavelength=wavelength)
-                    pattern = calc.get_pattern(structure, two_theta_range=(5, 80))
-                    struct_info = structure_to_dict(structure)
+            resp = requests.get(cif_url, headers=headers,
+                                timeout=NanoParams.CIF_TIMEOUT)
+            if resp.status_code != 200:
+                continue
 
-                    clean_hkls = []
-                    for hkl_list in pattern.hkls:
-                        if hkl_list and isinstance(hkl_list, list):
-                            hkl_tuple = tuple(int(x) for x in hkl_list[0]['hkl'])
-                            mult = len(hkl_list)
-                        else:
-                            hkl_tuple = (0, 0, 0)
-                            mult = 1
-                        clean_hkls.append({'hkl': hkl_tuple, 'multiplicity': mult})
+            cif_text = resp.text
+            if ("<html" in cif_text[:200].lower()
+                    or "<!doctype" in cif_text[:200].lower()):
+                continue
 
-                    return np.array(pattern.x), np.array(pattern.y), clean_hkls, struct_info
-                except Exception as e:
-                    logger.warning("CIF parsing failed: %s", e)
-                    continue
+            try:
+                structure = parse_cif_string(cif_text)
+                structure = normalise_structure(structure)
+                calc = XRDCalculator(wavelength=wavelength)
+                pattern = calc.get_pattern(structure, two_theta_range=(5, 80))
+                struct_info = structure_to_dict(structure)
+
+                clean_hkls = []
+                for hkl_list in pattern.hkls:
+                    if hkl_list and isinstance(hkl_list, list):
+                        hkl_tuple = tuple(int(x) for x in hkl_list[0]['hkl'])
+                        mult = len(hkl_list)
+                    else:
+                        hkl_tuple = (0, 0, 0)
+                        mult = 1
+                    clean_hkls.append({'hkl': hkl_tuple, 'multiplicity': mult})
+
+                return (np.array(pattern.x), np.array(pattern.y),
+                        clean_hkls, struct_info)
+            except Exception as e:
+                logger.debug("CIF parsing failed (%s): %s", cif_url, e)
+                continue
         except Exception as e:
-            logger.warning("CIF download failed: %s", e)
+            logger.debug("CIF download failed (%s): %s", cif_url, e)
             continue
 
     return np.array([]), np.array([]), [], {}
 
 
 # ============================================================================
-# BUILT-IN LIBRARY (LAST-RESORT FALLBACK)
+# BUILT-IN LIBRARY (LAST RESORT)
 # ============================================================================
 BUILTIN_PHASES = [
     {
@@ -600,39 +681,19 @@ def simulate_from_library(formula, wavelength):
 
 
 # ============================================================================
-# FALLBACK DATABASE (COD URLs)
+# FALLBACK DATABASE (COD CIF URLS) - capped for speed
 # ============================================================================
-FALLBACK = [
-    {"formula": "Au", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008463.cif", "database": "Fallback"},
-    {"formula": "Ag", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008459.cif", "database": "Fallback"},
-    {"formula": "Cu", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008461.cif", "database": "Fallback"},
-    {"formula": "Pt", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9011620.cif", "database": "Fallback"},
-    {"formula": "Pd", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/1011094.cif", "database": "Fallback"},
-    {"formula": "Ni", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008473.cif", "database": "Fallback"},
-    {"formula": "Fe", "space_group": "Im-3m", "cif_url": "https://www.crystallography.net/cod/9008536.cif", "database": "Fallback"},
-    {"formula": "Co", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008491.cif", "database": "Fallback"},
-    {"formula": "Al", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008460.cif", "database": "Fallback"},
-    {"formula": "Pb", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9008474.cif", "database": "Fallback"},
-    {"formula": "Sn", "space_group": "I41/amd", "cif_url": "https://www.crystallography.net/cod/9008563.cif", "database": "Fallback"},
-    {"formula": "Ti", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008517.cif", "database": "Fallback"},
-    {"formula": "Zr", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008532.cif", "database": "Fallback"},
-    {"formula": "Mg", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008467.cif", "database": "Fallback"},
-    {"formula": "Zn", "space_group": "P63/mmc", "cif_url": "https://www.crystallography.net/cod/9008525.cif", "database": "Fallback"},
+FALLBACK_ALL = [
     {"formula": "TiO2", "space_group": "I41/amd", "cif_url": "https://www.crystallography.net/cod/9008213.cif", "database": "Fallback"},
     {"formula": "TiO2", "space_group": "P42/mnm", "cif_url": "https://www.crystallography.net/cod/9009082.cif", "database": "Fallback"},
-    {"formula": "ZnO", "space_group": "P63mc", "cif_url": "https://www.crystallography.net/cod/9008878.cif", "database": "Fallback"},
+    {"formula": "BiFeO3", "space_group": "R3c", "cif_url": "https://www.crystallography.net/cod/1533055.cif", "database": "Fallback"},
     {"formula": "Fe2O3", "space_group": "R-3c", "cif_url": "https://www.crystallography.net/cod/9000139.cif", "database": "Fallback"},
     {"formula": "Fe3O4", "space_group": "Fd-3m", "cif_url": "https://www.crystallography.net/cod/9006941.cif", "database": "Fallback"},
-    {"formula": "BiFeO3", "space_group": "R3c", "cif_url": "https://www.crystallography.net/cod/1533055.cif", "database": "Fallback"},
-    {"formula": "Bi2O3", "space_group": "P21/c", "cif_url": "https://www.crystallography.net/cod/2002920.cif", "database": "Fallback"},
+    {"formula": "ZnO", "space_group": "P63mc", "cif_url": "https://www.crystallography.net/cod/9008878.cif", "database": "Fallback"},
     {"formula": "CuO", "space_group": "C2/c", "cif_url": "https://www.crystallography.net/cod/1011138.cif", "database": "Fallback"},
-    {"formula": "Cu2O", "space_group": "Pn-3m", "cif_url": "https://www.crystallography.net/cod/1010936.cif", "database": "Fallback"},
     {"formula": "NiO", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/1010395.cif", "database": "Fallback"},
-    {"formula": "Co3O4", "space_group": "Fd-3m", "cif_url": "https://www.crystallography.net/cod/9005913.cif", "database": "Fallback"},
     {"formula": "Al2O3", "space_group": "R-3c", "cif_url": "https://www.crystallography.net/cod/9007671.cif", "database": "Fallback"},
     {"formula": "SiO2", "space_group": "P3121", "cif_url": "https://www.crystallography.net/cod/9009668.cif", "database": "Fallback"},
-    {"formula": "ZrO2", "space_group": "P21/c", "cif_url": "https://www.crystallography.net/cod/9007504.cif", "database": "Fallback"},
-    {"formula": "CeO2", "space_group": "Fm-3m", "cif_url": "https://www.crystallography.net/cod/9009009.cif", "database": "Fallback"},
 ]
 
 
@@ -657,10 +718,6 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
                               mp_api_key=None, icsd_api_key=None, ccdc_api_key=None,
                               precomputed_peaks_2theta=None,
                               precomputed_peaks_intensity=None):
-    """
-    Universal phase identification using multiple databases.
-    Returns a list of matched phases with scores and hkl assignments.
-    """
     start_time = time.time()
     logger.info("Entered identify_phases_universal")
 
@@ -670,7 +727,6 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
 
     status = st.status("Initializing phase identification...", expanded=True)
 
-    # Obtain experimental peaks
     if precomputed_peaks_2theta is not None and precomputed_peaks_intensity is not None:
         exp_2theta = np.array(precomputed_peaks_2theta)
         exp_intensity = np.array(precomputed_peaks_intensity)
@@ -690,7 +746,6 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
     exp_intensity_norm = exp_intensity / np.max(exp_intensity)
     logger.info("d-spacings: %s", np.round(exp_d, 3).tolist())
 
-    # Identify material family
     family = 'unknown'
     if elements:
         elem_set = set(elements)
@@ -704,7 +759,6 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
         tol = PatternMatcher.tolerance_from_size(size_nm)
         status.write(f"Size: {size_nm:.1f} nm -> dd/d tolerance: {tol:.1%}")
 
-    # Search databases
     status.update(label="Searching databases...", state="running")
     searcher = UltimateDatabaseSearcher(
         mp_api_key=mp_api_key,
@@ -728,10 +782,10 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
 
     if not candidates:
         status.write("No online candidates - using fallback database")
-        candidates = FALLBACK
+        candidates = FALLBACK_ALL[:NanoParams.MAX_FALLBACK_STRUCTURES]
         logger.info("Using %d fallback structures", len(candidates))
 
-    candidates = candidates[:20]
+    candidates = candidates[:NanoParams.MAX_TOTAL_CANDIDATES]
 
     status.update(label=f"Simulating {len(candidates)} structures...", state="running")
 
@@ -762,8 +816,7 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
 
             score, matched_peaks = matcher.match(
                 exp_d, exp_intensity_norm,
-                sim_d, sim_int,
-                sim_hkls, size_nm, family
+                sim_d, sim_int, sim_hkls, size_nm, family
             )
 
             coverage = len(matched_peaks) / len(exp_d) if matched_peaks else 0
@@ -827,7 +880,7 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
     logger.info("Simulation complete. %d matches in %.1f s",
                 len(results), time.time() - start_time)
 
-    # Last-resort built-in library
+    # Built-in library only as last resort
     if not results:
         status.write("No online matches - trying built-in library")
         for phase in BUILTIN_PHASES:
@@ -840,8 +893,7 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
             sim_int = sim_y / np.max(sim_y)
             score, matched = matcher.match(
                 exp_d, exp_intensity_norm,
-                sim_d, sim_int, sim_hkls,
-                size_nm, family
+                sim_d, sim_int, sim_hkls, size_nm, family
             )
             if score >= threshold:
                 conf = "probable" if score >= 0.30 else "possible"
@@ -871,7 +923,6 @@ def identify_phases_universal(two_theta=None, intensity=None, wavelength=1.5406,
         status.update(label="No phases matched", state="error")
         return []
 
-    # Deduplicate and sort
     unique = {}
     for r in results:
         key = (r["phase"], r.get("space_group", ""))
