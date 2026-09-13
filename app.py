@@ -54,15 +54,25 @@ from morphology_fusion import MorphologyFusionEngine
 from scientific_plots import PublicationPlotter
 from morphology_visualizer import MorphologyVisualizer
 from xrd_phase_identifier_nano import identify_phases_universal
-from xrd_overlay import XROverlayPlotter, two_theta_to_d
-from export_utils import (
-    panel_export_buttons,
-    save_all_to_zip,
-    fig_to_bytes,
-    fig_to_download,
-    available_export_formats,
-    close_fig_safely,
-)
+
+try:
+    from xrd_overlay import XROverlayPlotter, two_theta_to_d
+    OVERLAY_AVAILABLE = True
+except ImportError:
+    OVERLAY_AVAILABLE = False
+
+try:
+    from export_utils import (
+        panel_export_buttons,
+        save_all_to_zip,
+        fig_to_bytes,
+        fig_to_download,
+        available_export_formats,
+        close_fig_safely,
+    )
+    EXPORT_UTILS_AVAILABLE = True
+except ImportError:
+    EXPORT_UTILS_AVAILABLE = False
 
 
 def memory_safe_plot(func):
@@ -80,6 +90,16 @@ def memory_safe_plot(func):
             plt.close('all')
             raise e
     return wrapper
+
+
+def _safe_panel_export(fig, base_filename, key_prefix):
+    """Call panel_export_buttons only if export_utils is available."""
+    if not EXPORT_UTILS_AVAILABLE:
+        return
+    try:
+        panel_export_buttons(fig, base_filename, key_prefix)
+    except Exception as e:
+        st.warning(f"Export buttons unavailable: {e}")
 
 
 st.set_page_config(
@@ -310,14 +330,22 @@ def file_upload_section():
             "Upload one or more XRD Pattern Files",
             type=["csv", "txt", "xy", "dat", "xrdml"],
             accept_multiple_files=True,
-            help="Upload multiple files to compare. The first file drives the main analysis. "
-                 "All files appear in the Overlay tab."
+            help="Upload multiple files to compare. The first file drives the main "
+                 "analysis. All files appear in the XRD Overlay tab."
         )
 
         if xrd_files:
             st.success(f"{len(xrd_files)} XRD file(s) uploaded.")
             for f in xrd_files:
                 st.caption(f"- {f.name}")
+
+            st.checkbox(
+                "Run full phase identification on ALL files (slower)",
+                value=False,
+                key="analyze_all_xrd_files",
+                help="If unchecked, only the first file is fully analyzed "
+                     "(phase ID). Other files still appear in the XRD Overlay tab."
+            )
 
             with st.expander("Preview & Validate Each File", expanded=False):
                 for f in xrd_files:
@@ -507,7 +535,7 @@ def _get_wavelength(params):
 
 
 def _analyze_single_xrd_file(xrd_file, params, elements):
-    """Analyze one XRD file and return (raw_dict, results_dict) or (None, None)."""
+    """Analyze one XRD file. Returns (raw_dict, results_dict, message)."""
     try:
         xrd_file.seek(0)
         two_theta, intensity, msg = extract_xrd_data(xrd_file)
@@ -615,15 +643,26 @@ def execute_scientific_analysis(bet_file, xrd_files, params):
                 st.error(f"BET extraction failed: {extraction_msg}")
 
         # ============================================================
-        # XRD: handle multiple files
+        # XRD: handle multiple files with optional full analysis
         # ============================================================
         xrd_patterns = []
         if xrd_files:
             files_list = xrd_files if isinstance(xrd_files, list) else [xrd_files]
-            st.info(f"Analyzing {len(files_list)} XRD file(s)...")
-            for idx, xf in enumerate(files_list):
+            run_all = st.session_state.get("analyze_all_xrd_files", False)
+
+            if run_all:
+                files_to_analyze = files_list
+                st.info(f"Analyzing all {len(files_list)} XRD file(s) with full phase ID. "
+                        f"This may take 20-60 seconds per file.")
+            else:
+                files_to_analyze = files_list[:1]
+                st.info(f"Full analysis of {len(files_to_analyze)} file. "
+                        f"Other {len(files_list) - 1} file(s) will load raw data only "
+                        f"(available in the XRD Overlay tab).")
+
+            for idx, xf in enumerate(files_to_analyze):
                 label = xf.name
-                with st.spinner(f"Analyzing XRD file {idx+1}/{len(files_list)}: {label}"):
+                with st.spinner(f"Analyzing XRD file {idx+1}/{len(files_to_analyze)}: {label}"):
                     raw, res, msg = _analyze_single_xrd_file(
                         xf, params, st.session_state.get("xrd_elements", [])
                     )
@@ -634,10 +673,31 @@ def execute_scientific_analysis(bet_file, xrd_files, params):
                         'xrd_results': res,
                         'message': msg,
                     })
+                else:
+                    st.warning(f"{label}: {msg}")
+
+            # Load raw patterns for the remaining files (no phase ID, fast)
+            if not run_all and len(files_list) > 1:
+                for xf in files_list[1:]:
+                    try:
+                        xf.seek(0)
+                        tt, ii, _ = extract_xrd_data(xf)
+                        if tt is not None and len(tt) > 0:
+                            xrd_patterns.append({
+                                'filename': xf.name,
+                                'xrd_raw': {
+                                    'two_theta': tt.tolist(),
+                                    'intensity': ii.tolist()
+                                },
+                                'xrd_results': {'structural_peaks': [],
+                                                'phases': []},
+                                'message': 'raw only',
+                            })
+                    except Exception as e:
+                        st.warning(f"Could not load raw data from {xf.name}: {e}")
 
             if xrd_patterns:
-                st.success(f"XRD: {len(xrd_patterns)} file(s) analyzed successfully")
-                # Primary XRD = first file
+                st.success(f"XRD: {len(xrd_patterns)} file(s) loaded successfully")
                 analysis_results['xrd_raw'] = xrd_patterns[0]['xrd_raw']
                 analysis_results['xrd_results'] = xrd_patterns[0]['xrd_results']
                 analysis_results['xrd_patterns'] = xrd_patterns
@@ -834,7 +894,7 @@ def display_scientific_results(results, scientific_params):
     if has_xrd:
         all_tabs.append("XRD Analysis")
         all_tabs.append("3D XRD Visualization")
-        if multi_xrd:
+        if multi_xrd and OVERLAY_AVAILABLE:
             all_tabs.append("XRD Overlay")
     if show_crystal_tab:
         all_tabs.append("Crystal Structure")
@@ -873,7 +933,7 @@ def display_scientific_results(results, scientific_params):
             display_3d_xrd_visualization(results, scientific_params)
         tab_index += 1
 
-        if multi_xrd:
+        if multi_xrd and OVERLAY_AVAILABLE:
             with tabs[tab_index]:
                 display_xrd_overlay(results, scientific_params)
             tab_index += 1
@@ -900,7 +960,7 @@ def display_scientific_results(results, scientific_params):
                 else:
                     fig = crystal_3d.create_3d_plot(structure)
                     st.pyplot(fig)
-                    panel_export_buttons(fig, "crystal_structure", "cs_tab")
+                    _safe_panel_export(fig, "crystal_structure", "cs_tab")
 
                     col1, col2, col3 = st.columns(3)
                     with col1:
@@ -941,7 +1001,7 @@ def display_overview(results, plotter):
         fig = plotter.create_summary_figure(results)
         if fig is not None:
             st.pyplot(fig)
-            panel_export_buttons(fig, "overview_summary", "ov_tab")
+            _safe_panel_export(fig, "overview_summary", "ov_tab")
     except Exception as e:
         st.warning(f"Could not generate summary figure: {str(e)}")
 
@@ -993,7 +1053,7 @@ def display_bet_analysis(results, plotter):
         fig_full = plotter.create_bet_figure(bet_raw, bet_res)
         if fig_full is not None:
             st.pyplot(fig_full)
-            panel_export_buttons(fig_full, "bet_full_6panel", "bet_full")
+            _safe_panel_export(fig_full, "bet_full_6panel", "bet_full")
     except Exception as e:
         st.warning(f"Could not generate BET full figure: {str(e)}")
 
@@ -1001,57 +1061,51 @@ def display_bet_analysis(results, plotter):
     st.markdown("### Individual Panels (for journals & slides)")
     st.caption("Each panel is exported independently below the plot.")
 
-    # Panel A
     with st.expander("Panel A - Adsorption/Desorption Isotherm", expanded=False):
         try:
             f = plotter.plot_isotherm_only(bet_raw, bet_res)
             st.pyplot(f)
-            panel_export_buttons(f, "bet_A_isotherm", "bet_A")
+            _safe_panel_export(f, "bet_A_isotherm", "bet_A")
         except Exception as e:
             st.warning(str(e))
 
-    # Panel B
     with st.expander("Panel B - BET Transform Plot", expanded=False):
         try:
             f = plotter.plot_bet_transform_only(bet_raw, bet_res)
             st.pyplot(f)
-            panel_export_buttons(f, "bet_B_transform", "bet_B")
+            _safe_panel_export(f, "bet_B_transform", "bet_B")
         except Exception as e:
             st.warning(str(e))
 
-    # Panel C
     with st.expander("Panel C - t-Plot Analysis", expanded=False):
         try:
             f = plotter.plot_tplot_only(bet_raw, bet_res)
             st.pyplot(f)
-            panel_export_buttons(f, "bet_C_tplot", "bet_C")
+            _safe_panel_export(f, "bet_C_tplot", "bet_C")
         except Exception as e:
             st.warning(str(e))
 
-    # Panel D
     with st.expander("Panel D - BJH Pore Size Distribution", expanded=False):
         try:
             f = plotter.plot_psd_only(bet_res)
             st.pyplot(f)
-            panel_export_buttons(f, "bet_D_psd", "bet_D")
+            _safe_panel_export(f, "bet_D_psd", "bet_D")
         except Exception as e:
             st.warning(str(e))
 
-    # Panel E
     with st.expander("Panel E - Hysteresis Loop", expanded=False):
         try:
             f = plotter.plot_hysteresis_only(bet_raw, bet_res)
             st.pyplot(f)
-            panel_export_buttons(f, "bet_E_hysteresis", "bet_E")
+            _safe_panel_export(f, "bet_E_hysteresis", "bet_E")
         except Exception as e:
             st.warning(str(e))
 
-    # Panel F
     with st.expander("Panel F - BET Summary Table", expanded=False):
         try:
             f = plotter.plot_bet_summary_table_only(bet_res)
             st.pyplot(f)
-            panel_export_buttons(f, "bet_F_summary_table", "bet_F")
+            _safe_panel_export(f, "bet_F_summary_table", "bet_F")
         except Exception as e:
             st.warning(str(e))
 
@@ -1105,55 +1159,50 @@ def display_xrd_analysis(results, plotter):
             fig_full = plotter.create_xrd_figure(xrd_raw, xrd_res)
             if fig_full is not None:
                 st.pyplot(fig_full)
-                panel_export_buttons(fig_full, "xrd_full_5panel", "xrd_full")
+                _safe_panel_export(fig_full, "xrd_full_5panel", "xrd_full")
         except Exception as e:
             st.warning(f"Could not generate XRD full figure: {str(e)}")
 
     st.markdown("---")
     st.markdown("### Individual Panels (for journals & slides)")
 
-    # Panel A
     with st.expander("Panel A - XRD Pattern with Peak Labels", expanded=True):
         try:
             f = plotter.plot_xrd_pattern_only(xrd_raw, xrd_res)
             st.pyplot(f)
-            panel_export_buttons(f, "xrd_A_pattern", "xrd_A")
+            _safe_panel_export(f, "xrd_A_pattern", "xrd_A")
         except Exception as e:
             st.warning(str(e))
 
-    # Panel B
     with st.expander("Panel B - Williamson-Hall Plot", expanded=False):
         try:
             f = plotter.plot_williamson_hall_only(xrd_res)
             st.pyplot(f)
-            panel_export_buttons(f, "xrd_B_wh", "xrd_B")
+            _safe_panel_export(f, "xrd_B_wh", "xrd_B")
         except Exception as e:
             st.warning(str(e))
 
-    # Panel C
     with st.expander("Panel C - Crystallite Size Distribution", expanded=False):
         try:
             f = plotter.plot_size_distribution_only(xrd_res)
             st.pyplot(f)
-            panel_export_buttons(f, "xrd_C_size_dist", "xrd_C")
+            _safe_panel_export(f, "xrd_C_size_dist", "xrd_C")
         except Exception as e:
             st.warning(str(e))
 
-    # Panel D
     with st.expander("Panel D - Structural Bragg Peaks Table", expanded=False):
         try:
             f = plotter.plot_xrd_peak_table_only(xrd_res)
             st.pyplot(f)
-            panel_export_buttons(f, "xrd_D_peak_table", "xrd_D")
+            _safe_panel_export(f, "xrd_D_peak_table", "xrd_D")
         except Exception as e:
             st.warning(str(e))
 
-    # Panel E
     with st.expander("Panel E - XRD Summary Table", expanded=False):
         try:
             f = plotter.plot_xrd_summary_table_only(xrd_res)
             st.pyplot(f)
-            panel_export_buttons(f, "xrd_E_summary_table", "xrd_E")
+            _safe_panel_export(f, "xrd_E_summary_table", "xrd_E")
         except Exception as e:
             st.warning(str(e))
 
@@ -1161,8 +1210,11 @@ def display_xrd_analysis(results, plotter):
 @memory_safe_plot
 def display_xrd_overlay(results, scientific_params):
     st.subheader("XRD Overlay and Waterfall Comparison")
-    st.caption("Compare all uploaded XRD patterns on one figure. "
-               "Two display modes are available.")
+    st.caption("Compare all uploaded XRD patterns on one figure.")
+
+    if not OVERLAY_AVAILABLE:
+        st.warning("Overlay module (xrd_overlay.py) is not available.")
+        return
 
     patterns = results.get('xrd_patterns', [])
     if not isinstance(patterns, list) or len(patterns) < 2:
@@ -1216,12 +1268,10 @@ def display_xrd_overlay(results, scientific_params):
             ylabel="Normalized intensity (a.u.)",
         )
         st.pyplot(fig)
-        panel_export_buttons(fig, f"xrd_overlay_{mode}", f"overlay_{mode}")
+        _safe_panel_export(fig, f"xrd_overlay_{mode}", f"overlay_{mode}")
     except Exception as e:
         st.error(f"Overlay plot failed: {str(e)}")
-        st.code(traceback.format_exc())
 
-    # Per-pattern quick panel
     st.markdown("---")
     st.markdown("### Individual patterns (one figure per file)")
     for idx, rec in enumerate(pattern_records):
@@ -1237,9 +1287,9 @@ def display_xrd_overlay(results, scientific_params):
                     title=rec['label'],
                 )
                 st.pyplot(fig_single)
-                panel_export_buttons(fig_single,
-                                     f"xrd_single_{idx+1}",
-                                     f"xrd_single_{idx+1}")
+                _safe_panel_export(fig_single,
+                                   f"xrd_single_{idx+1}",
+                                   f"xrd_single_{idx+1}")
             except Exception as e:
                 st.warning(str(e))
 
@@ -1387,7 +1437,7 @@ def display_3d_xrd_visualization(results, scientific_params):
                         st.warning(f"Could not generate exact structure for {phase_name}.")
                     fig = crystal_3d.create_3d_plot(structure, figsize=(10, 8))
                     st.pyplot(fig)
-                    panel_export_buttons(fig, f"crystal_{phase_name}", f"crys_{phase_name}")
+                    _safe_panel_export(fig, f"crystal_{phase_name}", f"crys_{phase_name}")
                     st.markdown("---")
             except Exception as e:
                 st.error(f"Error generating crystal structure: {str(e)}")
@@ -1425,16 +1475,16 @@ def display_3d_xrd_visualization(results, scientific_params):
                             ax.set_title(f'{phase_name}')
                             ax.grid(True, alpha=0.3)
                             st.pyplot(fig)
-                            panel_export_buttons(fig, f"combined_xrd_{phase_name}",
-                                                 f"comb_xrd_{phase_name}")
+                            _safe_panel_export(fig, f"combined_xrd_{phase_name}",
+                                               f"comb_xrd_{phase_name}")
                     with col_right:
                         st.markdown("**Crystal Structure**")
                         structure = crystal_3d.from_phase_data(phase_data)
                         if isinstance(structure, dict) and not structure.get('error'):
                             fig = crystal_3d.create_3d_plot(structure, figsize=(6, 5))
                             st.pyplot(fig)
-                            panel_export_buttons(fig, f"combined_crystal_{phase_name}",
-                                                 f"comb_crys_{phase_name}")
+                            _safe_panel_export(fig, f"combined_crystal_{phase_name}",
+                                               f"comb_crys_{phase_name}")
                         else:
                             st.warning("Could not generate crystal structure")
                     st.markdown("---")
@@ -1456,7 +1506,7 @@ def display_morphology(results):
         )
         if fig is not None:
             st.pyplot(fig)
-            panel_export_buttons(fig, "morphology_overview", "morph")
+            _safe_panel_export(fig, "morphology_overview", "morph")
     except Exception as e:
         st.warning(f"Could not generate morphology figure: {str(e)}")
 
@@ -1600,83 +1650,99 @@ def display_export(results, scientific_params):
             st.error(f"Could not build report: {str(e)}")
 
     # ============================================================
-    # ZIP Export - All figures at once
+    # ZIP Export - lazy, memory-safe
     # ============================================================
     st.markdown("---")
     st.subheader("Download All Figures (ZIP)")
-    st.caption("Package every available figure into a single ZIP archive.")
+    st.caption("Choose figure groups, then click Build. This is lazy so it "
+               "does not slow the page.")
+
+    if not EXPORT_UTILS_AVAILABLE:
+        st.warning("export_utils.py not available. ZIP export disabled.")
+        return
 
     plotter = PublicationPlotter(
         color_scheme=scientific_params['export']['color_scheme'],
         font_size=scientific_params['export']['font_size']
     )
 
-    figures = {}
+    colA, colB, colC = st.columns(3)
+    with colA:
+        include_bet = st.checkbox("Include BET figures", value=True,
+                                  key="zip_include_bet")
+    with colB:
+        include_xrd = st.checkbox("Include XRD figures", value=True,
+                                  key="zip_include_xrd")
+    with colC:
+        include_overlay = st.checkbox("Include Overlay figures",
+                                      value=_has_multiple_xrd(results),
+                                      key="zip_include_overlay")
 
-    if _has_bet_data(results):
-        bet_raw = results['bet_raw']
-        bet_res = results['bet_results']
-        try:
-            figures['bet_A_isotherm'] = plotter.plot_isotherm_only(bet_raw, bet_res)
-            figures['bet_B_transform'] = plotter.plot_bet_transform_only(bet_raw, bet_res)
-            figures['bet_C_tplot'] = plotter.plot_tplot_only(bet_raw, bet_res)
-            figures['bet_D_psd'] = plotter.plot_psd_only(bet_res)
-            figures['bet_E_hysteresis'] = plotter.plot_hysteresis_only(bet_raw, bet_res)
-            figures['bet_F_summary_table'] = plotter.plot_bet_summary_table_only(bet_res)
-            figures['bet_full_6panel'] = plotter.create_bet_figure(bet_raw, bet_res)
-        except Exception as e:
-            st.warning(f"Some BET figures could not be generated: {str(e)}")
+    build_zip = st.button("Build ZIP archive now", key="build_zip_btn")
 
-    if _has_xrd_data(results):
-        xrd_raw = results['xrd_raw']
-        xrd_res = results['xrd_results']
-        try:
-            figures['xrd_A_pattern'] = plotter.plot_xrd_pattern_only(xrd_raw, xrd_res)
-            figures['xrd_B_wh'] = plotter.plot_williamson_hall_only(xrd_res)
-            figures['xrd_C_size_dist'] = plotter.plot_size_distribution_only(xrd_res)
-            figures['xrd_D_peak_table'] = plotter.plot_xrd_peak_table_only(xrd_res)
-            figures['xrd_E_summary_table'] = plotter.plot_xrd_summary_table_only(xrd_res)
-            figures['xrd_full_5panel'] = plotter.create_xrd_figure(xrd_raw, xrd_res)
-        except Exception as e:
-            st.warning(f"Some XRD figures could not be generated: {str(e)}")
+    if build_zip:
+        with st.spinner("Generating figures and packaging ZIP..."):
+            figures = {}
 
-    if _has_multiple_xrd(results):
-        try:
-            overlay = XROverlayPlotter(
-                color_scheme=scientific_params['export']['color_scheme'],
-                font_size=scientific_params['export']['font_size']
-            )
-            wavelength = _get_wavelength(scientific_params)
-            pattern_records = []
-            for pat in results['xrd_patterns']:
-                raw = pat.get('xrd_raw', {}) or {}
-                pattern_records.append({
-                    'label': pat.get('filename', 'unknown'),
-                    'two_theta': raw.get('two_theta', []),
-                    'intensity': raw.get('intensity', []),
-                })
-            figures['xrd_overlay_waterfall'] = overlay.plot(
-                pattern_records, mode='waterfall', wavelength=wavelength)
-            figures['xrd_overlay_overlay'] = overlay.plot(
-                pattern_records, mode='overlay', wavelength=wavelength)
-        except Exception as e:
-            st.warning(f"Could not generate overlay figures: {str(e)}")
+            if include_bet and _has_bet_data(results):
+                try:
+                    bet_raw = results['bet_raw']
+                    bet_res = results['bet_results']
+                    figures['bet_A_isotherm'] = plotter.plot_isotherm_only(bet_raw, bet_res)
+                    figures['bet_B_transform'] = plotter.plot_bet_transform_only(bet_raw, bet_res)
+                    figures['bet_C_tplot'] = plotter.plot_tplot_only(bet_raw, bet_res)
+                    figures['bet_D_psd'] = plotter.plot_psd_only(bet_res)
+                    figures['bet_E_hysteresis'] = plotter.plot_hysteresis_only(bet_raw, bet_res)
+                    figures['bet_F_summary_table'] = plotter.plot_bet_summary_table_only(bet_res)
+                except Exception as e:
+                    st.warning(f"Some BET figures failed: {e}")
 
-    if figures:
-        colA, colB = st.columns(2)
-        with colA:
-            save_all_to_zip(figures, "all_figures_png.zip", fmt="png", dpi=600,
-                            key="zip_png")
-        with colB:
-            save_all_to_zip(figures, "all_figures_pdf.zip", fmt="pdf", dpi=None,
-                            key="zip_pdf")
+            if include_xrd and _has_xrd_data(results):
+                try:
+                    xrd_raw = results['xrd_raw']
+                    xrd_res = results['xrd_results']
+                    figures['xrd_A_pattern'] = plotter.plot_xrd_pattern_only(xrd_raw, xrd_res)
+                    figures['xrd_B_wh'] = plotter.plot_williamson_hall_only(xrd_res)
+                    figures['xrd_C_size_dist'] = plotter.plot_size_distribution_only(xrd_res)
+                    figures['xrd_D_peak_table'] = plotter.plot_xrd_peak_table_only(xrd_res)
+                    figures['xrd_E_summary_table'] = plotter.plot_xrd_summary_table_only(xrd_res)
+                except Exception as e:
+                    st.warning(f"Some XRD figures failed: {e}")
 
-        st.caption(f"Figures included in the ZIP: {', '.join(sorted(figures.keys()))}")
+            if include_overlay and _has_multiple_xrd(results) and OVERLAY_AVAILABLE:
+                try:
+                    overlay = XROverlayPlotter(
+                        color_scheme=scientific_params['export']['color_scheme'],
+                        font_size=scientific_params['export']['font_size']
+                    )
+                    wavelength = _get_wavelength(scientific_params)
+                    pattern_records = []
+                    for pat in results['xrd_patterns']:
+                        raw = pat.get('xrd_raw', {}) or {}
+                        pattern_records.append({
+                            'label': pat.get('filename', 'unknown'),
+                            'two_theta': raw.get('two_theta', []),
+                            'intensity': raw.get('intensity', []),
+                        })
+                    figures['xrd_overlay_waterfall'] = overlay.plot(
+                        pattern_records, mode='waterfall', wavelength=wavelength)
+                except Exception as e:
+                    st.warning(f"Overlay figures failed: {e}")
 
-        for k, f in figures.items():
-            close_fig_safely(f)
-    else:
-        st.info("No figures available yet. Run an analysis first.")
+            if figures:
+                colX, colY = st.columns(2)
+                with colX:
+                    save_all_to_zip(figures, "all_figures_png.zip",
+                                    fmt="png", dpi=600, key="zip_png")
+                with colY:
+                    save_all_to_zip(figures, "all_figures_pdf.zip",
+                                    fmt="pdf", dpi=None, key="zip_pdf")
+                st.caption(f"Included: {', '.join(sorted(figures.keys()))}")
+
+                for k, f in figures.items():
+                    close_fig_safely(f)
+            else:
+                st.info("No figures selected or available.")
 
 
 def generate_scientific_report(results):
