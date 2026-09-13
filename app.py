@@ -942,14 +942,22 @@ def execute_scientific_analysis(bet_file, xrd_file, params):
                     st.success("Scientific integration completed")
 
                     with st.expander("Integration Summary", expanded=False):
-                        if 'material_classification' in integration_results:
-                            classification = integration_results['material_classification']
-                            st.write(f"Classification: {classification.get('primary', 'Unknown')}")
+                        classification = integration_results.get('material_classification')
+                        if isinstance(classification, dict):
+                            st.write(
+                                f"Classification: "
+                                f"{classification.get('primary', classification.get('type', 'Unknown'))}"
+                            )
 
-                        if 'validation_metrics' in integration_results:
-                            validation = integration_results['validation_metrics']
-                            if 'internal_consistency' in validation:
-                                st.write(f"Internal Consistency: {validation['internal_consistency']:.2f}")
+                        validation = integration_results.get('validation_metrics', {}) or {}
+                        consistency = validation.get('internal_consistency', None)
+                        if consistency is None:
+                            st.write("Internal Consistency: not available")
+                        else:
+                            try:
+                                st.write(f"Internal Consistency: {float(consistency):.2f}")
+                            except (TypeError, ValueError):
+                                st.write("Internal Consistency: not available")
                 else:
                     st.warning("Scientific integration completed with warnings")
 
@@ -1203,26 +1211,38 @@ def display_overview(results, plotter):
 
         with st.expander("Scientific Integration Validation", expanded=False):
             if 'validation_metrics' in integration:
-                validation = integration['validation_metrics']
+                validation = integration['validation_metrics'] or {}
 
                 col_val1, col_val2 = st.columns(2)
 
                 with col_val1:
-                    if 'internal_consistency' in validation:
-                        consistency = validation['internal_consistency']
-                        if consistency > 0.8:
-                            st.success(f"High consistency: {consistency:.2f}")
-                        elif consistency > 0.5:
-                            st.warning(f"Moderate consistency: {consistency:.2f}")
-                        else:
-                            st.error(f"Low consistency: {consistency:.2f}")
+                    consistency = validation.get('internal_consistency', None)
+                    if consistency is None:
+                        st.info(
+                            "Internal consistency not available. "
+                            "Provide a material density or identify a phase "
+                            "to enable the BET-XRD cross-check."
+                        )
+                    else:
+                        try:
+                            consistency = float(consistency)
+                            if consistency > 0.8:
+                                st.success(f"High consistency: {consistency:.2f}")
+                            elif consistency > 0.5:
+                                st.warning(f"Moderate consistency: {consistency:.2f}")
+                            else:
+                                st.error(f"Low consistency: {consistency:.2f}")
+                        except (TypeError, ValueError):
+                            st.info("Internal consistency value could not be interpreted.")
 
                 with col_val2:
-                    if 'confidence_intervals' in validation:
-                        ci = validation['confidence_intervals']
+                    ci = validation.get('confidence_intervals', None)
+                    if isinstance(ci, dict) and ci:
                         st.write("Confidence Intervals:")
                         for key, value in ci.items():
                             st.write(f"- {key}: {value}")
+                    else:
+                        st.info("Confidence intervals not available.")
 
 
 @memory_safe_plot
