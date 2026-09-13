@@ -1,7 +1,80 @@
-@software{bet_xrd_analyzer_2026,
-  author       = {Mansouri, Badreddine},
-  title        = {BET--XRD Morphology Analyzer: Scientific Edition for Journal Publication},
-  year         = 2026,
-  version      = {3.0},
-  url          = {https://github.com/badreddinemansouri-eng/BET-XRD-analyzer-USCR-MSPAG}
-}
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it as below."
+authors:
+  - family-names: Mansouri
+    given-names: Badreddine
+    affiliation: "USCR MSPAG"
+title: "BET-XRD Morphology Analyzer: Scientific Edition for Journal Publication"
+version: 3.0.0
+doi: ""
+date-released: 2026-12-01
+url: "https://github.com/badreddinemansouri-eng/BET-XRD-analyzer-USCR-MSPAG"
+license: MIT
+keywords:
+  - BET surface area
+  - XRD analysis
+  - physisorption
+  - crystallography
+  - porous materials
+  - nanocrystalline materials
+  - Williamson-Hall
+  - Scherrer
+  - BJH pore size distribution
+  - IUPAC
+abstract: >
+  An open-source web application for IUPAC-compliant physisorption analysis
+  and advanced X-ray diffraction characterization. Integrates BET surface area
+  determination, BJH pore size distribution, Scherrer crystallite size,
+  Williamson-Hall size-strain separation, and automated phase identification
+  against COD, Materials Project, and OPTIMADE-compliant databases. Produces
+  publication-quality figures with embedded citations and machine-readable
+  reports suitable for journal submission.
+references:
+  - type: article
+    title: "Adsorption of Gases in Multimolecular Layers"
+    authors:
+      - family-names: Brunauer
+        given-names: S.
+      - family-names: Emmett
+        given-names: P. H.
+      - family-names: Teller
+        given-names: E.
+    journal: "Journal of the American Chemical Society"
+    volume: 60
+    start: 309
+    end: 319
+    year: 1938
+  - type: article
+    title: "Physisorption of gases, with special reference to the evaluation of surface area and pore size distribution (IUPAC Technical Report)"
+    authors:
+      - family-names: Thommes
+        given-names: M.
+      - family-names: Kaneko
+        given-names: K.
+      - family-names: Neimark
+        given-names: A. V.
+      - family-names: Olivier
+        given-names: J. P.
+      - family-names: Rodriguez-Reinoso
+        given-names: F.
+      - family-names: Rouquerol
+        given-names: J.
+      - family-names: Sing
+        given-names: K. S. W.
+    journal: "Pure and Applied Chemistry"
+    volume: 87
+    start: 1051
+    end: 1069
+    year: 2015
+  - type: article
+    title: "X-ray line broadening from filed aluminium and wolfram"
+    authors:
+      - family-names: Williamson
+        given-names: G. K.
+      - family-names: Hall
+        given-names: W. H.
+    journal: "Acta Metallurgica"
+    volume: 1
+    start: 22
+    end: 31
+    year: 1953
