@@ -89,11 +89,17 @@ class CrystalStructure3D:
     def __init__(self):
         self._lattice_params = {}
         self._structure = None
+        self._a = 5.0
+        self._b = 5.0
+        self._c = 5.0
 
     # ====================================================================
     # PUBLIC METHODS
     # ====================================================================
     def from_phase_data(self, phase: Dict) -> Dict:
+        if not isinstance(phase, dict):
+            return self._empty_structure()
+
         if not phase:
             return self._empty_structure()
 
@@ -147,6 +153,9 @@ class CrystalStructure3D:
                 'gamma': primitive.lattice.gamma,
                 'volume': primitive.lattice.volume
             }
+            self._a = primitive.lattice.a
+            self._b = primitive.lattice.b
+            self._c = primitive.lattice.c
 
             atoms = self._structure_to_atoms(primitive)
             supercell = self._create_supercell(atoms, repetitions=(2, 2, 2))
@@ -166,7 +175,8 @@ class CrystalStructure3D:
                 'crystal_system': crystal_system,
                 'composition': primitive.composition.reduced_formula,
                 'lattice': self._lattice_params,
-                'from_cif': True
+                'from_cif': True,
+                'error': False
             }
 
         except Exception as e:
@@ -177,19 +187,34 @@ class CrystalStructure3D:
                            lattice_params: Dict,
                            space_group: str = "",
                            composition: str = "Unknown") -> Dict:
+        if not isinstance(lattice_params, dict):
+            lattice_params = {}
+
         self._lattice_params = lattice_params
         self._structure = None
-        self._a = lattice_params.get('a', 5.0)
-        self._b = lattice_params.get('b', self._a)
-        self._c = lattice_params.get('c', self._a)
+        self._a = float(lattice_params.get('a', 5.0))
+        self._b = float(lattice_params.get('b', self._a))
+        self._c = float(lattice_params.get('c', self._a))
 
         elements = self._parse_composition(composition)
 
         if space_group and PMG_AVAILABLE:
             try:
-                return self._generate_from_spacegroup(
+                atoms = self._generate_from_spacegroup(
                     crystal_system, lattice_params, space_group, elements
                 )
+                if isinstance(atoms, list) and len(atoms) > 0:
+                    supercell = self._create_supercell(atoms, repetitions=(2, 2, 2))
+                    return {
+                        'atoms': supercell,
+                        'unit_cell': self._get_unit_cell_vectors(crystal_system, lattice_params),
+                        'density': self._calculate_density(supercell, lattice_params),
+                        'space_group': space_group,
+                        'crystal_system': crystal_system,
+                        'composition': composition,
+                        'lattice': lattice_params,
+                        'error': False
+                    }
             except Exception as e:
                 warnings.warn(f"Space group generation failed: {e}. Using approximate positions.")
 
@@ -207,14 +232,15 @@ class CrystalStructure3D:
             'crystal_system': crystal_system,
             'composition': composition,
             'lattice': lattice_params,
-            'approximate': True
+            'approximate': True,
+            'error': False
         }
 
     # ====================================================================
     # PYMETGEN GENERATION
     # ====================================================================
     def _generate_from_spacegroup(self, crystal_system: str, lattice_params: Dict,
-                                  space_group: str, elements: List[str]) -> Dict:
+                                  space_group: str, elements: List[str]) -> List[Dict]:
         if not PMG_AVAILABLE:
             raise ImportError("pymatgen required for space group generation")
 
@@ -296,7 +322,7 @@ class CrystalStructure3D:
                     for z in [0, 0.5, 1]:
                         if (x + y + z) % 1.0 < 0.01:
                             continue
-                        pos = np.array([x*a, y*b, z*c])
+                        pos = np.array([x * a, y * b, z * c])
                         element = elements[(len(atoms)) % len(elements)]
                         atoms.append({
                             'element': element,
@@ -306,10 +332,10 @@ class CrystalStructure3D:
                         })
 
         elif 'Hexagonal' in crystal_system or 'hexagonal' in crystal_system.lower():
-            for x in [0, 1/3, 2/3, 1]:
-                for y in [0, 1/3, 2/3, 1]:
+            for x in [0, 1 / 3, 2 / 3, 1]:
+                for y in [0, 1 / 3, 2 / 3, 1]:
                     for z in [0, 0.5, 1]:
-                        pos = np.array([x*a, y*a, z*c])
+                        pos = np.array([x * a, y * a, z * c])
                         element = elements[(len(atoms)) % len(elements)]
                         atoms.append({
                             'element': element,
@@ -322,7 +348,7 @@ class CrystalStructure3D:
             for x in [0, 0.5, 1]:
                 for y in [0, 0.5, 1]:
                     for z in [0, 0.5, 1]:
-                        pos = np.array([x*a, y*b, z*c])
+                        pos = np.array([x * a, y * b, z * c])
                         element = elements[(len(atoms)) % len(elements)]
                         atoms.append({
                             'element': element,
@@ -357,7 +383,7 @@ class CrystalStructure3D:
             for i in range(nx):
                 for j in range(ny):
                     for k in range(nz):
-                        translation = np.array([i*self._a, j*self._b, k*self._c])
+                        translation = np.array([i * self._a, j * self._b, k * self._c])
                         new_atom = atom.copy()
                         new_atom['position'] = atom['position'] + translation
                         supercell.append(new_atom)
@@ -371,7 +397,7 @@ class CrystalStructure3D:
         if 'Hexagonal' in crystal_system or 'hexagonal' in crystal_system.lower():
             return {
                 'a': [a, 0, 0],
-                'b': [-a/2, a*np.sqrt(3)/2, 0],
+                'b': [-a / 2, a * np.sqrt(3) / 2, 0],
                 'c': [0, 0, c]
             }
         return {
@@ -389,11 +415,9 @@ class CrystalStructure3D:
         }
 
     def _calculate_density(self, atoms: List[Dict], lattice_params: Dict) -> float:
-        """Calculate theoretical density in g/cm³."""
         if not atoms:
             return 0.0
 
-        # Prefer pymatgen density when available (accurate Z from CIF).
         if self._structure is not None:
             try:
                 return float(self._structure.density)
@@ -403,11 +427,14 @@ class CrystalStructure3D:
         if not PMG_AVAILABLE:
             return 0.0
 
-        from scipy.constants import N_A
+        try:
+            from scipy.constants import N_A
+        except ImportError:
+            return 0.0
 
         element_counts = {}
         for atom in atoms:
-            el = atom['element']
+            el = atom.get('element', 'X')
             element_counts[el] = element_counts.get(el, 0) + 1
 
         atomic_masses = {
@@ -448,13 +475,14 @@ class CrystalStructure3D:
         gamma_r = np.radians(gamma)
 
         volume = a * b * c * np.sqrt(
-            1 - np.cos(alpha_r)**2 - np.cos(beta_r)**2 - np.cos(gamma_r)**2 +
-            2 * np.cos(alpha_r) * np.cos(beta_r) * np.cos(gamma_r)
+            max(1 - np.cos(alpha_r) ** 2 - np.cos(beta_r) ** 2 - np.cos(gamma_r) ** 2 +
+                2 * np.cos(alpha_r) * np.cos(beta_r) * np.cos(gamma_r), 0.0)
         )
 
-        volume_cm3 = volume * 1e-24
+        if volume <= 0:
+            return 0.0
 
-        # Fallback: Z estimated from unique element count (best effort when no CIF available).
+        volume_cm3 = volume * 1e-24
         Z = max(1, len(atoms) // max(len(element_counts), 1))
         density = (Z * total_mass) / (N_A * volume_cm3)
 
@@ -467,8 +495,8 @@ class CrystalStructure3D:
         fig = plt.figure(figsize=figsize, dpi=300)
         ax = fig.add_subplot(111, projection='3d')
 
-        atoms = structure.get('atoms', [])
-        unit_cell = structure.get('unit_cell', {})
+        atoms = structure.get('atoms', []) if isinstance(structure, dict) else []
+        unit_cell = structure.get('unit_cell', {}) if isinstance(structure, dict) else {}
 
         self._plot_unit_cell(ax, unit_cell)
 
@@ -487,9 +515,9 @@ class CrystalStructure3D:
                             edgecolor='black', linewidth=0.1,
                             rstride=1, cstride=1)
 
-        ax.set_xlabel('X (Å)', fontsize=12, labelpad=10)
-        ax.set_ylabel('Y (Å)', fontsize=12, labelpad=10)
-        ax.set_zlabel('Z (Å)', fontsize=12, labelpad=10)
+        ax.set_xlabel('X (A)', fontsize=12, labelpad=10)
+        ax.set_ylabel('Y (A)', fontsize=12, labelpad=10)
+        ax.set_zlabel('Z (A)', fontsize=12, labelpad=10)
 
         if atoms:
             xs = [a['position'][0] for a in atoms]
@@ -556,13 +584,16 @@ class CrystalStructure3D:
         if not PLOTLY_AVAILABLE:
             return None
 
+        if not isinstance(structure, dict):
+            return None
+
         atoms = structure.get('atoms', [])
         if not atoms:
             return None
 
         traces = {}
         for atom in atoms:
-            element = atom['element']
+            element = atom.get('element', 'X')
             if element not in traces:
                 traces[element] = {'x': [], 'y': [], 'z': [], 'text': []}
 
@@ -603,10 +634,10 @@ class CrystalStructure3D:
 
         corners = [
             [0, 0, 0], a, b, c,
-            [a[0]+b[0], a[1]+b[1], a[2]+b[2]],
-            [a[0]+c[0], a[1]+c[1], a[2]+c[2]],
-            [b[0]+c[0], b[1]+c[1], b[2]+c[2]],
-            [a[0]+b[0]+c[0], a[1]+b[1]+c[1], a[2]+b[2]+c[2]]
+            [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
+            [a[0] + c[0], a[1] + c[1], a[2] + c[2]],
+            [b[0] + c[0], b[1] + c[1], b[2] + c[2]],
+            [a[0] + b[0] + c[0], a[1] + b[1] + c[1], a[2] + b[2] + c[2]]
         ]
 
         edges = [
@@ -635,9 +666,9 @@ class CrystalStructure3D:
 
         fig.update_layout(
             scene=dict(
-                xaxis_title='X (Å)',
-                yaxis_title='Y (Å)',
-                zaxis_title='Z (Å)',
+                xaxis_title='X (A)',
+                yaxis_title='Y (A)',
+                zaxis_title='Z (A)',
                 aspectmode='cube'
             ),
             title=title,
